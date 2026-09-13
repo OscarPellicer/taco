@@ -28,7 +28,7 @@ contract = taco.Contract(
     structure=["image*[3,6].npy"],
     metadata=taco.MetadataSchema(
         taco.Level("sample", site=Site),
-        taco.Level("children", observation=Observation, raster=taco.metadata.asset.Raster),
+        taco.Level("children", observation=Observation),
     ),
 )
 collection = taco.Collection(
@@ -52,7 +52,6 @@ with taco.open_writer(collection, "time-series.zip", overwrite=True) as writer:
                     time=start + timedelta(days=step * 5),
                     cloud_cover=float(step * 8),
                 ),
-                raster=taco.metadata.asset.Raster(resolution=10, num_bands=4, data_type="uint16"),
             )
             assets.append(taco.Asset(encode(image), path=f"image{step}.npy", metadata=metadata))
         writer.add(taco.Sample(assets=assets, metadata=taco.Metadata(site=Site(name=f"site-{site_index}"))))

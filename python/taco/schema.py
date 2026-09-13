@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from .contract.naming import validate_field_name
 from .errors import ContractError, SampleError
-from .metadata._base import CollectionSummary, DerivedMetadata
+from .metadata._base import CollectionSummary, DerivedMetadata, Extension
 
 _NAMESPACE = re.compile(r"^[a-z][a-z0-9_]*$")
 _RESERVED_NAMESPACES = frozenset({"cozip", "internal", "taco"})
@@ -35,8 +35,14 @@ class Group:
     model: type[BaseModel] | None
     optional: bool
     fields: tuple[tuple[str, pa.Field], ...]
-    derived: DerivedMetadata | None = None
+    input_fields: tuple[tuple[str, pa.Field], ...]
+    extension: Extension | None = None
     summaries: tuple[type[CollectionSummary], ...] = ()
+
+    @property
+    def derived(self) -> Extension | None:
+        """Compatibility name used by older callers."""
+        return self.extension
 
 
 def _optional(annotation: Any) -> tuple[Any, bool]:
@@ -158,19 +164,44 @@ def _model_binding(namespace: str, value: Any) -> Group:
             f"{annotation.__name__} must use metadata namespace {expected_namespace!r}, got {namespace!r}"
         )
     fields = _model_fields(namespace, annotation, optional)
-    return Group(namespace, annotation, optional, fields, summaries=_summary_types(annotation, fields))
+    return Group(namespace, annotation, optional, fields, fields, summaries=_summary_types(annotation, fields))
 
 
-def _derived_binding(namespace: str, value: DerivedMetadata) -> Group:
-    fields = []
+def _extension_binding(namespace: str, value: Extension) -> Group:
+    model = value.input_model
+    input_fields: tuple[tuple[str, pa.Field], ...] = ()
+    summaries: tuple[type[CollectionSummary], ...] = ()
+    if model is not None:
+        if not isinstance(model, type) or not issubclass(model, BaseModel):
+            raise ContractError(f"extension {type(value).__name__}.input_model must be a Pydantic model or None")
+        expected_namespace = getattr(model, "__taco_namespace__", None)
+        if expected_namespace is not None and namespace != expected_namespace:
+            raise ContractError(
+                f"{type(value).__name__} must use metadata namespace {expected_namespace!r}, got {namespace!r}"
+            )
+        input_fields = _model_fields(namespace, model, False)
+        summaries = _summary_types(model, input_fields)
+
+    fields = list(input_fields)
+    positions = {field.name: index for index, (_, field) in enumerate(fields)}
     for field in value.fields:
         qualified = f"{namespace}:{field.name}"
         validate_field_name(qualified, context="derived metadata")
         metadata = field.metadata
-        fields.append((field.name, pa.field(qualified, field.type, nullable=field.nullable, metadata=metadata)))
-    if not fields:
-        raise ContractError(f"derived metadata group {namespace!r} has no fields")
-    return Group(namespace, None, False, tuple(fields), value)
+        item = (field.name, pa.field(qualified, field.type, nullable=field.nullable, metadata=metadata))
+        if qualified in positions:
+            existing = fields[positions[qualified]][1]
+            if existing.type != field.type:
+                raise ContractError(
+                    f"extension output {qualified!r} has type {field.type}, but its input model declares {existing.type}"
+                )
+            fields[positions[qualified]] = item
+        else:
+            positions[qualified] = len(fields)
+            fields.append(item)
+    if not value.fields:
+        raise ContractError(f"extension group {namespace!r} has no output fields")
+    return Group(namespace, model, False, tuple(fields), input_fields, value, summaries)
 
 
 def _namespace(value: str) -> str:
@@ -202,8 +233,8 @@ class Level:
         bindings = []
         for namespace, value in groups.items():
             _namespace(namespace)
-            if isinstance(value, DerivedMetadata):
-                bindings.append(_derived_binding(namespace, value))
+            if isinstance(value, Extension):
+                bindings.append(_extension_binding(namespace, value))
             else:
                 bindings.append(_model_binding(namespace, value))
         object.__setattr__(self, "name", name)
@@ -279,6 +310,7 @@ class CollectionMetadata:
 __all__ = [
     "CollectionMetadata",
     "DerivedMetadata",
+    "Extension",
     "Field",
     "Level",
     "Metadata",

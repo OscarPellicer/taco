@@ -1,5 +1,4 @@
 import io
-import struct
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
@@ -38,20 +37,15 @@ def encode(array: np.ndarray) -> bytes:
     return buffer.getvalue()
 
 
-def point(longitude: float, latitude: float) -> bytes:
-    # WKB keeps the example dependency-free. Centroids are always EPSG:4326.
-    return struct.pack("<BIdd", 1, 1, longitude, latitude)
-
-
 contract = taco.Contract(
     structure=["image.npy", "label.npy"],
     metadata=taco.MetadataSchema(
         taco.Level(
             "sample",
-            stac=taco.metadata.sample.STAC,
+            stac=taco.extensions.STAC(),
             chip=Chip,
             ml=taco.metadata.sample.Split,
-            majortom=taco.metadata.sample.MajorTOM(
+            majortom=taco.extensions.MajorTOM(
                 dist_km=100,
                 latitude_range=(-20, 0),
                 longitude_range=(-90, -60),
@@ -60,8 +54,6 @@ contract = taco.Contract(
         taco.Level(
             "children",
             content=AssetContent,
-            raster=taco.metadata.asset.Raster,
-            stats=taco.metadata.asset.RasterStats | None,
             scaling=taco.metadata.asset.Scaling | None,
         ),
     ),
@@ -146,8 +138,6 @@ with taco.open_writer(collection, "stac-segmentation.zip", overwrite=True) as wr
         class_scores[class_names.index(chip["cover"])] += 5_000
         label = np.argmax(class_scores, axis=0).astype(np.uint8)
         dominant_land_cover = class_names[int(np.bincount(label.ravel()).argmax())]
-        band_stats = [[float(band.min()), float(band.max()), float(band.mean())] for band in image]
-        longitude, latitude = chip["centroid"]
         easting, northing = chip["origin"]
 
         # STAC is enough here because the affine grid reconstructs every footprint.
@@ -155,7 +145,6 @@ with taco.open_writer(collection, "stac-segmentation.zip", overwrite=True) as wr
             crs=chip["crs"],
             tensor_shape=image.shape,
             geotransform=(easting, 10, 0, northing, 0, -10),
-            centroid=point(longitude, latitude),
             time_start=chip["time"],
             time_end=chip["time"] + timedelta(minutes=10),
         )
@@ -165,8 +154,6 @@ with taco.open_writer(collection, "stac-segmentation.zip", overwrite=True) as wr
                 path="image.npy",
                 metadata=taco.Metadata(
                     content=AssetContent(role="input", bands=["B02", "B03", "B04", "B08"], nodata=0),
-                    raster=taco.metadata.asset.Raster(resolution=10, num_bands=4, data_type="uint16"),
-                    stats=taco.metadata.asset.RasterStats(stats=band_stats),
                     scaling=taco.metadata.asset.Scaling(
                         scale_factor=[0.0001] * 4,
                         scale_offset=[0.0] * 4,
@@ -178,7 +165,6 @@ with taco.open_writer(collection, "stac-segmentation.zip", overwrite=True) as wr
                 path="label.npy",
                 metadata=taco.Metadata(
                     content=AssetContent(role="target", bands=["land_cover"], nodata=255),
-                    raster=taco.metadata.asset.Raster(resolution=10, num_bands=1, data_type="uint8"),
                 ),
             ),
         ]

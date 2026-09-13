@@ -9,6 +9,7 @@ from typing import Any, cast
 import pyarrow as pa
 
 from ..errors import ContractError, SampleError
+from ..metadata._base import ExtensionContext
 from ..schema import Field, Group, Metadata, MetadataSchema, validate_qualified_field
 from .naming import level_folder
 from .sample import Asset, Folder, Sample, _PreparedAsset, _PreparedNode, _PreparedSample
@@ -71,17 +72,17 @@ def _configuration(value: Mapping[str, Any], *, namespace: str) -> dict[str, Any
     try:
         return cast(dict[str, Any], json.loads(json.dumps(dict(value), allow_nan=False)))
     except (TypeError, ValueError) as exc:
-        raise ContractError(f"derived group {namespace!r} configuration must be JSON serializable") from exc
+        raise ContractError(f"extension group {namespace!r} configuration must be JSON serializable") from exc
 
 
-def _check_derived_descriptors(
+def _check_extension_descriptors(
     level: str,
     groups: Mapping[str, Mapping[str, Any]],
     fields: Mapping[str, Field],
 ) -> None:
     produced = [name for descriptor in groups.values() for name in descriptor["produces"]]
     if len(produced) != len(set(produced)):
-        raise ContractError(f"derived metadata at {level!r} produces a field more than once")
+        raise ContractError(f"extensions at {level!r} produce a field more than once")
     available = set(fields) - set(produced)
     pending = dict(groups)
     while pending:
@@ -90,8 +91,8 @@ def _check_derived_descriptors(
             required = {name for descriptor in pending.values() for name in descriptor["requires"]}
             missing = sorted(required - set(fields))
             if missing:
-                raise ContractError(f"derived metadata at {level!r} requires missing fields {missing}")
-            raise ContractError(f"derived metadata at {level!r} contains a dependency cycle")
+                raise ContractError(f"extensions at {level!r} require missing fields {missing}")
+            raise ContractError(f"extensions at {level!r} contain a dependency cycle")
         for name in ready:
             available.update(pending.pop(name)["produces"])
 
@@ -104,7 +105,13 @@ def _same_value(left: Any, right: Any) -> bool:
     return bool(left == right)
 
 
-def _check_row_independent(group: Group, inputs: dict[str, list[Any]], produced: dict[str, list[Any]]) -> None:
+def _check_row_independent(
+    level: str,
+    group: Group,
+    inputs: dict[str, list[Any]],
+    assets: tuple[Path | None, ...],
+    produced: dict[str, list[Any]],
+) -> None:
     """Recompute the first row alone and compare.
 
     Derived groups run once per buffered batch, so a computation that looks at
@@ -112,13 +119,15 @@ def _check_row_independent(group: Group, inputs: dict[str, list[Any]], produced:
     Values that aggregate across samples belong in a collection summary, which
     accumulates until the writer closes.
     """
-    assert group.derived is not None
-    probe = group.derived.compute({name: values[:1] for name, values in inputs.items()})
+    assert group.extension is not None
+    probe = group.extension.run(
+        ExtensionContext(level, {name: values[:1] for name, values in inputs.items()}, assets[:1])
+    )
     for name, values in produced.items():
         alone = list(probe.get(name, ()))
         if len(alone) != 1 or not _same_value(alone[0], values[0]):
             raise SampleError(
-                f"derived group {group.namespace!r} depends on the other rows of its batch; "
+                f"extension group {group.namespace!r} depends on the other rows of its batch; "
                 f"it runs once per batch, so a value that aggregates across samples "
                 f"belongs in a collection summary"
             )
@@ -129,6 +138,7 @@ class Contract:
     structure: tuple[str, ...] | None
     metadata: dict[str, dict[str, Field]]
     derived: dict[str, dict[str, dict[str, Any]]]
+    extensions: dict[str, dict[str, dict[str, Any]]]
     levels: tuple[str, ...]
     leaves: tuple[Leaf, ...]
     folders: frozenset[tuple[str, ...]]
@@ -166,12 +176,13 @@ class Contract:
                 for level, fields in normalized.items()
             }
             groups = dict.fromkeys(levels, ())
-            derived_ = self._normalize_derived(derived or {}, levels, normalized)
+            derived_ = self._normalize_extensions(derived or {}, levels, normalized)
         self._check_spatial_groups(normalized)
 
         object.__setattr__(self, "structure", declarations)
         object.__setattr__(self, "metadata", normalized)
         object.__setattr__(self, "derived", derived_)
+        object.__setattr__(self, "extensions", derived_)
         object.__setattr__(self, "levels", levels)
         object.__setattr__(self, "leaves", leaves)
         object.__setattr__(self, "folders", folders)
@@ -274,15 +285,15 @@ class Contract:
                         type_name(arrow_field.type), arrow_field.nullable, description
                     )
                     level_types[arrow_field.name] = arrow_field.type
-                if group.derived is not None:
-                    for required in group.derived.requires:
+                if group.extension is not None:
+                    for required in group.extension.requires:
                         validate_qualified_field(required)
                     level_derived[group.namespace] = {
-                        "requires": list(group.derived.requires),
-                        "produces": [field.name for _, field in group.fields],
-                        "configuration": _configuration(group.derived.configuration(), namespace=group.namespace),
+                        "requires": list(group.extension.requires),
+                        "produces": [f"{group.namespace}:{field.name}" for field in group.extension.fields],
+                        "configuration": _configuration(group.extension.configuration(), namespace=group.namespace),
                     }
-            cls._order_derived(level, bindings, level_fields)
+            cls._order_extensions(level, bindings, level_fields)
             metadata[level] = level_fields
             types_[level] = level_types
             groups[level] = bindings
@@ -302,87 +313,98 @@ class Contract:
             folder = level_folder(level)
             possible = {"folder" if kind == "folder" else "asset" for kind, _ in children[folder]}
         for group in groups:
-            target = group.model if group.model is not None else type(group.derived)
+            # An active group with producer inputs is scoped by the configured
+            # input model. This lets a reusable operation such as STAC run for
+            # either sample.STAC or folder.STAC while generated-only
+            # extensions such as Rumi keep their own declared scopes.
+            target = group.model if group.model is not None else type(group.extension)
+            assert target is not None
             scopes: frozenset[str] = getattr(target, "__taco_scopes__", frozenset())
             valid = possible.issubset(scopes) if not group.optional else bool(scopes.intersection(possible))
             if scopes and not valid:
                 raise ContractError(f"{target.__name__} cannot be used at metadata level {level!r}")
 
     @staticmethod
-    def _order_derived(level: str, groups: Sequence[Group], fields: Mapping[str, Field]) -> None:
+    def _order_extensions(level: str, groups: Sequence[Group], fields: Mapping[str, Field]) -> None:
         available = {
-            field for group in groups if group.derived is None for _, item in group.fields for field in [item.name]
+            field
+            for group in groups
+            for _, item in group.fields
+            for field in [item.name]
+            if group.extension is None
+            or field not in {f"{group.namespace}:{output.name}" for output in group.extension.fields}
         }
-        pending = [group for group in groups if group.derived is not None]
+        pending = [group for group in groups if group.extension is not None]
         while pending:
             ready = [
                 group
                 for group in pending
-                if group.derived is not None and set(group.derived.requires).issubset(available)
+                if group.extension is not None and set(group.extension.requires).issubset(available)
             ]
             if not ready:
                 missing = sorted(
                     {
                         required
                         for group in pending
-                        if group.derived is not None
-                        for required in group.derived.requires
+                        if group.extension is not None
+                        for required in group.extension.requires
                         if required not in fields
                     }
                 )
                 if missing:
-                    raise ContractError(f"derived metadata at {level!r} requires missing fields {missing}")
-                raise ContractError(f"derived metadata at {level!r} contains a dependency cycle")
+                    raise ContractError(f"extensions at {level!r} require missing fields {missing}")
+                raise ContractError(f"extensions at {level!r} contain a dependency cycle")
             for group in ready:
-                available.update(field.name for _, field in group.fields)
+                assert group.extension is not None
+                available.update(f"{group.namespace}:{field.name}" for field in group.extension.fields)
                 pending.remove(group)
 
     @staticmethod
-    def _normalize_derived(
-        derived: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    def _normalize_extensions(
+        extensions: Mapping[str, Mapping[str, Mapping[str, Any]]],
         levels: tuple[str, ...],
         metadata: Mapping[str, Mapping[str, Field]],
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        if not isinstance(derived, Mapping):
-            raise ContractError("taco:derived must be an object")
-        extra = sorted(set(derived) - set(levels))
+        if not isinstance(extensions, Mapping):
+            raise ContractError("taco:extensions must be an object")
+        extra = sorted(set(extensions) - set(levels))
         if extra:
             raise ContractError(f"derived metadata has unknown levels {extra}")
         result: dict[str, dict[str, dict[str, Any]]] = {}
-        for level, groups in derived.items():
+        for level, groups in extensions.items():
             if not isinstance(groups, Mapping):
-                raise ContractError(f"derived metadata for {level!r} must be an object")
+                raise ContractError(f"extensions for {level!r} must be an object")
             result[level] = {}
             for namespace, descriptor in groups.items():
                 validate_qualified_field(f"{namespace}:value")
                 if not isinstance(descriptor, Mapping):
-                    raise ContractError(f"derived group {namespace!r} must be an object")
+                    raise ContractError(f"extension group {namespace!r} must be an object")
                 extra = sorted(set(descriptor) - {"requires", "produces", "configuration"})
                 if extra:
-                    raise ContractError(f"derived group {namespace!r} has unknown properties {extra}")
+                    raise ContractError(f"extension group {namespace!r} has unknown properties {extra}")
                 requires = descriptor.get("requires")
                 produces = descriptor.get("produces")
                 configuration = descriptor.get("configuration", {})
                 if not isinstance(requires, list) or not all(isinstance(item, str) for item in requires):
-                    raise ContractError(f"derived group {namespace!r} needs a requires list")
+                    raise ContractError(f"extension group {namespace!r} needs a requires list")
                 if not isinstance(produces, list) or not all(isinstance(item, str) for item in produces):
-                    raise ContractError(f"derived group {namespace!r} needs a produces list")
+                    raise ContractError(f"extension group {namespace!r} needs a produces list")
                 if not produces:
-                    raise ContractError(f"derived group {namespace!r} must produce at least one field")
+                    raise ContractError(f"extension group {namespace!r} must produce at least one field")
                 for name in [*requires, *produces]:
                     validate_qualified_field(name)
                 if any(not name.startswith(f"{namespace}:") for name in produces):
-                    raise ContractError(f"derived group {namespace!r} must produce fields in its own namespace")
+                    raise ContractError(f"extension group {namespace!r} must produce fields in its own namespace")
                 if not set(produces).issubset(metadata[level]):
-                    raise ContractError(f"derived group {namespace!r} produces fields absent from taco:metadata")
+                    raise ContractError(f"extension group {namespace!r} produces fields absent from taco:metadata")
                 if not isinstance(configuration, Mapping):
-                    raise ContractError(f"derived group {namespace!r} configuration must be an object")
+                    raise ContractError(f"extension group {namespace!r} configuration must be an object")
                 result[level][namespace] = {
                     "requires": list(requires),
                     "produces": list(produces),
                     "configuration": _configuration(configuration, namespace=namespace),
                 }
-            _check_derived_descriptors(level, result[level], metadata[level])
+            _check_extension_descriptors(level, result[level], metadata[level])
         return result
 
     @property
@@ -519,12 +541,14 @@ class Contract:
         groups = self._groups[level]
         if not groups and metadata.groups:
             raise SampleError(f"metadata is not declared for {level!r}")
-        expected = {group.namespace: group for group in groups if group.derived is None}
-        derived = {group.namespace for group in groups if group.derived is not None}
+        expected = {group.namespace: group for group in groups if group.model is not None}
+        generated = {group.namespace for group in groups if group.model is None}
         unexpected = sorted(set(metadata.groups) - set(expected))
         if unexpected:
-            if set(unexpected) & derived:
-                raise SampleError(f"derived metadata groups cannot be supplied: {sorted(set(unexpected) & derived)}")
+            if set(unexpected) & generated:
+                raise SampleError(
+                    f"generated extension groups cannot be supplied: {sorted(set(unexpected) & generated)}"
+                )
             raise SampleError(f"metadata groups at {level!r} are not declared: {unexpected}")
         result: dict[str, Any] = {}
         for namespace, group in expected.items():
@@ -532,7 +556,7 @@ class Contract:
             if model is None:
                 if not group.optional:
                     raise SampleError(f"metadata group {namespace!r} is required at {level!r}")
-                result.update((field.name, None) for _, field in group.fields)
+                result.update((field.name, None) for _, field in group.input_fields)
                 continue
             assert group.model is not None
             if not isinstance(model, group.model):
@@ -545,10 +569,10 @@ class Contract:
                 raise SampleError(f"{type(model).__name__} cannot describe a {scope}")
             dumped = model.model_dump(mode="python")
             try:
-                values = {name: dumped[name] for name, _ in group.fields}
+                values = {name: dumped[name] for name, _ in group.input_fields}
             except KeyError as exc:
                 raise SampleError(f"{type(model).__name__} no longer matches the contract") from exc
-            for name, arrow_field in group.fields:
+            for name, arrow_field in group.input_fields:
                 try:
                     result[arrow_field.name] = coerce_value(
                         values[name], arrow_field.type, nullable=arrow_field.nullable
@@ -557,49 +581,96 @@ class Contract:
                     raise SampleError(f"invalid {arrow_field.name} at {level!r}: {exc}") from exc
         return result
 
-    def apply_derived(self, level: str, rows: list[dict[str, Any]], *, verify: bool = False) -> None:
+    def apply_extensions(
+        self,
+        level: str,
+        rows: list[dict[str, Any]],
+        *,
+        assets: Sequence[Path | None] | None = None,
+        verify: bool = False,
+    ) -> None:
         if not rows:
             return
-        pending = [group for group in self._groups[level] if group.derived is not None]
+        local_assets = tuple(assets) if assets is not None else (None,) * len(rows)
+        if len(local_assets) != len(rows):
+            raise ValueError("extension assets must match the number of rows")
+        pending = [group for group in self._groups[level] if group.extension is not None]
+        generated = {
+            f"{group.namespace}:{field.name}"
+            for group in pending
+            if group.extension is not None
+            for field in group.extension.fields
+        }
+        available = set(rows[0]) - generated
         while pending:
             complete = [
                 group
                 for group in pending
-                if all({field.name for _, field in group.fields}.issubset(row) for row in rows)
+                if group.extension is not None
+                and {f"{group.namespace}:{field.name}" for field in group.extension.fields}.isdisjoint(
+                    {field.name for _, field in group.input_fields}
+                )
+                and all(
+                    {f"{group.namespace}:{field.name}" for field in group.extension.fields}.issubset(row)
+                    for row in rows
+                )
             ]
             for group in complete:
                 pending.remove(group)
+                assert group.extension is not None
+                available.update(f"{group.namespace}:{field.name}" for field in group.extension.fields)
             if not pending:
                 return
-            available = set(rows[0])
             ready = [
                 group
                 for group in pending
-                if group.derived is not None and set(group.derived.requires).issubset(available)
+                if group.extension is not None and set(group.extension.requires).issubset(available)
             ]
             if not ready:
-                raise RuntimeError(f"cannot resolve derived metadata at {level!r}")
+                raise RuntimeError(f"cannot resolve extensions at {level!r}")
             for group in ready:
-                assert group.derived is not None
-                inputs = {name: [row.get(name) for row in rows] for name in group.derived.requires}
-                output = group.derived.compute(inputs)
-                expected = {name for name, _ in group.fields}
+                assert group.extension is not None
+                names = set().union(*(row.keys() for row in rows))
+                inputs = {name: [row.get(name) for row in rows] for name in names}
+                output = group.extension.run(ExtensionContext(level, inputs, local_assets))
+                if not isinstance(output, Mapping):
+                    raise SampleError(f"extension group {group.namespace!r} must return a mapping")
+                expected = {field.name for field in group.extension.fields}
                 if set(output) != expected:
                     raise SampleError(
-                        f"derived group {group.namespace!r} returned {sorted(output)}, expected {sorted(expected)}"
+                        f"extension group {group.namespace!r} returned {sorted(output)}, expected {sorted(expected)}"
                     )
                 produced: dict[str, list[Any]] = {}
-                for name, arrow_field in group.fields:
+                output_fields = {field.name: field for field in group.extension.fields}
+                for name, arrow_field in output_fields.items():
                     values = list(output[name])
                     if len(values) != len(rows):
-                        raise SampleError(f"derived field {arrow_field.name!r} returned the wrong number of rows")
+                        raise SampleError(
+                            f"extension field {group.namespace}:{arrow_field.name!r} returned the wrong number of rows"
+                        )
                     produced[name] = values
                 if verify and len(rows) > 1:
-                    _check_row_independent(group, inputs, produced)
-                for name, arrow_field in group.fields:
+                    _check_row_independent(level, group, inputs, local_assets, produced)
+                for name, arrow_field in output_fields.items():
                     for row, value in zip(rows, produced[name], strict=True):
-                        row[arrow_field.name] = coerce_value(value, arrow_field.type, nullable=arrow_field.nullable)
+                        qualified = f"{group.namespace}:{arrow_field.name}"
+                        try:
+                            row[qualified] = coerce_value(value, arrow_field.type, nullable=arrow_field.nullable)
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise SampleError(f"invalid extension output {qualified!r} at {level!r}: {exc}") from exc
+                available.update(f"{group.namespace}:{field.name}" for field in group.extension.fields)
                 pending.remove(group)
+
+    def apply_derived(
+        self,
+        level: str,
+        rows: list[dict[str, Any]],
+        *,
+        assets: Sequence[Path | None] | None = None,
+        verify: bool = False,
+    ) -> None:
+        """Compatibility alias for :meth:`apply_extensions`."""
+        self.apply_extensions(level, rows, assets=assets, verify=verify)
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -609,8 +680,11 @@ class Contract:
                 for level, fields in self.metadata.items()
             },
         }
-        if self.derived:
-            result["taco:derived"] = self.derived
+        if self.extensions:
+            # The serialized name remains taco:derived for TACO v3 reader
+            # compatibility. The Python execution API is the broader
+            # Extension abstraction.
+            result["taco:derived"] = self.extensions
         return result
 
     @classmethod
@@ -633,7 +707,7 @@ class Contract:
         contract = cls(
             structure=data["taco:structure"],
             metadata=metadata,
-            derived=data.get("taco:derived"),
+            derived=data.get("taco:extensions", data.get("taco:derived")),
         )
         missing = sorted(set(contract.levels) - set(metadata))
         if missing:

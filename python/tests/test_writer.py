@@ -202,7 +202,7 @@ def test_single_file_dataset(tmp_path: Path) -> None:
 def test_stac_generates_extent(tmp_path: Path) -> None:
     contract = taco.Contract(
         structure=None,
-        metadata=taco.MetadataSchema(taco.Level("sample", stac=taco.metadata.sample.STAC)),
+        metadata=taco.MetadataSchema(taco.Level("sample", stac=taco.extensions.STAC())),
     )
     collection = taco.Collection(
         contract=contract,
@@ -221,7 +221,6 @@ def test_stac_generates_extent(tmp_path: Path) -> None:
     ]
     with taco.open_writer(collection, tmp_path / "data.zip", batch_size=1) as writer:
         for lon, lat, start, end in records:
-            location = point(lon, lat)
             writer.add(
                 taco.Sample(
                     assets=b"x",
@@ -230,7 +229,6 @@ def test_stac_generates_extent(tmp_path: Path) -> None:
                             crs="EPSG:4326",
                             tensor_shape=(1, 256, 256),
                             geotransform=(lon - 0.1, 0.2 / 256, 0, lat + 0.1, 0, -0.2 / 256),
-                            centroid=location,
                             time_start=start,
                             time_end=end,
                         )
@@ -248,7 +246,7 @@ def test_stac_generates_extent(tmp_path: Path) -> None:
 def test_istac_keeps_geometry_and_generates_centroid_extent(tmp_path: Path) -> None:
     contract = taco.Contract(
         structure=None,
-        metadata=taco.MetadataSchema(taco.Level("sample", istac=taco.metadata.sample.ISTAC)),
+        metadata=taco.MetadataSchema(taco.Level("sample", istac=taco.extensions.ISTAC())),
     )
     collection = taco.Collection(
         contract=contract,
@@ -270,7 +268,6 @@ def test_istac_keeps_geometry_and_generates_centroid_extent(tmp_path: Path) -> N
                     istac=taco.metadata.sample.ISTAC(
                         crs="EPSG:4326",
                         geometry=location,
-                        centroid=location,
                         time_start=start,
                         time_end=end,
                     )

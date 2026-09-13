@@ -240,20 +240,20 @@ figcaption b{color:var(--fg);font-style:normal}
 <p>Every user field MUST use the form <code>namespace:field</code>. Namespaces MUST match <code>[a-z][a-z0-9_]*</code>. Field names MUST be non-empty and MUST NOT contain <code>:</code>, <code>/</code>, or <code>__</code>. The qualified name MUST be unique within its level.</p>
 <p>The same namespace MAY appear at multiple levels and MAY use a different schema at each level. The <code>internal</code>, <code>taco</code>, and <code>cozip</code> namespaces are reserved. Producers MUST NOT create fields in these namespaces.</p>
 <p>The column names <code>cozip:location</code> and <code>taco:location</code> are owned exclusively by readers. A producer MUST NOT store either column in any Parquet file under <code>METADATA/</code>. A reader that encounters a stored value under either name MUST ignore or remove it, and MUST calculate locations at read time from the physical payload location, offset, size, and containing file.</p>
-<p>On disk, a namespace only qualifies a column name. It does not create a nested struct or identify a Python class. Contracts are equivalent when their structure, levels, qualified fields, types, nullability, descriptions, and derived group declarations are the same.</p>
+<p>On disk, a namespace only qualifies a column name. It does not create a nested struct or identify a Python class. Contracts are equivalent when their structure, levels, qualified fields, types, nullability, descriptions, and writer-time extension declarations are the same.</p>
 
 <h4>STAC and ISTAC profiles</h4>
 <p>TACO defines two mutually exclusive spatiotemporal metadata profiles inherited from v2. A metadata level MAY declare <code>stac</code> for regular raster chunks or <code>istac</code> for irregular footprints. The same level MUST NOT declare both. These profiles are compact tabular metadata groups; they are not serializations of a complete STAC Item.</p>
 <table>
-<tr><th>Profile</th><th>Required fields</th><th>Optional fields</th><th>Spatial representation</th></tr>
-<tr><td><code>stac</code></td><td><code>crs</code>, <code>tensor_shape</code>, <code>geotransform</code>, <code>time_start</code>, <code>centroid</code></td><td><code>time_end</code>, <code>time_middle</code></td><td>Regular affine grid; no footprint geometry is stored</td></tr>
-<tr><td><code>istac</code></td><td><code>crs</code>, <code>geometry</code>, <code>time_start</code>, <code>centroid</code></td><td><code>time_end</code>, <code>time_middle</code></td><td>Irregular WKB footprint in the declared CRS</td></tr>
+<tr><th>Profile</th><th>Producer inputs</th><th>Writer outputs</th><th>Spatial representation</th></tr>
+<tr><td><code>stac</code></td><td><code>crs</code>, <code>tensor_shape</code>, <code>geotransform</code>, <code>time_start</code>; optional <code>time_end</code> and <code>centroid</code> override</td><td><code>centroid</code>, <code>time_middle</code></td><td>Regular affine grid; no footprint geometry is stored</td></tr>
+<tr><td><code>istac</code></td><td><code>crs</code>, <code>geometry</code>, <code>time_start</code>; optional <code>time_end</code> and <code>centroid</code> override</td><td><code>centroid</code>, <code>time_middle</code></td><td>Irregular WKB footprint in the declared CRS</td></tr>
 </table>
-<p>For STAC, <code>tensor_shape</code> is a non-empty list of positive integers with at least two dimensions; its final two values are height and width. <code>geotransform</code> is the six-value GDAL affine transform. For both profiles, <code>centroid</code> is a WKB Point in EPSG:4326 and timestamps use <code>timestamp[us, UTC]</code>. When <code>time_end</code> is present and <code>time_middle</code> is absent, the writer MUST populate the midpoint.</p>
-<p>The built-in Python models MUST use their canonical namespaces: <code>stac=taco.metadata.sample.STAC</code> and <code>istac=taco.metadata.sample.ISTAC</code>. A producer chooses one profile per metadata level. STAC is RECOMMENDED for fixed or affine image chunks, while ISTAC is reserved for swaths, vectors, and other samples whose footprint cannot be recovered from a regular grid.</p>
+<p>For STAC, <code>tensor_shape</code> is a non-empty list of positive integers with at least two dimensions; its final two values are height and width. <code>geotransform</code> is the six-value GDAL affine transform. The STAC extension MUST calculate <code>centroid</code> from the complete affine transform and reproject it to EPSG:4326 unless the producer supplies an override. The ISTAC extension MUST calculate <code>centroid</code> from <code>geometry</code> in its declared CRS unless the producer supplies an override. When <code>time_end</code> is present and <code>time_middle</code> is absent, either extension MUST populate the midpoint.</p>
+<p>The built-in Python extensions MUST use their canonical namespaces: <code>stac=taco.extensions.STAC()</code> and <code>istac=taco.extensions.ISTAC()</code>. Their input values use the matching <code>taco.metadata.sample</code> model at sample scope or <code>taco.metadata.folder</code> model at folder scope. A producer chooses one profile per metadata level. STAC is RECOMMENDED for fixed or affine image chunks, while ISTAC is reserved for swaths, vectors, and other samples whose footprint cannot be recovered from a regular grid.</p>
 
-<h4>Derived groups</h4>
-<p>A derived group computes columns from other columns at the same level. Its declaration is stored in <code>taco:derived</code>. Each entry records its required columns, produced columns, and JSON-serializable configuration. The produced columns MUST also appear in <code>taco:metadata</code>.</p>
+<h4>Writer-time extensions</h4>
+<p>A writer-time extension combines optional validated producer inputs with columns computed during <code>run()</code>. Its declaration is stored in <code>taco:derived</code> for TACO v3 reader compatibility. Each entry records its required columns, produced columns, and JSON-serializable configuration. The produced columns MUST also appear in <code>taco:metadata</code>.</p>
 <pre><code>{
   "taco:derived": {
     "sample": {
@@ -265,7 +265,11 @@ figcaption b{color:var(--fg);font-style:normal}
     }
   }
 }</code></pre>
-<p>A requirement may refer to an input column or to the output of another derived group at the same level. Cycles, missing requirements, and duplicate output columns make the contract invalid. The declaration describes the result and makes contracts comparable. Executable Python code and import paths are not stored in the dataset.</p>
+<p>A requirement may refer to a producer input column or to the output of another extension at the same level. The writer MUST resolve this graph rather than use declaration order. Cycles, missing requirements, and duplicate output columns make the contract invalid. Extensions are explicit: a writer MUST NOT run one that the contract does not declare. The declaration describes the result and makes contracts comparable. Executable Python code and import paths are not stored in the dataset.</p>
+
+<h4>Rumi extension</h4>
+<p>The Rumi extension operates on one local <code>.rumi</code> asset per row. It MUST obtain <code>rumi:header</code> from <code>rumi.info(source=asset_path).header</code>; producers MUST NOT construct this binary value themselves. The header is stored as Parquet <code>binary</code> and enables stateless selective reads without first parsing the payload.</p>
+<p>When statistics are enabled, the extension also stores <code>rumi:stats</code> as one list entry per band. Each entry is a struct containing nullable <code>minimum</code>, <code>maximum</code>, <code>mean</code>, and <code>stddev</code> doubles plus non-null <code>valid_count</code> and <code>nodata_count</code> integers. Cube statistics combine the time and spatial axes for each band. Non-finite values and the configured nodata sentinel are excluded.</p>
 
 <h4>Examples</h4>
 <p><strong>CloudSEN12.</strong></p>
@@ -282,10 +286,7 @@ figcaption b{color:var(--fg);font-style:normal}
       "quality:cloud_cover": {"type": "double", "nullable": true, "description": "Cloud cover percentage (0-100)"},
       "ml:split": {"type": "string", "nullable": false, "description": "Dataset split (train, val, test)"}
     },
-    "children": {
-      "raster:resolution": {"type": "double", "nullable": false, "description": "Spatial resolution in meters"},
-      "raster:num_bands": {"type": "int32", "nullable": false, "description": "Number of bands in file"}
-    }
+    "children": {}
   }
 }</code></pre>
 <p><code>sample</code> contains one row per sample. <code>children</code> contains one row for each of its three files.</p>
@@ -309,14 +310,8 @@ figcaption b{color:var(--fg);font-style:normal}
       "quality:cloud_cover": {"type": "double", "nullable": true, "description": "Cloud cover percentage"},
       "eo:sensor": {"type": "string", "nullable": true, "description": "Sensor name"}
     },
-    "children/before": {
-      "raster:resolution": {"type": "double", "nullable": false, "description": "Spatial resolution in meters"},
-      "raster:num_bands": {"type": "int32", "nullable": false, "description": "Number of bands"}
-    },
-    "children/after": {
-      "raster:resolution": {"type": "double", "nullable": false, "description": "Spatial resolution in meters"},
-      "raster:num_bands": {"type": "int32", "nullable": false, "description": "Number of bands"}
-    }
+    "children/before": {},
+    "children/after": {}
   }
 }</code></pre>
 <p><code>sample</code> contains one row per sample. <code>children</code> contains rows for <code>before</code>, <code>after</code>, and <code>change_map.tif</code>. Acquisition fields are null for <code>change_map.tif</code>. The two folder levels contain one row for each band file.</p>
@@ -479,11 +474,11 @@ figcaption b{color:var(--fg);font-style:normal}
 
 <h4>Data objects</h4>
 <p>TACO uses small immutable data objects. <strong>Contract</strong> defines the structure and tabular metadata schema. <strong>Collection</strong> describes the dataset. <strong>Sample</strong> contains one sample. <strong>Folder</strong> attaches metadata to a folder already declared by the contract. <strong>Asset</strong> points to one source file.</p>
-<p><strong>MetadataSchema</strong> contains one or more <strong>Level</strong> objects. Each level associates a namespace with a Pydantic model or a derived metadata group.</p>
+<p><strong>MetadataSchema</strong> contains one or more <strong>Level</strong> objects. Each level associates a namespace with a passive Pydantic model or an explicit writer-time extension.</p>
 <p><strong>Metadata</strong> carries values for a sample, folder, or asset. <strong>CollectionMetadata</strong> carries global dataset values. The two containers are distinct and cannot be used interchangeably.</p>
 
 <h4>Metadata schema</h4>
-<p>Built-in groups are organized by scope. Sample groups live under <code>taco.metadata.sample</code>, folder groups under <code>taco.metadata.folder</code>, asset groups under <code>taco.metadata.asset</code>, and collection groups under <code>taco.metadata.collection</code>. Datasets may use these models, extend them, or define additional Pydantic models.</p>
+<p>Built-in passive groups are organized by scope. Sample groups live under <code>taco.metadata.sample</code>, folder groups under <code>taco.metadata.folder</code>, asset groups under <code>taco.metadata.asset</code>, and collection groups under <code>taco.metadata.collection</code>. Active operations live under <code>taco.extensions</code>. Datasets may use these implementations or define additional Pydantic models and <code>taco.Extension</code> subclasses.</p>
 <p>The writer rejects a built-in group used outside its declared scope.</p>
 <pre><code>import taco
 from pydantic import BaseModel, Field
@@ -498,14 +493,13 @@ contract = taco.Contract(
     metadata=taco.MetadataSchema(
         taco.Level(
             "sample",
-            stac=taco.metadata.sample.STAC,
+            stac=taco.extensions.STAC(),
             ml=ML,
-            majortom=taco.metadata.sample.MajorTOM(dist_km=100),
+            majortom=taco.extensions.MajorTOM(dist_km=100),
         ),
-        taco.Level("children", raster=taco.metadata.asset.Raster),
     ),
 )</code></pre>
-<p>The keyword is the namespace. The Pydantic model defines its fields, types, nullability, and descriptions. The writer stores them as qualified columns such as <code>stac:geotransform</code>, <code>ml:split</code>, and <code>raster:resolution</code>. Built-in STAC and ISTAC are restricted to their canonical namespaces.</p>
+<p>The keyword is the namespace. A Pydantic model defines passive fields, types, nullability, and descriptions. An extension additionally declares the fields it requires and produces. The writer stores them as qualified columns such as <code>stac:geotransform</code>, <code>stac:centroid</code>, and <code>majortom:code</code>. Built-in STAC and ISTAC are restricted to their canonical namespaces.</p>
 <p>A model assigned directly to a level is required on every row. <code>Model | None</code> allows the complete group to be absent on some rows and makes its stored columns nullable. Within a model, <code>value: T | None</code> makes one field nullable. <code>Field(description=...)</code> supplies its description. Exact Arrow types may use <code>Annotated</code>.</p>
 <pre><code>from datetime import datetime
 from typing import Annotated
@@ -539,18 +533,8 @@ TimestampUTC = Annotated[datetime, pa.timestamp("us", tz="UTC")]</code></pre>
         ml=ML(split="train"),
     ),
     assets=[
-        taco.Asset(
-            Path("/data/image.tif"),
-            metadata=taco.Metadata(
-                raster=taco.metadata.asset.Raster(resolution=10, num_bands=13)
-            ),
-        ),
-        taco.Asset(
-            Path("/data/label.tif"),
-            metadata=taco.Metadata(
-                raster=taco.metadata.asset.Raster(resolution=10, num_bands=1)
-            ),
-        ),
+        taco.Asset(Path("/data/image.tif")),
+        taco.Asset(Path("/data/label.tif")),
     ],
 )</code></pre>
 <p>Folders are inferred from the contract and need no runtime object unless they carry metadata. When they do, the sample names them once.</p>
@@ -559,11 +543,11 @@ TimestampUTC = Annotated[datetime, pa.timestamp("us", tz="UTC")]</code></pre>
     assets=[...],
 )</code></pre>
 
-<h4>Derived metadata</h4>
-<p>A derived group declares the columns it needs and the columns it produces. MajorTOM requires <code>stac:centroid</code> and produces <code>majortom:code</code>. The contract is invalid when a required column is missing.</p>
-<p>Samples do not provide values for derived groups. The writer computes them from batches of validated metadata before writing Parquet. This keeps vectorized operations in Arrow, NumPy, or Shapely instead of running them once per sample.</p>
-<p><code>taco.metadata.sample.GeoEnrich</code> uses the same mechanism to derive selected Earth Engine variables from <code>stac:centroid</code>. It is available through the optional <code>geoenrich</code> dependency.</p>
-<p>The configuration of a derived group is part of the contract. Appending data with different settings is not allowed.</p>
+<h4>Writer-time extensions</h4>
+<p>An extension declares the columns it needs and produces. It may also declare a Pydantic input model when the producer supplies part of its metadata. STAC receives affine-grid values and produces <code>stac:centroid</code>; MajorTOM requires that output and produces <code>majortom:code</code>. The contract is invalid when a required column is missing.</p>
+<p>The writer computes extension outputs from batches of validated metadata during <code>run()</code>. Each context also contains the local asset associated with every row, allowing format extensions to inspect payloads without asking producers to duplicate file metadata.</p>
+<p><code>taco.extensions.Rumi(stats=True)</code> requires a local <code>.rumi</code> asset and produces the canonical binary <code>rumi:header</code> plus named per-band <code>rumi:stats</code>. <code>taco.extensions.GeoEnrich</code> derives selected Earth Engine variables from <code>stac:centroid</code>.</p>
+<p>The configuration of an extension is part of the contract. Appending data with different settings is not allowed.</p>
 
 <h4>Writer lifecycle</h4>
 <p><code>add()</code> and <code>extend()</code> validate and stage samples. They do not modify the final dataset.</p>
@@ -572,8 +556,7 @@ TimestampUTC = Annotated[datetime, pa.timestamp("us", tz="UTC")]</code></pre>
 <p>FOLDER containers may use <code>append=True</code>. ZIP containers may be partitioned. The writer builds every partition and the TACOCAT before publishing them together. If publication fails, it restores the previous files.</p>
 
 <h4>Example</h4>
-<pre><code>import struct
-from datetime import datetime, timezone
+<pre><code>from datetime import datetime, timezone
 from pathlib import Path
 
 import taco
@@ -589,11 +572,10 @@ contract = taco.Contract(
     metadata=taco.MetadataSchema(
         taco.Level(
             "sample",
-            stac=taco.metadata.sample.STAC,
+            stac=taco.extensions.STAC(),
             ml=ML,
-            majortom=taco.metadata.sample.MajorTOM(dist_km=100),
+            majortom=taco.extensions.MajorTOM(dist_km=100),
         ),
-        taco.Level("children", raster=taco.metadata.asset.Raster),
     ),
 )
 
@@ -613,32 +595,17 @@ collection = taco.Collection(
     ),
 )
 
-centroid = struct.pack("&lt;BIdd", 1, 1, -76.5, -9.2)
 sample = taco.Sample(
     metadata=taco.Metadata(
         stac=taco.metadata.sample.STAC(
             crs="EPSG:4326",
             tensor_shape=(13, 256, 256),
             geotransform=(-76.55, 0.1 / 256, 0, -9.15, 0, -0.1 / 256),
-            centroid=centroid,
             time_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
         ),
         ml=ML(split="train"),
     ),
-    assets=[
-        taco.Asset(
-            Path("/data/image.tif"),
-            metadata=taco.Metadata(
-                raster=taco.metadata.asset.Raster(resolution=10, num_bands=13)
-            ),
-        ),
-        taco.Asset(
-            Path("/data/label.tif"),
-            metadata=taco.Metadata(
-                raster=taco.metadata.asset.Raster(resolution=10, num_bands=1)
-            ),
-        ),
-    ],
+    assets=[taco.Asset(Path("/data/image.tif")), taco.Asset(Path("/data/label.tif"))],
 )
 
 with taco.open_writer(collection, "clouds.zip") as writer:
@@ -682,10 +649,10 @@ SELECT * FROM read_taco('cloudsen12.zip');
 
 -- Unpivoted, one row per file
 SELECT * FROM read_taco('cloudsen12.zip', pivoted := false);
--- sample_id | ml:split | raster:resolution | raster:num_bands | path       | taco:location
--- 0         | train    | 10.0              | 13               | s2_l1c.tif | /vsisubfile/...
--- 0         | train    | 10.0              | 13               | s2_l2a.tif | /vsisubfile/...
--- 0         | train    | 10.0              | 1                | target.tif | /vsisubfile/...
+-- sample_id | ml:split | path       | taco:location
+-- 0         | train    | s2_l1c.tif | /vsisubfile/...
+-- 0         | train    | s2_l2a.tif | /vsisubfile/...
+-- 0         | train    | target.tif | /vsisubfile/...
 
 -- Two selected files
 SELECT * FROM read_taco('change_detection.zip', files := ['before/B02.tif', 'after/B02.tif']);
@@ -805,8 +772,8 @@ catalog = taco.open_dataset("cloudsen12/.tacocat")</code></pre>
 
 <h3><span class="sn">A.5.</span> Extension System</h3>
 <p>v2 extensions combined schema definitions with metadata computation through base classes and <code>extend_with()</code>.</p>
-<p>v3 uses namespaced Pydantic models. Groups are separated under <code>taco.metadata.sample</code>, <code>taco.metadata.folder</code>, <code>taco.metadata.asset</code>, and <code>taco.metadata.collection</code>. The namespace determines the stored field prefix, and the model defines and validates its values.</p>
-<p><code>taco</code> includes reusable models such as STAC, ISTAC, Raster, Labels, and Optical. STAC preserves the v2 affine-grid profile for regular chunks, while ISTAC preserves the v2 WKB-footprint profile for irregular data; a level chooses one. TACO also provides derived sample groups such as MajorTOM, which compute metadata by batch from explicit dependencies. STAC and ISTAC calculate the extent of each container from their centroid and time rows. Datasets can extend the built-in models or define additional groups.</p>
+<p>v3 uses namespaced Pydantic models for passive metadata and a generic <code>Extension</code> abstraction for writer-time operations. The namespace determines the stored field prefix. Extensions combine optional validated inputs, declared outputs, local asset access, and explicit dependencies.</p>
+<p><code>taco</code> includes STAC and ISTAC extensions that restore the automatic centroid behavior of v2, a Rumi extension for canonical headers and per-band statistics, and composable operations such as MajorTOM. The writer resolves their dependency graph during <code>run()</code>. Datasets can define additional models or extension subclasses without modifying the writer core.</p>
 
 <h3><span class="sn">A.6.</span> TACOCAT and TACOLLECTION</h3>
 <p>v2 stored TACOCAT in a binary file with a fixed header. It used a separate TACOLLECTION JSON document for dataset metadata.</p>

@@ -15,7 +15,6 @@ contract = taco.Contract(
     structure=["image*[2,5].npy"],
     metadata=taco.MetadataSchema(
         taco.Level("sample", ml=taco.metadata.sample.Split),
-        taco.Level("children", raster=taco.metadata.asset.Raster),
     ),
 )
 collection = taco.Collection(
@@ -33,8 +32,7 @@ with taco.open_writer(collection, "image-sequence.zip", overwrite=True) as write
         assets = []
         for frame_index in range(length):
             image = np.full((8, 8), sample_index * 10 + frame_index, dtype=np.uint16)
-            metadata = taco.Metadata(raster=taco.metadata.asset.Raster(resolution=10, num_bands=1, data_type="uint16"))
-            assets.append(taco.Asset(encode(image), path=f"image{frame_index}.npy", metadata=metadata))
+            assets.append(taco.Asset(encode(image), path=f"image{frame_index}.npy"))
         split = "test" if sample_index == 2 else "train"
         writer.add(
             taco.Sample(

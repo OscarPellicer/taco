@@ -148,18 +148,12 @@ def single_file() -> DatasetCase:
 def flat_assets() -> DatasetCase:
     contract = taco.Contract(
         structure=["image.tif", "label.tif"],
-        metadata=taco.MetadataSchema(
-            taco.Level("sample", ml=taco.metadata.sample.Split),
-            taco.Level("children", raster=taco.metadata.asset.Raster),
-        ),
+        metadata=taco.MetadataSchema(taco.Level("sample", ml=taco.metadata.sample.Split)),
     )
     samples = tuple(
         taco.Sample(
             metadata=taco.Metadata(ml=taco.metadata.sample.Split(split="train" if index == 0 else "validation")),
-            assets=[
-                asset("flat", index, "image.tif", raster=taco.metadata.asset.Raster(resolution=10, num_bands=4)),
-                asset("flat", index, "label.tif", raster=taco.metadata.asset.Raster(resolution=10, num_bands=1)),
-            ],
+            assets=[asset("flat", index, "image.tif"), asset("flat", index, "label.tif")],
         )
         for index in range(2)
     )
@@ -187,34 +181,12 @@ def nested_folders() -> DatasetCase:
             taco.Level(
                 "children",
                 stac=taco.metadata.folder.STAC | None,
-                raster=taco.metadata.asset.Raster | None,
             ),
-            taco.Level("children/before", raster=taco.metadata.asset.Raster),
-            taco.Level("children/after", raster=taco.metadata.asset.Raster),
         ),
     )
     samples = []
     for index in range(2):
-        assets = [
-            asset(
-                "nested",
-                index,
-                path,
-                raster=taco.metadata.asset.Raster(
-                    resolution=10 if path.startswith("before/") else 20,
-                    num_bands=1,
-                ),
-            )
-            for path in paths[:-1]
-        ]
-        assets.append(
-            asset(
-                "nested",
-                index,
-                "change_map.tif",
-                raster=taco.metadata.asset.Raster(resolution=10, num_bands=1),
-            )
-        )
+        assets = [asset("nested", index, path) for path in paths]
         samples.append(
             taco.Sample(
                 metadata=taco.Metadata(core=SampleInfo(name=f"change-{index}")),
@@ -240,22 +212,13 @@ def optional_sequence() -> DatasetCase:
         structure=["image*[0,4].tif"],
         metadata=taco.MetadataSchema(
             taco.Level("sample", core=SampleInfo),
-            taco.Level("children", raster=taco.metadata.asset.Raster),
         ),
     )
     files = ((), ("image0.tif",), tuple(f"image{index}.tif" for index in range(4)))
     samples = tuple(
         taco.Sample(
             metadata=taco.Metadata(core=SampleInfo(name=f"sequence-{index}", score=float(len(paths)))),
-            assets=[
-                asset(
-                    "sequence",
-                    index,
-                    path,
-                    raster=taco.metadata.asset.Raster(resolution=10, num_bands=3),
-                )
-                for path in paths
-            ],
+            assets=[asset("sequence", index, path) for path in paths],
         )
         for index, paths in enumerate(files)
     )
@@ -281,10 +244,8 @@ def mixed_structure() -> DatasetCase:
         metadata=taco.MetadataSchema(
             taco.Level("sample", core=SampleInfo),
             taco.Level("children", node=NodeInfo),
-            taco.Level("children/images", raster=taco.metadata.asset.Raster),
             taco.Level(
                 "children/labels",
-                raster=taco.metadata.asset.Raster | None,
                 vector=VectorInfo | None,
             ),
         ),
@@ -304,24 +265,8 @@ def mixed_structure() -> DatasetCase:
     samples = []
     for index, paths in enumerate(files):
         assets = [asset("mixed", index, "reference.tif", node=NodeInfo(kind="reference"))]
-        assets.extend(
-            asset(
-                "mixed",
-                index,
-                path,
-                raster=taco.metadata.asset.Raster(resolution=10, num_bands=3),
-            )
-            for path in paths
-            if path.startswith("images/")
-        )
-        assets.append(
-            asset(
-                "mixed",
-                index,
-                "labels/mask.tif",
-                raster=taco.metadata.asset.Raster(resolution=10, num_bands=1),
-            )
-        )
+        assets.extend(asset("mixed", index, path) for path in paths if path.startswith("images/"))
+        assets.append(asset("mixed", index, "labels/mask.tif"))
         assets.extend(
             asset("mixed", index, path, vector=VectorInfo(geometry_type="Polygon"))
             for path in paths
@@ -359,13 +304,10 @@ def deep_hierarchy() -> DatasetCase:
     contract = taco.Contract(
         structure=paths,
         metadata=taco.MetadataSchema(
-            taco.Level("sample", istac=taco.metadata.sample.ISTAC),
+            taco.Level("sample", istac=taco.extensions.ISTAC()),
             taco.Level("children", istac=taco.metadata.folder.ISTAC),
             taco.Level("children/inputs", istac=taco.metadata.folder.ISTAC),
             taco.Level("children/targets", istac=taco.metadata.folder.ISTAC),
-            taco.Level("children/inputs/optical", raster=taco.metadata.asset.Raster),
-            taco.Level("children/inputs/radar", raster=taco.metadata.asset.Raster),
-            taco.Level("children/targets/segmentation", raster=taco.metadata.asset.Raster),
         ),
     )
     samples = []
@@ -389,15 +331,7 @@ def deep_hierarchy() -> DatasetCase:
                         metadata=taco.Metadata(istac=stac(index, taco.metadata.folder.ISTAC)),
                     ),
                 ],
-                assets=[
-                    asset(
-                        "deep",
-                        index,
-                        path,
-                        raster=taco.metadata.asset.Raster(resolution=10, num_bands=1),
-                    )
-                    for path in paths
-                ],
+                assets=[asset("deep", index, path) for path in paths],
             )
         )
     return DatasetCase(
@@ -454,14 +388,12 @@ def derived_metadata() -> DatasetCase:
         metadata=taco.MetadataSchema(
             taco.Level(
                 "sample",
-                stac=CloudSTAC,
+                stac=taco.extensions.STAC(model=CloudSTAC),
                 ml=taco.metadata.sample.Split,
-                majortom=taco.metadata.sample.MajorTOM(dist_km=100),
+                majortom=taco.extensions.MajorTOM(dist_km=100),
             ),
             taco.Level(
                 "children",
-                raster=taco.metadata.asset.Raster,
-                stats=taco.metadata.asset.RasterStats,
                 scaling=taco.metadata.asset.Scaling,
             ),
         ),
@@ -471,14 +403,12 @@ def derived_metadata() -> DatasetCase:
     for index, split in enumerate(splits):
         metadata = stac(index, CloudSTAC, cloud_cover=index * 12.5)
         assets = []
-        for path, bands in (("image.tif", 4), ("label.tif", 1)):
+        for path in ("image.tif", "label.tif"):
             assets.append(
                 asset(
                     "derived",
                     index,
                     path,
-                    raster=taco.metadata.asset.Raster(resolution=10, num_bands=bands, data_type="uint16"),
-                    stats=taco.metadata.asset.RasterStats(stats=[[0, 1, 0.5]]),
                     scaling=taco.metadata.asset.Scaling(scale_factor=0.01, scale_offset=0),
                 )
             )

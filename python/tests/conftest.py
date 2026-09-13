@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import struct
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
@@ -22,12 +21,8 @@ class Kind(BaseModel):
     kind: str
 
 
-class Raster(BaseModel):
+class AssetInfo(BaseModel):
     resolution: Annotated[int, pa.int32()]
-
-
-def point(x: float, y: float) -> bytes:
-    return struct.pack("<BIdd", 1, 1, x, y)
 
 
 STRUCTURE = ["before/B02.tif", "before/B03.tif", "after/B02.tif", "mask.tif", "extra*[0,3].png"]
@@ -40,13 +35,13 @@ def contract() -> taco.Contract:
         metadata=taco.MetadataSchema(
             taco.Level(
                 "sample",
-                stac=taco.metadata.sample.STAC,
+                stac=taco.extensions.STAC(),
                 ml=ML,
-                majortom=taco.metadata.sample.MajorTOM(dist_km=100),
+                majortom=taco.extensions.MajorTOM(dist_km=100),
             ),
             taco.Level("children", node=Kind),
-            taco.Level("children/before", raster=Raster),
-            taco.Level("children/after", raster=Raster),
+            taco.Level("children/before", file=AssetInfo),
+            taco.Level("children/after", file=AssetInfo),
         ),
     )
 
@@ -78,13 +73,12 @@ def make_sample(tmp_path: Path):
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_bytes(f"{index}:{path}".encode())
             if path.startswith("before/"):
-                metadata = taco.Metadata(raster=Raster(resolution=10))
+                metadata = taco.Metadata(file=AssetInfo(resolution=10))
             elif path.startswith("after/"):
-                metadata = taco.Metadata(raster=Raster(resolution=20))
+                metadata = taco.Metadata(file=AssetInfo(resolution=20))
             else:
                 metadata = taco.Metadata(node=Kind(kind="label" if path == "mask.tif" else "extra"))
             assets.append(taco.Asset(source, path=path, metadata=metadata))
-        center = point(-76 + index, -12 + index / 10)
         longitude, latitude = -76 + index, -12 + index / 10
         return taco.Sample(
             metadata=taco.Metadata(
@@ -92,7 +86,6 @@ def make_sample(tmp_path: Path):
                     crs="EPSG:4326",
                     tensor_shape=(13, 256, 256),
                     geotransform=(longitude - 0.1, 0.2 / 256, 0, latitude + 0.1, 0, -0.2 / 256),
-                    centroid=center,
                     time_start=datetime(2024, 1, index + 1, tzinfo=timezone.utc),
                 ),
                 ml=ML(split="train" if index % 2 == 0 else "val", cloud_cover=index * 10.5, tags=["a"]),

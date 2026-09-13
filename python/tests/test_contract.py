@@ -115,7 +115,7 @@ def test_scope_is_enforced() -> None:
     with pytest.raises(ContractError, match="cannot be used"):
         taco.Contract(
             structure=["a.tif"],
-            metadata=taco.MetadataSchema(taco.Level("sample", raster=taco.metadata.asset.Raster)),
+            metadata=taco.MetadataSchema(taco.Level("sample", scaling=taco.metadata.asset.Scaling)),
         )
     with pytest.raises(TypeError, match="not collection"):
         taco.CollectionMetadata(split=taco.metadata.sample.Split(split="train"))
@@ -134,7 +134,7 @@ def test_derived_declaration_and_dependency() -> None:
     contract = taco.Contract(
         structure=["a.bin"],
         metadata=taco.MetadataSchema(
-            taco.Level("sample", stac=taco.metadata.sample.STAC, grid=taco.metadata.sample.MajorTOM(50))
+            taco.Level("sample", stac=taco.extensions.STAC(), grid=taco.extensions.MajorTOM(50))
         ),
     )
     descriptor = contract.to_dict()["taco:derived"]["sample"]["grid"]
@@ -145,7 +145,7 @@ def test_derived_declaration_and_dependency() -> None:
     with pytest.raises(ContractError, match="missing"):
         taco.Contract(
             structure=["a.bin"],
-            metadata=taco.MetadataSchema(taco.Level("sample", grid=taco.metadata.sample.MajorTOM())),
+            metadata=taco.MetadataSchema(taco.Level("sample", grid=taco.extensions.MajorTOM())),
         )
 
 

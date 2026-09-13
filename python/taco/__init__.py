@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-from . import metadata, reader
+from . import extensions, metadata, reader
 from .contract import Asset, Collection, Contract, Folder, Sample
 from .dataset import Dataset, open_dataset, read
 from .errors import TacoError
-from .schema import CollectionMetadata, DerivedMetadata, Level, Metadata, MetadataSchema
+from .metadata._base import ExtensionContext
+from .schema import CollectionMetadata, DerivedMetadata, Extension, Level, Metadata, MetadataSchema
 from .tacocat import consolidate
 from .validate import validate
 from .writer import open_writer
@@ -23,6 +24,8 @@ __all__ = [
     "Contract",
     "Dataset",
     "DerivedMetadata",
+    "Extension",
+    "ExtensionContext",
     "Folder",
     "Level",
     "Metadata",
@@ -31,6 +34,7 @@ __all__ = [
     "TacoError",
     "__version__",
     "consolidate",
+    "extensions",
     "metadata",
     "open_dataset",
     "open_writer",

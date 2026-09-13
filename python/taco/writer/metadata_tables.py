@@ -107,9 +107,10 @@ class MetadataTableWriter:
         # Rows from one sample can land in several levels. Each level keeps its
         # own buffer, id counter and Parquet writer.
         self._buffers: dict[str, list[dict[str, Any]]] = {level: [] for level in contract.levels}
+        self._asset_buffers: dict[str, list[Path | None]] = {level: [] for level in contract.levels}
         self._writers: dict[str, pq.ParquetWriter] = {}
         self._next_id = dict.fromkeys(contract.levels, 0)
-        self._verified_derived: set[str] = set()
+        self._verified_extensions: set[str] = set()
         self._summaries = _collection_summaries(contract)
         self.paths = {level: directory / level_to_filename(level) for level in contract.levels}
         directory.mkdir(parents=True, exist_ok=True)
@@ -143,13 +144,16 @@ class MetadataTableWriter:
             assert locate is not None
             sample_row[OFFSET], sample_row[SIZE] = locate(f"{DATA_DIR}/{sample_id}")
         sample_row.update(sample.metadata)
-        self._append_row(SAMPLE_LEVEL, sample_row)
+        sample_asset = sample.assets[0].source if self.contract.is_null else None
+        assert sample_asset is None or isinstance(sample_asset, Path)
+        self._append_row(SAMPLE_LEVEL, sample_row, sample_asset)
         if self.contract.is_null:
             return
 
         # Folder ids are local to a metadata level. Remember them by path while
         # this sample is expanded so child rows can point at the right parent.
         folder_ids: dict[tuple[str, ...], int] = {(): sample_id}
+        asset_sources = {asset.path: asset.source for asset in sample.assets}
         for level in self.contract.levels[1:]:
             folder = level_folder(level)
             parent_id = folder_ids[folder]
@@ -170,10 +174,14 @@ class MetadataTableWriter:
                     assert locate is not None
                     row[OFFSET], row[SIZE] = locate(f"{DATA_DIR}/{relative_path}")
                 row.update(node.metadata)
-                self._append_row(level, row)
+                asset_path = "/".join((*folder, node.name))
+                source = None if node.is_folder else asset_sources[asset_path]
+                assert source is None or isinstance(source, Path)
+                self._append_row(level, row, source)
 
-    def _append_row(self, level: str, row: dict[str, Any]) -> None:
+    def _append_row(self, level: str, row: dict[str, Any], asset: Path | None) -> None:
         self._buffers[level].append(row)
+        self._asset_buffers[level].append(asset)
         self._next_id[level] += 1
         if len(self._buffers[level]) >= self.batch_size:
             self._flush(level)
@@ -187,21 +195,23 @@ class MetadataTableWriter:
 
     def _flush(self, level: str) -> None:
         rows = self._buffers[level]
+        assets = self._asset_buffers[level]
         if not rows:
             return
 
-        # Derived metadata must be row-local; otherwise changing batch_size
+        # Extension outputs must be row-local; otherwise changing batch_size
         # would change the dataset. Check that once, on the first useful batch,
         # because the verification computes the derived values again per row.
-        verify = level not in self._verified_derived
-        self.contract.apply_derived(level, rows, verify=verify)
-        self._verified_derived.add(level)
+        verify = level not in self._verified_extensions
+        self.contract.apply_extensions(level, rows, assets=assets, verify=verify)
+        self._verified_extensions.add(level)
         for summary in self._summaries:
             if summary.level == level:
                 summary.update_rows(rows)
         table = pa.Table.from_pylist(rows, schema=self._schemas[level])
         self._parquet_writer(level).write_table(table, row_group_size=self.row_group_size)
         self._buffers[level] = []
+        self._asset_buffers[level] = []
 
     def close(self) -> dict[str, Path]:
         for level in self.contract.levels:

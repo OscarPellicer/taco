@@ -53,10 +53,6 @@ def encode(array: np.ndarray) -> bytes:
     return buffer.getvalue()
 
 
-def point(longitude: float, latitude: float) -> bytes:
-    return struct.pack("<BIdd", 1, 1, longitude, latitude)
-
-
 def polygon(ring: list[tuple[float, float]]) -> bytes:
     if ring[0] != ring[-1]:
         ring = [*ring, ring[0]]
@@ -76,7 +72,7 @@ contract = taco.Contract(
     metadata=taco.MetadataSchema(
         taco.Level(
             "sample",
-            istac=taco.metadata.sample.ISTAC,
+            istac=taco.extensions.ISTAC(),
             ocean=OceanWindow,
             ml=taco.metadata.sample.Split,
         ),
@@ -85,15 +81,11 @@ contract = taco.Contract(
             group=AssetGroup | None,
             variables=OceanVariables | None,
             array=ArrayLayout | None,
-            raster=taco.metadata.asset.Raster | None,
-            stats=taco.metadata.asset.RasterStats | None,
         ),
         taco.Level(
             "children/satellite",
             variables=OceanVariables,
             array=ArrayLayout,
-            raster=taco.metadata.asset.Raster,
-            stats=taco.metadata.asset.RasterStats,
         ),
         taco.Level(
             "children/in_situ",
@@ -184,7 +176,6 @@ with taco.open_writer(collection, "oceantaco-istac.zip", overwrite=True) as writ
             units: str,
             source_product: str,
         ) -> taco.Asset:
-            stats = [[float(array.min()), float(array.max()), float(array.mean())]]
             return taco.Asset(
                 encode(array),
                 path=path,
@@ -198,8 +189,6 @@ with taco.open_writer(collection, "oceantaco-istac.zip", overwrite=True) as writ
                     array=ArrayLayout(
                         dimensions=["along_track", "across_track"], shape=list(array.shape), data_type="float32"
                     ),
-                    raster=taco.metadata.asset.Raster(resolution=2_000, num_bands=1, data_type="float32"),
-                    stats=taco.metadata.asset.RasterStats(stats=stats),
                 ),
             )
 
@@ -253,10 +242,6 @@ with taco.open_writer(collection, "oceantaco-istac.zip", overwrite=True) as writ
                         shape=list(quality.shape),
                         data_type="uint8",
                     ),
-                    raster=taco.metadata.asset.Raster(resolution=2_000, num_bands=1, data_type="uint8"),
-                    stats=taco.metadata.asset.RasterStats(
-                        stats=[[float(quality.min()), float(quality.max()), float(quality.mean())]]
-                    ),
                 ),
             ),
         ]
@@ -265,7 +250,6 @@ with taco.open_writer(collection, "oceantaco-istac.zip", overwrite=True) as writ
         istac = taco.metadata.sample.ISTAC(
             crs="EPSG:4326",
             geometry=polygon(window["ring"]),
-            centroid=point(*window["centroid"]),
             time_start=window["time"],
             time_end=window["time"] + timedelta(minutes=18),
         )

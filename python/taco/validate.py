@@ -170,7 +170,7 @@ def _split_by_source(dataset: DatasetView) -> dict[str, dict[str, pa.Table]]:
         subset: dict[str, pa.Table] = {}
         for level, table in dataset.tables.items():
             if SOURCE_FILE in table.column_names:
-                mask = pc.equal(table.column(SOURCE_FILE), source)  # type: ignore[attr-defined]
+                mask = pc.equal(table.column(SOURCE_FILE), source)
                 subset[level] = table.filter(mask)
         result[source] = subset
     return result

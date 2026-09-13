@@ -171,14 +171,14 @@ class ArchiveWriter(Writer):
         assert self.partition_by is not None
         derived = any(
             self.partition_by in descriptor["produces"]
-            for descriptor in self.contract.derived.get(SAMPLE_LEVEL, {}).values()
+            for descriptor in self.contract.extensions.get(SAMPLE_LEVEL, {}).values()
         )
         if not derived:
             for _, sample, size in self._staged_samples():
                 yield sample, size
             return
 
-        # Derived fields normally appear while writing Parquet. A partition
+        # Extension outputs normally appear while writing Parquet. A partition
         # key is needed earlier, so compute just enough metadata to group the
         # sample before each part is built.
         batch: list[tuple[_PreparedSample, int]] = []
@@ -193,7 +193,12 @@ class ArchiveWriter(Writer):
         self, batch: list[tuple[_PreparedSample, int]]
     ) -> Iterator[tuple[_PreparedSample, int]]:
         rows = [dict(sample.metadata) for sample, _ in batch]
-        self.contract.apply_derived(SAMPLE_LEVEL, rows)
+        assets = []
+        for sample, _ in batch:
+            source = sample.assets[0].source if self.contract.is_null else None
+            assert source is None or isinstance(source, Path)
+            assets.append(source)
+        self.contract.apply_extensions(SAMPLE_LEVEL, rows, assets=assets)
         for (sample, size), metadata in zip(batch, rows, strict=True):
             yield sample.replace_metadata(metadata), size
 

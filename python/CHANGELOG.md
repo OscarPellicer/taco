@@ -5,6 +5,31 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- `Extension` and `ExtensionContext` provide one writer-time metadata API for
+  operations with validated sample inputs, declared outputs, dependencies, and
+  access to local assets. Extensions are explicitly attached to a metadata
+  level and run in dependency order.
+- Explicit `taco.extensions.STAC()` and `ISTAC()` operations derive centroids
+  and temporal midpoints during `writer.run()`. `MajorTOM` composes with STAC
+  through its `stac:centroid` dependency regardless of declaration order.
+- `taco.extensions.Rumi()` stores the canonical binary `rumi:header` for local
+  `.rumi` assets and can calculate named per-band `rumi:stats`.
+
+### Changed
+
+- Active STAC and ISTAC metadata can run at sample or folder scope according
+  to their configured input model.
+- Development and release checks exercise real Rumi and antimeridian runtimes
+  instead of silently skipping those integrations.
+
+### Removed
+
+- `metadata.asset.Raster` and `RasterStats`. Their manually repeated shape,
+  dtype, resolution, and positional statistics duplicated format metadata and
+  did not inspect raster assets.
+
 ## 0.4.0 - 2026-09-10
 
 ### Added

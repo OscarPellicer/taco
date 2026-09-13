@@ -7,21 +7,6 @@ from pydantic import Field, field_validator
 
 from ._base import AssetModel
 
-Float32 = Annotated[float, pa.float32()]
-Int32 = Annotated[int, pa.int32()]
-
-
-class Raster(AssetModel):
-    resolution: float = Field(gt=0, description="Spatial resolution in meters")
-    num_bands: Int32 = Field(gt=0, description="Number of bands")
-    data_type: str | None = Field(default=None, description="Raster data type")
-
-
-class RasterStats(AssetModel):
-    stats: Annotated[list[list[float]], pa.list_(pa.list_(pa.float32()))] | None = Field(
-        default=None, description="Per-band statistics"
-    )
-
 
 class Scaling(AssetModel):
     scale_factor: Annotated[list[float], pa.list_(pa.float32())] | None = Field(
@@ -56,4 +41,4 @@ class Scaling(AssetModel):
         return value
 
 
-__all__ = ["Raster", "RasterStats", "Scaling"]
+__all__ = ["Scaling"]

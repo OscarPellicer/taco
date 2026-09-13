@@ -26,17 +26,16 @@ def test_sample_metadata_facade_keeps_public_imports() -> None:
     assert taco.metadata.sample.ISTAC is taco.metadata.spatiotemporal.ISTAC
     assert taco.metadata.sample.MajorTOM is taco.metadata.derived.MajorTOM
     assert taco.metadata.sample.Split is taco.metadata.split.Split
+    assert taco.extensions.MajorTOM is taco.metadata.derived.MajorTOM
 
 
 def test_builtin_models() -> None:
-    raster = taco.metadata.asset.Raster(resolution=10, num_bands=13, data_type="uint16")
     scaling = taco.metadata.asset.Scaling(scale_factor=0.01, scale_offset=[1], padding=[1, 2, 3, 4])
-    stats = taco.metadata.asset.RasterStats(stats=[[0, 1, 0.5]])
     split = taco.metadata.sample.Split(split="train")
-    assert raster.num_bands == 13
     assert scaling.scale_factor == [0.01]
-    assert stats.stats == [[0.0, 1.0, 0.5]]
     assert split.split == "train"
+    assert not hasattr(taco.metadata.asset, "Raster")
+    assert not hasattr(taco.metadata.asset, "RasterStats")
 
 
 def test_scaling_validation() -> None:
@@ -95,7 +94,8 @@ def test_stac_and_istac_have_distinct_v2_profiles() -> None:
         "time_middle",
         "centroid",
     )
-    assert stac.time_middle == istac.time_middle == datetime(2024, 1, 2, tzinfo=timezone.utc)
+    assert stac.time_middle is None
+    assert istac.time_middle is None
     assert not issubclass(taco.metadata.sample.ISTAC, taco.metadata.sample.STAC)
 
 
@@ -153,7 +153,7 @@ def test_contract_rejects_stac_and_istac_on_same_level() -> None:
 
     serialized = taco.Contract(
         structure=None,
-        metadata=taco.MetadataSchema(taco.Level("sample", stac=taco.metadata.sample.STAC)),
+        metadata=taco.MetadataSchema(taco.Level("sample", stac=taco.extensions.STAC())),
     ).to_dict()
     serialized["taco:metadata"]["sample"]["stac:centroid"]["type"] = "string"
     with pytest.raises(ContractError, match="stac:centroid must have type binary"):
@@ -173,7 +173,7 @@ def test_collection_models() -> None:
 
 
 def test_major_tom_vector_batch() -> None:
-    extension = taco.metadata.sample.MajorTOM(dist_km=100)
+    extension = taco.extensions.MajorTOM(dist_km=100)
     result = extension.compute({"stac:centroid": [point(-76, -12), point(0, 0), point(100, 40)]})
     codes = result["code"]
     assert len(codes) == 3
@@ -192,12 +192,12 @@ def test_major_tom_vector_batch() -> None:
 )
 def test_major_tom_configuration(kwargs) -> None:
     with pytest.raises(ValueError, match="must"):
-        taco.metadata.sample.MajorTOM(**kwargs)
+        taco.extensions.MajorTOM(**kwargs)
 
 
 def test_major_tom_rejects_non_point() -> None:
     with pytest.raises(ValueError, match="WKB point"):
-        taco.metadata.sample.MajorTOM().compute({"stac:centroid": [b"bad"]})
+        taco.extensions.MajorTOM().compute({"stac:centroid": [b"bad"]})
 
 
 class FakeImage:

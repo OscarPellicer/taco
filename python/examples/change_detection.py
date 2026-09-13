@@ -16,7 +16,6 @@ def encode(array: np.ndarray) -> bytes:
     return buffer.getvalue()
 
 
-raster = taco.metadata.asset.Raster
 contract = taco.Contract(
     structure=[
         "before/B02.npy",
@@ -27,9 +26,7 @@ contract = taco.Contract(
     ],
     metadata=taco.MetadataSchema(
         taco.Level("sample", ml=taco.metadata.sample.Split),
-        taco.Level("children", acquisition=Acquisition | None, raster=raster | None),
-        taco.Level("children/before", raster=raster),
-        taco.Level("children/after", raster=raster),
+        taco.Level("children", acquisition=Acquisition | None),
     ),
 )
 collection = taco.Collection(
@@ -52,14 +49,7 @@ paths = {
     "after/B03.npy": after[1],
     "change.npy": np.any(before != after, axis=0),
 }
-assets = [
-    taco.Asset(
-        encode(array),
-        path=path,
-        metadata=taco.Metadata(raster=raster(resolution=10, num_bands=1, data_type=str(array.dtype))),
-    )
-    for path, array in paths.items()
-]
+assets = [taco.Asset(encode(array), path=path) for path, array in paths.items()]
 sample = taco.Sample(
     assets=assets,
     metadata=taco.Metadata(ml=taco.metadata.sample.Split(split="train")),

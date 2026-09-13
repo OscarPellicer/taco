@@ -124,16 +124,14 @@ class _SpatioTemporalExtent(CollectionSummary):
 def _validate_time_range(model: STAC | ISTAC) -> None:
     if model.time_end is not None and model.time_start > model.time_end:
         raise ValueError("time_start must not be after time_end")
-    if model.time_middle is None and model.time_end is not None:
-        midpoint = model.time_start + (model.time_end - model.time_start) / 2
-        object.__setattr__(model, "time_middle", midpoint)
 
 
 class STAC(SampleModel):
     """Compact spatiotemporal metadata for regular raster chunks.
 
     The affine grid reconstructs the footprint, so STAC does not duplicate a
-    WKB geometry per chunk.  Only ``centroid`` is WKB, always in EPSG:4326.
+    WKB geometry per chunk. ``centroid`` is an optional producer override; the
+    STAC writer extension otherwise derives and stores it in EPSG:4326.
     """
 
     __taco_namespace__ = "stac"
@@ -145,7 +143,7 @@ class STAC(SampleModel):
         description="Six-value GDAL affine geotransform"
     )
     time_start: TimestampUTC = Field(description="Acquisition start")
-    centroid: bytes = Field(description="Centroid in EPSG:4326 as WKB")
+    centroid: bytes | None = Field(default=None, description="Optional centroid override in EPSG:4326 as WKB")
     time_end: TimestampUTC | None = Field(default=None, description="Acquisition end")
     time_middle: TimestampUTC | None = Field(default=None, description="Acquisition midpoint")
 
@@ -165,8 +163,9 @@ class STAC(SampleModel):
 
     @field_validator("centroid")
     @classmethod
-    def _valid_centroid(cls, value: bytes) -> bytes:
-        point_from_wkb(value, field="stac:centroid")
+    def _valid_centroid(cls, value: bytes | None) -> bytes | None:
+        if value is not None:
+            point_from_wkb(value, field="stac:centroid")
         return value
 
     @model_validator(mode="after")
@@ -178,8 +177,9 @@ class STAC(SampleModel):
 class ISTAC(SampleModel):
     """Spatiotemporal metadata for samples with irregular footprints.
 
-    ``geometry`` is WKB in ``crs``.  ``centroid`` remains a WKB point in
-    EPSG:4326 so collection summaries and spatial indexes share one fast path.
+    ``geometry`` is WKB in ``crs``. ``centroid`` is an optional producer
+    override; the ISTAC writer extension otherwise derives it in EPSG:4326 so
+    collection summaries and spatial indexes share one fast path.
     """
 
     __taco_namespace__ = "istac"
@@ -190,12 +190,13 @@ class ISTAC(SampleModel):
     time_start: TimestampUTC = Field(description="Acquisition start")
     time_end: TimestampUTC | None = Field(default=None, description="Acquisition end")
     time_middle: TimestampUTC | None = Field(default=None, description="Acquisition midpoint")
-    centroid: bytes = Field(description="Centroid in EPSG:4326 as WKB")
+    centroid: bytes | None = Field(default=None, description="Optional centroid override in EPSG:4326 as WKB")
 
     @field_validator("centroid")
     @classmethod
-    def _valid_centroid(cls, value: bytes) -> bytes:
-        point_from_wkb(value, field="istac:centroid")
+    def _valid_centroid(cls, value: bytes | None) -> bytes | None:
+        if value is not None:
+            point_from_wkb(value, field="istac:centroid")
         return value
 
     @model_validator(mode="after")
