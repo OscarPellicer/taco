@@ -5,6 +5,8 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+## 0.6.2 - 2026-09-13
+
 ### Removed
 
 - Writer-time extension graphs and operational configuration are no longer
