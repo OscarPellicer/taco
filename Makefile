@@ -20,7 +20,7 @@ export COZIP_EXTENSION
 .PHONY: python r julia javascript deck onepager site clean
 
 python:
-	$(PYTHON) -m pip install -q "duckdb==$(DUCKDB_VERSION)" -e $(COZIP_PYTHON) -e python --no-deps
+	$(PYTHON) -m pip install -q "duckdb==$(DUCKDB_VERSION)" -e $(COZIP_PYTHON) -e "python[dev,test-eo]"
 	$(PYTHON) -m ruff format --check --config python/pyproject.toml python/taco python/tests python/examples
 	$(PYTHON) -m ruff check --config python/pyproject.toml python/taco python/tests python/examples tools
 	$(PYTHON) -m mypy --config-file python/pyproject.toml python/taco

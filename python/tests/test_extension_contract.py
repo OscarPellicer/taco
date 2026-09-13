@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, ClassVar
+
+import pyarrow as pa
+import pytest
+from pydantic import BaseModel
+
+import taco
+from taco._view import open_view
+from taco.errors import ContractError, SampleError
+
+
+class Value(BaseModel):
+    value: int
+
+
+@dataclass(frozen=True)
+class AssetValue(taco.Extension):
+    @property
+    def input_model(self) -> type[BaseModel]:
+        return Value
+
+    @property
+    def requires(self) -> tuple[str, ...]:
+        return ("value:value",)
+
+    @property
+    def fields(self) -> pa.Schema:
+        return pa.schema([pa.field("doubled", pa.int64(), nullable=False), pa.field("asset_name", pa.string())])
+
+    def run(self, context: taco.ExtensionContext) -> Mapping[str, Sequence[Any]]:
+        return {
+            "doubled": [item * 2 for item in context.columns["value:value"]],
+            "asset_name": [asset.name if asset is not None else None for asset in context.assets],
+        }
+
+
+@dataclass(frozen=True)
+class Generated(taco.Extension):
+    dependency: str
+
+    __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample"})
+
+    @property
+    def requires(self) -> tuple[str, ...]:
+        return (self.dependency,)
+
+    @property
+    def fields(self) -> pa.Schema:
+        return pa.schema([pa.field("value", pa.int64(), nullable=False)])
+
+    def run(self, context: taco.ExtensionContext) -> Mapping[str, Sequence[Any]]:
+        return {"value": context.columns[self.dependency]}
+
+
+@dataclass(frozen=True)
+class Broken(taco.Extension):
+    behavior: str
+
+    __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample"})
+
+    @property
+    def requires(self) -> tuple[str, ...]:
+        return ()
+
+    @property
+    def fields(self) -> pa.Schema:
+        return pa.schema([pa.field("value", pa.int64(), nullable=False)])
+
+    def run(self, context: taco.ExtensionContext) -> Mapping[str, Sequence[Any]]:
+        if self.behavior == "mapping":
+            return []  # type: ignore[return-value]
+        if self.behavior == "keys":
+            return {"other": [1] * len(context)}
+        if self.behavior == "length":
+            return {"value": []}
+        return {"value": ["not-an-integer"] * len(context)}
+
+
+def collection(contract: taco.Contract) -> taco.Collection:
+    return taco.Collection(
+        contract=contract,
+        id="extension-contract",
+        dataset_version="1.0.0",
+        description="Extension contract tests",
+        licenses=["MIT"],
+        providers=["TACO tests"],
+        tasks=["other"],
+    )
+
+
+def test_extension_context_requires_aligned_rows() -> None:
+    with pytest.raises(ValueError, match="same length"):
+        taco.ExtensionContext("sample", {"x:value": [1, 2]}, (None,))
+
+
+def test_extension_combines_inputs_with_local_assets(tmp_path: Path) -> None:
+    source = tmp_path / "value.bin"
+    source.write_bytes(b"value")
+    contract = taco.Contract(
+        structure=None,
+        metadata=taco.MetadataSchema(taco.Level("sample", value=AssetValue())),
+    )
+    with taco.open_writer(collection(contract), tmp_path / "dataset") as writer:
+        writer.add(taco.Sample(assets=source, metadata=taco.Metadata(value=Value(value=4))))
+        writer.run()
+    row = open_view(tmp_path / "dataset").level("sample").to_pylist()[0]
+    assert row["value:value"] == 4
+    assert row["value:doubled"] == 8
+    assert row["value:asset_name"] == "value.bin"
+
+
+def test_executable_extensions_reject_a_dependency_cycle() -> None:
+    with pytest.raises(ContractError, match="cycle"):
+        taco.Contract(
+            structure=None,
+            metadata=taco.MetadataSchema(
+                taco.Level("sample", first=Generated("second:value"), second=Generated("first:value"))
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("behavior", "message"),
+    [
+        ("mapping", "return a mapping"),
+        ("keys", "returned"),
+        ("length", "wrong number of rows"),
+        ("type", "invalid extension output"),
+    ],
+)
+def test_writer_rejects_invalid_extension_outputs(behavior: str, message: str, tmp_path: Path) -> None:
+    contract = taco.Contract(
+        structure=None,
+        metadata=taco.MetadataSchema(taco.Level("sample", broken=Broken(behavior))),
+    )
+    with taco.open_writer(collection(contract), tmp_path / behavior) as writer:
+        writer.add(taco.Sample(assets=b"x"))
+        with pytest.raises(SampleError, match=message):
+            writer.run()
+    assert not (tmp_path / behavior).exists()

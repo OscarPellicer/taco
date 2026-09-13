@@ -31,7 +31,7 @@ jobs:
       - name: Test
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e "./python[dev]"
+          python -m pip install -e "./python[dev,test-eo]"
           python -m ruff format --check --config python/pyproject.toml python/taco python/tests python/examples
           python -m ruff check --config python/pyproject.toml python/taco python/tests python/examples tools
           python -m mypy --config-file python/pyproject.toml python/taco
