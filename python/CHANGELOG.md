@@ -5,6 +5,8 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+## 0.6.1 - 2026-09-13
+
 ### Changed
 
 - Rename the standalone `SAC`, `ISAC`, and `TAC` APIs and namespaces to the
