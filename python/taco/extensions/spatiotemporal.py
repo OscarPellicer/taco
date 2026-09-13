@@ -11,11 +11,11 @@ from typing import Any, ClassVar
 import pyarrow as pa
 
 from ..metadata._base import Extension, ExtensionContext
-from ..metadata.spatiotemporal import ISAC as ISACMetadata
 from ..metadata.spatiotemporal import ISTAC as ISTACMetadata
-from ..metadata.spatiotemporal import SAC as SACMetadata
 from ..metadata.spatiotemporal import STAC as STACMetadata
-from ..metadata.spatiotemporal import TAC as TACMetadata
+from ..metadata.spatiotemporal import ISpatial as ISpatialMetadata
+from ..metadata.spatiotemporal import Spatial as SpatialMetadata
+from ..metadata.spatiotemporal import Temporal as TemporalMetadata
 
 
 def _point_wkb(longitude: float, latitude: float) -> bytes:
@@ -168,51 +168,51 @@ def _temporal_run(context: ExtensionContext, namespace: str) -> dict[str, Sequen
 
 
 @dataclass(frozen=True)
-class SAC(Extension):
+class Spatial(Extension):
     """Complete regular spatial metadata during ``writer.run()``."""
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample", "folder"})
-    model: type[SACMetadata] = SACMetadata
+    model: type[SpatialMetadata] = SpatialMetadata
 
     def __post_init__(self) -> None:
-        if not isinstance(self.model, type) or not issubclass(self.model, SACMetadata):
-            raise TypeError("SAC model must inherit taco.metadata.sample.SAC")
+        if not isinstance(self.model, type) or not issubclass(self.model, SpatialMetadata):
+            raise TypeError("Spatial model must inherit taco.metadata.sample.Spatial")
 
     @property
-    def input_model(self) -> type[SACMetadata]:
+    def input_model(self) -> type[SpatialMetadata]:
         return self.model
 
     @property
     def requires(self) -> tuple[str, ...]:
-        return ("sac:crs", "sac:tensor_shape", "sac:geotransform")
+        return ("spatial:crs", "spatial:tensor_shape", "spatial:geotransform")
 
     @property
     def fields(self) -> pa.Schema:
         return pa.schema([_centroid_field()])
 
     def run(self, context: ExtensionContext) -> Mapping[str, Sequence[Any]]:
-        return _regular_run(context, "sac")
+        return _regular_run(context, "spatial")
 
 
 @dataclass(frozen=True)
-class ISAC(Extension):
+class ISpatial(Extension):
     """Complete irregular spatial metadata during ``writer.run()``."""
 
     check_antimeridian: bool = False
-    model: type[ISACMetadata] = ISACMetadata
+    model: type[ISpatialMetadata] = ISpatialMetadata
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample", "folder"})
 
     def __post_init__(self) -> None:
-        if not isinstance(self.model, type) or not issubclass(self.model, ISACMetadata):
-            raise TypeError("ISAC model must inherit taco.metadata.sample.ISAC")
+        if not isinstance(self.model, type) or not issubclass(self.model, ISpatialMetadata):
+            raise TypeError("ISpatial model must inherit taco.metadata.sample.ISpatial")
 
     @property
-    def input_model(self) -> type[ISACMetadata]:
+    def input_model(self) -> type[ISpatialMetadata]:
         return self.model
 
     @property
     def requires(self) -> tuple[str, ...]:
-        return ("isac:crs", "isac:geometry")
+        return ("ispatial:crs", "ispatial:geometry")
 
     @property
     def fields(self) -> pa.Schema:
@@ -222,34 +222,34 @@ class ISAC(Extension):
         return {"check_antimeridian": self.check_antimeridian}
 
     def run(self, context: ExtensionContext) -> Mapping[str, Sequence[Any]]:
-        return _irregular_run(context, "isac", self.check_antimeridian)
+        return _irregular_run(context, "ispatial", self.check_antimeridian)
 
 
 @dataclass(frozen=True)
-class TAC(Extension):
+class Temporal(Extension):
     """Complete temporal metadata during ``writer.run()``."""
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample", "folder"})
-    model: type[TACMetadata] = TACMetadata
+    model: type[TemporalMetadata] = TemporalMetadata
 
     def __post_init__(self) -> None:
-        if not isinstance(self.model, type) or not issubclass(self.model, TACMetadata):
-            raise TypeError("TAC model must inherit taco.metadata.sample.TAC")
+        if not isinstance(self.model, type) or not issubclass(self.model, TemporalMetadata):
+            raise TypeError("Temporal model must inherit taco.metadata.sample.Temporal")
 
     @property
-    def input_model(self) -> type[TACMetadata]:
+    def input_model(self) -> type[TemporalMetadata]:
         return self.model
 
     @property
     def requires(self) -> tuple[str, ...]:
-        return ("tac:time_start", "tac:time_end")
+        return ("temporal:time_start", "temporal:time_end")
 
     @property
     def fields(self) -> pa.Schema:
         return pa.schema([_middle_field()])
 
     def run(self, context: ExtensionContext) -> Mapping[str, Sequence[Any]]:
-        return _temporal_run(context, "tac")
+        return _temporal_run(context, "temporal")
 
 
 @dataclass(frozen=True)
@@ -313,4 +313,4 @@ class ISTAC(Extension):
         }
 
 
-__all__ = ["ISAC", "ISTAC", "SAC", "STAC", "TAC", "geometry_centroid", "raster_centroid"]
+__all__ = ["ISTAC", "STAC", "ISpatial", "Spatial", "Temporal", "geometry_centroid", "raster_centroid"]

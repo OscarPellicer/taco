@@ -2,6 +2,6 @@
 
 from ..metadata.derived import GeoEnrich, MajorTOM
 from .rumi import Rumi
-from .spatiotemporal import ISAC, ISTAC, SAC, STAC, TAC
+from .spatiotemporal import ISTAC, STAC, ISpatial, Spatial, Temporal
 
-__all__ = ["ISAC", "ISTAC", "SAC", "STAC", "TAC", "GeoEnrich", "MajorTOM", "Rumi"]
+__all__ = ["ISTAC", "STAC", "GeoEnrich", "ISpatial", "MajorTOM", "Rumi", "Spatial", "Temporal"]

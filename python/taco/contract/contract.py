@@ -20,18 +20,18 @@ SAMPLE_LEVEL = "sample"
 CHILDREN_LEVEL = "children"
 
 _PROFILE_TYPES = {
-    "sac": {
+    "spatial": {
         "crs": "string",
         "tensor_shape": "list<int64>",
         "geotransform": "list<double>",
         "centroid": "binary",
     },
-    "isac": {
+    "ispatial": {
         "crs": "string",
         "geometry": "binary",
         "centroid": "binary",
     },
-    "tac": {
+    "temporal": {
         "time_start": "timestamp[us, UTC]",
     },
     "stac": {
@@ -214,20 +214,20 @@ class Contract:
                     raise ContractError(f"metadata level {level!r} must choose either STAC or ISTAC, not both")
                 names = ", ".join(name.upper() for name in profiles)
                 raise ContractError(f"metadata level {level!r} must choose one metadata profile, got {names}")
-            for namespace in ("sac", "stac"):
+            for namespace in ("spatial", "stac"):
                 if f"{namespace}:geometry" in fields:
-                    irregular = "ISAC" if namespace == "sac" else "ISTAC"
+                    irregular = "ISpatial" if namespace == "spatial" else "ISTAC"
                     raise ContractError(
                         f"metadata level {level!r} puts geometry in {namespace.upper()}; "
                         f"use the {irregular} group for irregular footprints"
                     )
-            for namespace in ("isac", "istac"):
+            for namespace in ("ispatial", "istac"):
                 irregular_grid_fields = {
                     f"{namespace}:tensor_shape",
                     f"{namespace}:geotransform",
                 }.intersection(fields)
                 if irregular_grid_fields:
-                    regular = "SAC" if namespace == "isac" else "STAC"
+                    regular = "Spatial" if namespace == "ispatial" else "STAC"
                     raise ContractError(
                         f"metadata level {level!r} puts affine-grid fields in {namespace.upper()}; "
                         f"use the {regular} group for regular chunks"
@@ -239,7 +239,7 @@ class Contract:
                 missing = sorted(set(expected) - present)
                 if missing:
                     raise ContractError(f"{namespace.upper()} metadata at level {level!r} is missing fields {missing}")
-                optional = _PROFILE_OPTIONAL_TYPES if namespace in {"tac", "stac", "istac"} else {}
+                optional = _PROFILE_OPTIONAL_TYPES if namespace in {"temporal", "stac", "istac"} else {}
                 for name, expected_type in {**expected, **optional}.items():
                     qualified = f"{namespace}:{name}"
                     if qualified in fields and fields[qualified].type != expected_type:

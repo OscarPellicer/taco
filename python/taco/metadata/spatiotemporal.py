@@ -170,10 +170,10 @@ def _validate_time_range(model: Any) -> None:
         raise ValueError("time_start must not be after time_end")
 
 
-class SAC(SampleModel):
+class Spatial(SampleModel):
     """Spatial metadata for regular raster chunks."""
 
-    __taco_namespace__ = "sac"
+    __taco_namespace__ = "spatial"
     __taco_summaries__ = (_SpatialExtent,)
 
     crs: str = Field(min_length=1, description="Coordinate reference system (WKT2, EPSG, or PROJ)")
@@ -189,13 +189,13 @@ class SAC(SampleModel):
     @field_validator("centroid")
     @classmethod
     def _centroid(cls, value: bytes | None) -> bytes | None:
-        return _validate_centroid(value, "sac")
+        return _validate_centroid(value, "spatial")
 
 
-class ISAC(SampleModel):
+class ISpatial(SampleModel):
     """Spatial metadata for samples with irregular footprints."""
 
-    __taco_namespace__ = "isac"
+    __taco_namespace__ = "ispatial"
     __taco_summaries__ = (_SpatialExtent,)
 
     crs: str = Field(min_length=1, description="Coordinate reference system (WKT2, EPSG, or PROJ)")
@@ -205,20 +205,20 @@ class ISAC(SampleModel):
     @field_validator("centroid")
     @classmethod
     def _centroid(cls, value: bytes | None) -> bytes | None:
-        return _validate_centroid(value, "isac")
+        return _validate_centroid(value, "ispatial")
 
 
-class TAC(SampleModel):
+class Temporal(SampleModel):
     """Temporal metadata for samples without a required spatial profile."""
 
-    __taco_namespace__ = "tac"
+    __taco_namespace__ = "temporal"
 
     time_start: TimestampUTC = Field(description="Acquisition start")
     time_end: TimestampUTC | None = Field(default=None, description="Acquisition end")
     time_middle: TimestampUTC | None = Field(default=None, description="Acquisition midpoint")
 
     @model_validator(mode="after")
-    def _times(self) -> TAC:
+    def _times(self) -> Temporal:
         _validate_time_range(self)
         return self
 
@@ -277,4 +277,4 @@ class ISTAC(SampleModel):
         return self
 
 
-__all__ = ["ISAC", "ISTAC", "SAC", "STAC", "TAC"]
+__all__ = ["ISTAC", "STAC", "ISpatial", "Spatial", "Temporal"]

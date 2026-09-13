@@ -19,9 +19,10 @@ parts = taco.read(["part-0.zip", "part-1.zip"])
 Every example is self-contained, uses synthetic data, and writes its output in
 the current directory.
 
-Spatial and temporal metadata use separate profiles: `SAC` for regular spatial
-grids, `ISAC` for irregular footprints, and `TAC` for time alone. `STAC`
-combines `SAC` + `TAC`; `ISTAC` combines `ISAC` + `TAC`.
+Spatial and temporal metadata use separate profiles: `Spatial` for regular
+spatial grids, `ISpatial` for irregular footprints, and `Temporal` for time
+alone. `STAC` combines regular spatial + temporal metadata; `ISTAC` combines
+irregular spatial + temporal metadata.
 
 | Example | What it demonstrates |
 | --- | --- |

@@ -43,7 +43,9 @@ def stac(model: type[taco.metadata.sample.STAC] = taco.metadata.sample.STAC) -> 
     )
 
 
-def sac(model: type[taco.metadata.sample.SAC] = taco.metadata.sample.SAC) -> taco.metadata.sample.SAC:
+def spatial(
+    model: type[taco.metadata.sample.Spatial] = taco.metadata.sample.Spatial,
+) -> taco.metadata.sample.Spatial:
     return model(
         crs="EPSG:4326",
         tensor_shape=(1, 10, 10),
@@ -71,65 +73,65 @@ def test_extension_dependencies_ignore_declaration_order(tmp_path: Path) -> None
     assert row["majortom:code"].startswith("0010km_")
 
 
-def test_sac_is_regular_spatial_only_and_composes_with_majortom(tmp_path: Path) -> None:
+def test_spatial_is_regular_only_and_composes_with_majortom(tmp_path: Path) -> None:
     contract = taco.Contract(
         structure=None,
         metadata=taco.MetadataSchema(
             taco.Level(
                 "sample",
-                majortom=taco.extensions.MajorTOM(centroid="sac:centroid"),
-                sac=taco.extensions.SAC(),
+                majortom=taco.extensions.MajorTOM(centroid="spatial:centroid"),
+                spatial=taco.extensions.Spatial(),
             )
         ),
     )
     with taco.open_writer(collection(contract), tmp_path / "dataset") as writer:
-        writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(sac=sac())))
+        writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(spatial=spatial())))
         writer.run()
 
     dataset = open_view(tmp_path / "dataset")
     row = dataset.level("sample").to_pylist()[0]
-    assert row["sac:centroid"] == point(0, 0)
+    assert row["spatial:centroid"] == point(0, 0)
     assert row["majortom:code"].startswith("0100km_")
-    assert not any(name.startswith(("stac:", "tac:")) for name in row)
+    assert not any(name.startswith(("stac:", "temporal:")) for name in row)
     assert dataset.collection.extent == taco.contract.Extent((0, 0, 0, 0))
 
 
-def test_tac_is_temporal_only(tmp_path: Path) -> None:
+def test_temporal_is_temporal_only(tmp_path: Path) -> None:
     contract = taco.Contract(
         structure=None,
-        metadata=taco.MetadataSchema(taco.Level("sample", tac=taco.extensions.TAC())),
+        metadata=taco.MetadataSchema(taco.Level("sample", temporal=taco.extensions.Temporal())),
     )
-    metadata = taco.metadata.sample.TAC(
+    metadata = taco.metadata.sample.Temporal(
         time_start=datetime(2024, 1, 1, tzinfo=timezone.utc),
         time_end=datetime(2024, 1, 3, tzinfo=timezone.utc),
     )
     with taco.open_writer(collection(contract), tmp_path / "dataset") as writer:
-        writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(tac=metadata)))
+        writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(temporal=metadata)))
         writer.run()
 
     dataset = open_view(tmp_path / "dataset")
     row = dataset.level("sample").to_pylist()[0]
-    assert row["tac:time_middle"] == datetime(2024, 1, 2, tzinfo=timezone.utc)
-    assert not any(name.startswith(("sac:", "stac:", "istac:", "isac:")) for name in row)
+    assert row["temporal:time_middle"] == datetime(2024, 1, 2, tzinfo=timezone.utc)
+    assert not any(name.startswith(("spatial:", "stac:", "istac:", "ispatial:")) for name in row)
     assert dataset.collection.extent is None
 
 
-def test_isac_is_irregular_spatial_only(tmp_path: Path) -> None:
+def test_ispatial_is_irregular_spatial_only(tmp_path: Path) -> None:
     contract = taco.Contract(
         structure=None,
-        metadata=taco.MetadataSchema(taco.Level("sample", isac=taco.extensions.ISAC())),
+        metadata=taco.MetadataSchema(taco.Level("sample", ispatial=taco.extensions.ISpatial())),
     )
-    metadata = taco.metadata.sample.ISAC(
+    metadata = taco.metadata.sample.ISpatial(
         crs="EPSG:4326",
         geometry=Polygon([(-77, -13), (-75, -13), (-75, -11), (-77, -11)]).wkb,
     )
     with taco.open_writer(collection(contract), tmp_path / "dataset") as writer:
-        writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(isac=metadata)))
+        writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(ispatial=metadata)))
         writer.run()
 
     dataset = open_view(tmp_path / "dataset")
     row = dataset.level("sample").to_pylist()[0]
-    assert coordinates(row["isac:centroid"]) == pytest.approx((-76, -12))
+    assert coordinates(row["ispatial:centroid"]) == pytest.approx((-76, -12))
     assert dataset.collection.extent == taco.contract.Extent((-76, -12, -76, -12))
 
 

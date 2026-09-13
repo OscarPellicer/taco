@@ -22,9 +22,9 @@ def point(x: float, y: float) -> bytes:
 
 
 def test_sample_metadata_facade_keeps_public_imports() -> None:
-    assert taco.metadata.sample.SAC is taco.metadata.spatiotemporal.SAC
-    assert taco.metadata.sample.ISAC is taco.metadata.spatiotemporal.ISAC
-    assert taco.metadata.sample.TAC is taco.metadata.spatiotemporal.TAC
+    assert taco.metadata.sample.Spatial is taco.metadata.spatiotemporal.Spatial
+    assert taco.metadata.sample.ISpatial is taco.metadata.spatiotemporal.ISpatial
+    assert taco.metadata.sample.Temporal is taco.metadata.spatiotemporal.Temporal
     assert taco.metadata.sample.STAC is taco.metadata.spatiotemporal.STAC
     assert taco.metadata.sample.ISTAC is taco.metadata.spatiotemporal.ISTAC
     assert taco.metadata.sample.MajorTOM is taco.metadata.derived.MajorTOM
@@ -103,12 +103,12 @@ def test_stac_and_istac_have_distinct_v2_profiles() -> None:
 
 
 def test_spatial_and_temporal_profiles_have_distinct_namespaces() -> None:
-    assert taco.metadata.sample.SAC.__taco_namespace__ == "sac"
-    assert taco.metadata.sample.ISAC.__taco_namespace__ == "isac"
-    assert taco.metadata.sample.TAC.__taco_namespace__ == "tac"
-    assert tuple(taco.metadata.sample.SAC.model_fields) == ("crs", "tensor_shape", "geotransform", "centroid")
-    assert tuple(taco.metadata.sample.ISAC.model_fields) == ("crs", "geometry", "centroid")
-    assert tuple(taco.metadata.sample.TAC.model_fields) == ("time_start", "time_end", "time_middle")
+    assert taco.metadata.sample.Spatial.__taco_namespace__ == "spatial"
+    assert taco.metadata.sample.ISpatial.__taco_namespace__ == "ispatial"
+    assert taco.metadata.sample.Temporal.__taco_namespace__ == "temporal"
+    assert tuple(taco.metadata.sample.Spatial.model_fields) == ("crs", "tensor_shape", "geotransform", "centroid")
+    assert tuple(taco.metadata.sample.ISpatial.model_fields) == ("crs", "geometry", "centroid")
+    assert tuple(taco.metadata.sample.Temporal.model_fields) == ("time_start", "time_end", "time_middle")
 
 
 def test_stac_grid_validation() -> None:
@@ -176,26 +176,28 @@ def test_contract_rejects_mixed_profiles_and_incomplete_new_profiles() -> None:
     with pytest.raises(ContractError, match="must choose one metadata profile"):
         taco.Contract(
             structure=None,
-            metadata=taco.MetadataSchema(taco.Level("sample", sac=taco.extensions.SAC(), tac=taco.extensions.TAC())),
+            metadata=taco.MetadataSchema(
+                taco.Level("sample", spatial=taco.extensions.Spatial(), temporal=taco.extensions.Temporal())
+            ),
         )
-    with pytest.raises(ContractError, match=r"SAC metadata.*missing fields"):
-        taco.Contract(structure=None, metadata={"sample": {"sac:centroid": "binary"}})
-    with pytest.raises(ContractError, match=r"TAC metadata.*missing fields"):
+    with pytest.raises(ContractError, match=r"SPATIAL metadata.*missing fields"):
+        taco.Contract(structure=None, metadata={"sample": {"spatial:centroid": "binary"}})
+    with pytest.raises(ContractError, match=r"TEMPORAL metadata.*missing fields"):
         taco.Contract(
             structure=None,
-            metadata={"sample": {"tac:time_middle": "timestamp[us, UTC]"}},
+            metadata={"sample": {"temporal:time_middle": "timestamp[us, UTC]"}},
         )
 
 
 def test_derived_centroid_dependency_is_configurable() -> None:
-    majortom = taco.extensions.MajorTOM(centroid="sac:centroid")
-    geoenrich = taco.extensions.GeoEnrich(["elevation"], centroid="isac:centroid")
-    assert majortom.requires == ("sac:centroid",)
-    assert majortom.configuration()["centroid"] == "sac:centroid"
-    assert geoenrich.requires == ("isac:centroid",)
-    assert geoenrich.configuration()["centroid"] == "isac:centroid"
+    majortom = taco.extensions.MajorTOM(centroid="spatial:centroid")
+    geoenrich = taco.extensions.GeoEnrich(["elevation"], centroid="ispatial:centroid")
+    assert majortom.requires == ("spatial:centroid",)
+    assert majortom.configuration()["centroid"] == "spatial:centroid"
+    assert geoenrich.requires == ("ispatial:centroid",)
+    assert geoenrich.configuration()["centroid"] == "ispatial:centroid"
     with pytest.raises(ValueError, match="ending in ':centroid'"):
-        taco.extensions.MajorTOM(centroid="sac:geometry")
+        taco.extensions.MajorTOM(centroid="spatial:geometry")
 
 
 def test_collection_models() -> None:

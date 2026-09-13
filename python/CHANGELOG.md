@@ -5,6 +5,12 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+### Changed
+
+- Rename the standalone `SAC`, `ISAC`, and `TAC` APIs and namespaces to the
+  explicit `Spatial`/`spatial`, `ISpatial`/`ispatial`, and
+  `Temporal`/`temporal` names. `STAC` and `ISTAC` are unchanged.
+
 ## 0.6.0 - 2026-09-13
 
 ### Added

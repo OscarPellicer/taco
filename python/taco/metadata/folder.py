@@ -1,21 +1,21 @@
 from typing import ClassVar
 
-from .sample import ISAC as _SampleISAC
 from .sample import ISTAC as _SampleISTAC
-from .sample import SAC as _SampleSAC
 from .sample import STAC as _SampleSTAC
-from .sample import TAC as _SampleTAC
+from .sample import ISpatial as _SampleISpatial
+from .sample import Spatial as _SampleSpatial
+from .sample import Temporal as _SampleTemporal
 
 
-class SAC(_SampleSAC):
+class Spatial(_SampleSpatial):
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"folder"})
 
 
-class ISAC(_SampleISAC):
+class ISpatial(_SampleISpatial):
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"folder"})
 
 
-class TAC(_SampleTAC):
+class Temporal(_SampleTemporal):
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"folder"})
 
 
@@ -27,4 +27,4 @@ class ISTAC(_SampleISTAC):
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"folder"})
 
 
-__all__ = ["ISAC", "ISTAC", "SAC", "STAC", "TAC"]
+__all__ = ["ISTAC", "STAC", "ISpatial", "Spatial", "Temporal"]

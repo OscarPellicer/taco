@@ -110,13 +110,13 @@ def spatial_profile(
     model: type[BaseModel],
 ) -> BaseModel:
     x = -76.0 + index
-    if profile == "sac":
+    if profile == "spatial":
         return model(
             crs="EPSG:4326",
             tensor_shape=(1, 16, 16),
             geotransform=(x - 0.1, 0.2 / 16, 0, -11.9, 0, -0.2 / 16),
         )
-    if profile == "isac":
+    if profile == "ispatial":
         return model(crs="EPSG:4326", geometry=polygon(x - 0.1, -12.1, x + 0.1, -11.9))
     return model(
         time_start=datetime(2024, 1, index + 1, tzinfo=timezone.utc),
@@ -469,11 +469,15 @@ def derived_metadata() -> DatasetCase:
 
 
 def independent_profile(profile: str) -> DatasetCase:
-    sample_extension = {"sac": taco.extensions.SAC, "isac": taco.extensions.ISAC, "tac": taco.extensions.TAC}[profile]
+    sample_extension = {
+        "spatial": taco.extensions.Spatial,
+        "ispatial": taco.extensions.ISpatial,
+        "temporal": taco.extensions.Temporal,
+    }[profile]
     folder_model = {
-        "sac": taco.metadata.folder.SAC,
-        "isac": taco.metadata.folder.ISAC,
-        "tac": taco.metadata.folder.TAC,
+        "spatial": taco.metadata.folder.Spatial,
+        "ispatial": taco.metadata.folder.ISpatial,
+        "temporal": taco.metadata.folder.Temporal,
     }[profile]
     contract = taco.Contract(
         structure=["scene/data.bin"],
@@ -514,9 +518,9 @@ CASES = (
     deep_hierarchy(),
     rich_metadata(),
     derived_metadata(),
-    independent_profile("sac"),
-    independent_profile("isac"),
-    independent_profile("tac"),
+    independent_profile("spatial"),
+    independent_profile("ispatial"),
+    independent_profile("temporal"),
 )
 
 
