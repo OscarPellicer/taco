@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal, cast
 
 import pyarrow as pa
 
@@ -170,7 +170,10 @@ def _split_by_source(dataset: DatasetView) -> dict[str, dict[str, pa.Table]]:
         subset: dict[str, pa.Table] = {}
         for level, table in dataset.tables.items():
             if SOURCE_FILE in table.column_names:
-                mask = pc.equal(table.column(SOURCE_FILE), source)
+                # Arrow compute kernels are registered dynamically. Casting
+                # the module keeps this compatible with both old and new
+                # pyarrow stub layouts without changing runtime behavior.
+                mask = cast(Any, pc).equal(table.column(SOURCE_FILE), source)
                 subset[level] = table.filter(mask)
         result[source] = subset
     return result

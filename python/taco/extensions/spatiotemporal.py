@@ -5,6 +5,7 @@ import struct
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from importlib import import_module
 from typing import Any, ClassVar
 
 import pyarrow as pa
@@ -82,7 +83,7 @@ def geometry_centroid(crs: str, geometry: bytes, *, check_antimeridian: bool) ->
 
     if source.is_geographic and check_antimeridian:
         try:
-            import antimeridian
+            antimeridian = import_module("antimeridian")
         except ImportError as exc:
             raise ImportError("ISTAC(check_antimeridian=True) requires 'taco-eo[antimeridian]'") from exc
         fixed = antimeridian.fix_shape(shape, fix_winding=True)
