@@ -5,6 +5,8 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+## 0.5.0 - 2026-09-13
+
 ### Added
 
 - `Extension` and `ExtensionContext` provide one writer-time metadata API for
