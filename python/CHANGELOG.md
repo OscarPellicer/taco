@@ -5,6 +5,8 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+## 0.6.0 - 2026-09-13
+
 ### Added
 
 - Distinct `SAC`, `ISAC`, and `TAC` metadata profiles for regular spatial,
