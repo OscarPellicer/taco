@@ -177,6 +177,7 @@ class GeoEnrich(DerivedMetadata):
     """Fetch selected Earth Engine variables and resolve administrative names."""
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample"})
+    __taco_complete_level__: ClassVar[bool] = True
 
     variables: tuple[str, ...]
     scale_m: float

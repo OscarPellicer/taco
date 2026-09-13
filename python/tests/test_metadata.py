@@ -306,6 +306,8 @@ def test_geoenrich_batches_requests(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_geoenrich_configuration() -> None:
+    assert taco.metadata.sample.GeoEnrich.__taco_complete_level__
+    assert not taco.metadata.sample.MajorTOM.__taco_complete_level__
     with pytest.raises(ValueError, match="unknown"):
         taco.metadata.sample.GeoEnrich(["nope"])
     with pytest.raises(ValueError, match="positive"):

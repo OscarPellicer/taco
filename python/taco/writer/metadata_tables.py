@@ -111,6 +111,14 @@ class MetadataTableWriter:
         self._writers: dict[str, pq.ParquetWriter] = {}
         self._next_id = dict.fromkeys(contract.levels, 0)
         self._verified_extensions: set[str] = set()
+        self._complete_levels = {
+            level
+            for level in contract.levels
+            if any(
+                group.extension is not None and group.extension.__taco_complete_level__
+                for group in contract._groups[level]
+            )
+        }
         self._summaries = _collection_summaries(contract)
         self.paths = {level: directory / level_to_filename(level) for level in contract.levels}
         directory.mkdir(parents=True, exist_ok=True)
@@ -183,7 +191,7 @@ class MetadataTableWriter:
         self._buffers[level].append(row)
         self._asset_buffers[level].append(asset)
         self._next_id[level] += 1
-        if len(self._buffers[level]) >= self.batch_size:
+        if level not in self._complete_levels and len(self._buffers[level]) >= self.batch_size:
             self._flush(level)
 
     def _parquet_writer(self, level: str) -> pq.ParquetWriter:

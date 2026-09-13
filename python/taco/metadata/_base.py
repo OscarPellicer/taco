@@ -75,6 +75,7 @@ class Extension(ABC):
     """
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset()
+    __taco_complete_level__: ClassVar[bool] = False
 
     @property
     def input_model(self) -> type[BaseModel] | None:

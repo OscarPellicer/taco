@@ -5,6 +5,13 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+## 0.6.3 - 2026-09-13
+
+### Fixed
+
+- `GeoEnrich` now receives the complete metadata level before applying the
+  same globally sorted, concurrent Earth Engine batching used by Taco v2.
+
 ## 0.6.2 - 2026-09-13
 
 ### Removed

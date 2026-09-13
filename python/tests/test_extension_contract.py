@@ -57,6 +57,27 @@ class Generated(taco.Extension):
         return {"value": context.columns[self.dependency]}
 
 
+COMPLETE_BATCHES: list[int] = []
+
+
+@dataclass(frozen=True)
+class CompleteGenerated(taco.Extension):
+    __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample"})
+    __taco_complete_level__: ClassVar[bool] = True
+
+    @property
+    def requires(self) -> tuple[str, ...]:
+        return ()
+
+    @property
+    def fields(self) -> pa.Schema:
+        return pa.schema([pa.field("value", pa.int64(), nullable=False)])
+
+    def run(self, context: taco.ExtensionContext) -> Mapping[str, Sequence[Any]]:
+        COMPLETE_BATCHES.append(len(context))
+        return {"value": list(range(len(context)))}
+
+
 @dataclass(frozen=True)
 class Broken(taco.Extension):
     behavior: str
@@ -112,6 +133,22 @@ def test_extension_combines_inputs_with_local_assets(tmp_path: Path) -> None:
     assert row["value:value"] == 4
     assert row["value:doubled"] == 8
     assert row["value:asset_name"] == "value.bin"
+
+
+def test_complete_level_extension_receives_all_rows(tmp_path: Path) -> None:
+    COMPLETE_BATCHES.clear()
+    contract = taco.Contract(
+        structure=None,
+        metadata=taco.MetadataSchema(taco.Level("sample", complete=CompleteGenerated())),
+    )
+    with taco.open_writer(collection(contract), tmp_path / "complete", batch_size=1) as writer:
+        writer.extend([taco.Sample(assets=b"x") for _ in range(3)])
+        writer.run()
+
+    # The second call is the writer's one-row independence check.
+    assert COMPLETE_BATCHES == [3, 1]
+    values = open_view(tmp_path / "complete").level("sample").column("complete:value").to_pylist()
+    assert values == [0, 1, 2]
 
 
 def test_executable_extensions_reject_a_dependency_cycle() -> None:
