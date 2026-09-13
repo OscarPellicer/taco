@@ -5,9 +5,11 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
+from importlib.resources import as_file, files
 from typing import Any, ClassVar
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 from ._base import DerivedMetadata
 from .spatiotemporal import point_from_wkb
@@ -133,43 +135,98 @@ class MajorTOM(DerivedMetadata):
         return {"code": codes}
 
 
+def _morton_key(longitude: float, latitude: float, bits: int = 24) -> int:
+    maximum = (1 << bits) - 1
+    x = max(0, min(maximum, int((longitude + 180.0) / 360.0 * maximum)))
+    y = max(0, min(maximum, int((latitude + 90.0) / 180.0 * maximum)))
+
+    def spread(value: int) -> int:
+        value &= 0xFFFFFFFF
+        value = (value | value << 16) & 0x0000FFFF0000FFFF
+        value = (value | value << 8) & 0x00FF00FF00FF00FF
+        value = (value | value << 4) & 0x0F0F0F0F0F0F0F0F
+        value = (value | value << 2) & 0x3333333333333333
+        return (value | value << 1) & 0x5555555555555555
+
+    return spread(x) << 1 | spread(y)
+
+
+@lru_cache(maxsize=3)
+def _admin_names(level: int) -> dict[int, str]:
+    resource = files("taco").joinpath("metadata", "data", "admin", f"admin{level}.parquet")
+    with as_file(resource) as path:
+        table = pq.read_table(  # type: ignore[no-untyped-call]
+            path, columns=[f"admin_code{level}", "name"]
+        )
+    codes, names = table.columns
+    return dict(zip(codes.to_pylist(), names.to_pylist(), strict=True))
+
+
 @dataclass(frozen=True, init=False)
 class GeoEnrich(DerivedMetadata):
-    """Fetch selected Earth Engine values at each STAC centroid."""
+    """Fetch selected Earth Engine variables and resolve administrative names."""
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample"})
 
     variables: tuple[str, ...]
     scale_m: float
-    _PRODUCTS: ClassVar[dict[str, tuple[str, str | None, bool, str]]] = {
-        "elevation": ("projects/sat-io/open-datasets/GLO-30", None, True, "mean"),
-        "cisi": ("projects/sat-io/open-datasets/CISI/global_CISI", None, False, "mean"),
-        "precipitation": ("projects/ee-csaybar-real/assets/precipitation", None, False, "mean"),
-        "temperature": ("projects/ee-csaybar-real/assets/temperature", None, False, "mean"),
-        "soil_clay": ("OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02", "b0", False, "mean"),
-        "soil_sand": ("OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02", "b0", False, "mean"),
-        "soil_carbon": ("OpenLandMap/SOL/SOL_ORGANIC-CARBON_USDA-6A1C_M/v02", "b0", False, "mean"),
-        "soil_bulk_density": ("OpenLandMap/SOL/SOL_BULKDENS-FINEEARTH_USDA-4A1H_M/v02", "b0", False, "mean"),
-        "soil_ph": ("OpenLandMap/SOL/SOL_PH-H2O_USDA-4C1A2A_M/v02", "b0", False, "mean"),
+    batch_size: int
+    max_concurrency: int
+    _PRODUCTS: ClassVar[dict[str, tuple[str, str | None, bool, str, int]]] = {
+        "elevation": ("projects/sat-io/open-datasets/GLO-30", None, True, "mean", 0),
+        "cisi": ("projects/sat-io/open-datasets/CISI/global_CISI", None, False, "mean", 0),
+        "precipitation": ("projects/ee-csaybar-real/assets/precipitation", None, False, "mean", 0),
+        "temperature": ("projects/ee-csaybar-real/assets/temperature", None, False, "mean", 0),
+        "soil_clay": ("OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02", "b0", False, "mean", 0),
+        "soil_sand": ("OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02", "b0", False, "mean", 0),
+        "soil_carbon": ("OpenLandMap/SOL/SOL_ORGANIC-CARBON_USDA-6A1C_M/v02", "b0", False, "mean", 0),
+        "soil_bulk_density": ("OpenLandMap/SOL/SOL_BULKDENS-FINEEARTH_USDA-4A1H_M/v02", "b0", False, "mean", 0),
+        "soil_ph": ("OpenLandMap/SOL/SOL_PH-H2O_USDA-4C1A2A_M/v02", "b0", False, "mean", 0),
         "gdp": (
             "projects/sat-io/open-datasets/GRIDDED_HDI_GDP/total_gdp_perCapita_1990_2022_5arcmin",
             "PPP_2022",
             False,
             "mean",
+            0,
         ),
         "human_modification": (
             "projects/sat-io/open-datasets/GHM/HM_1990_2020_OVERALL_300M",
             "constant",
             True,
             "mean",
+            0,
         ),
-        "population": ("projects/sat-io/open-datasets/hrsl/hrslpop", None, True, "mean"),
-        "admin_countries": ("projects/ee-csaybar-real/assets/admin0", None, False, "mode"),
-        "admin_states": ("projects/ee-csaybar-real/assets/admin1", None, False, "mode"),
-        "admin_districts": ("projects/ee-csaybar-real/assets/admin2", None, False, "mode"),
+        "population": ("projects/sat-io/open-datasets/hrsl/hrslpop", None, True, "mean", 0),
+        "admin_countries": ("projects/ee-csaybar-real/assets/admin0", None, False, "mode", 65535),
+        "admin_states": ("projects/ee-csaybar-real/assets/admin1", None, False, "mode", 65535),
+        "admin_districts": ("projects/ee-csaybar-real/assets/admin2", None, False, "mode", 65535),
+    }
+    _DESCRIPTIONS: ClassVar[dict[str, str]] = {
+        "elevation": "Mean elevation in metres (GLO-30 DEM)",
+        "cisi": "Mean Critical Infrastructure Spatial Index",
+        "precipitation": "Mean annual precipitation in millimetres",
+        "temperature": "Mean annual temperature in degrees Celsius",
+        "soil_clay": "Surface soil clay content",
+        "soil_sand": "Surface soil sand content",
+        "soil_carbon": "Surface soil organic carbon content",
+        "soil_bulk_density": "Surface soil bulk density",
+        "soil_ph": "Surface soil pH",
+        "gdp": "GDP per capita in PPP 2022 USD",
+        "human_modification": "Global human modification index",
+        "population": "Population density from HRSL",
+        "admin_countries": "Country name at the centroid",
+        "admin_states": "State or province name at the centroid",
+        "admin_districts": "District or county name at the centroid",
     }
 
-    def __init__(self, variables: tuple[str, ...] | list[str] | None = None, *, scale_m: float = 5120) -> None:
+    def __init__(
+        self,
+        variables: tuple[str, ...] | list[str] | None = None,
+        *,
+        scale_m: float = 5120,
+        batch_size: int = 250,
+        max_concurrency: int = 8,
+    ) -> None:
         if isinstance(variables, (str, bytes)):
             raise TypeError("variables must be a sequence of names")
         selected = tuple(self._PRODUCTS if variables is None else variables)
@@ -182,8 +239,14 @@ class GeoEnrich(DerivedMetadata):
             raise ValueError(f"unknown GeoEnrich variables: {unknown}")
         if not math.isfinite(scale_m) or scale_m <= 0:
             raise ValueError("scale_m must be positive")
+        if isinstance(batch_size, bool) or batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        if isinstance(max_concurrency, bool) or max_concurrency < 1:
+            raise ValueError("max_concurrency must be positive")
         object.__setattr__(self, "variables", selected)
         object.__setattr__(self, "scale_m", float(scale_m))
+        object.__setattr__(self, "batch_size", int(batch_size))
+        object.__setattr__(self, "max_concurrency", int(max_concurrency))
 
     @property
     def requires(self) -> tuple[str, ...]:
@@ -192,52 +255,79 @@ class GeoEnrich(DerivedMetadata):
     @property
     def fields(self) -> pa.Schema:
         return pa.schema(
-            pa.field(name, pa.string() if name.startswith("admin_") else pa.float32(), nullable=True)
+            pa.field(
+                name,
+                pa.string() if name.startswith("admin_") else pa.float32(),
+                nullable=False,
+                metadata={b"description": self._DESCRIPTIONS[name].encode()},
+            )
             for name in self.variables
         )
 
     def configuration(self) -> dict[str, Any]:
-        return {"variables": list(self.variables), "scale_m": self.scale_m}
+        return {
+            "variables": list(self.variables),
+            "scale_m": self.scale_m,
+            "batch_size": self.batch_size,
+            "max_concurrency": self.max_concurrency,
+        }
 
     def compute(self, columns: Mapping[str, Sequence[Any]]) -> Mapping[str, Sequence[Any]]:
         try:
             from importlib import import_module
 
+            import numpy as np
+
             ee = import_module("ee")
         except ImportError as exc:
             raise ImportError("GeoEnrich requires earthengine-api; install taco-eo[geoenrich]") from exc
-        points = [(index, *point_from_wkb(value)) for index, value in enumerate(columns["stac:centroid"])]
-        features = [ee.Feature(ee.Geometry.Point(lon, lat), {"taco_index": index}) for index, lon, lat in points]
-        collection = ee.FeatureCollection(features)
-        result: dict[str, list[Any]] = {name: [None] * len(points) for name in self.variables}
 
-        def fetch(name: str) -> tuple[str, dict[int, Any]]:
-            path, band, image_collection, reducer = self._PRODUCTS[name]
+        count = len(columns["stac:centroid"])
+        points = [(index, *point_from_wkb(value)) for index, value in enumerate(columns["stac:centroid"])]
+        points.sort(key=lambda point: _morton_key(point[1], point[2]))
+        groups: dict[str, list[tuple[str, Any]]] = {"mean": [], "mode": []}
+        for name in self.variables:
+            path, band, image_collection, reducer, unmask = self._PRODUCTS[name]
             image = ee.ImageCollection(path).mosaic() if image_collection else ee.Image(path)
+            image = image.unmask(unmask)
             if band is not None:
                 image = image.select(band)
-            image = image.rename(name)
-            reducer_value = ee.Reducer.mean() if reducer == "mean" else ee.Reducer.mode()
-            response = image.reduceRegions(
-                collection=collection,
-                reducer=reducer_value,
-                scale=self.scale_m,
-            ).getInfo()
-            values = {}
-            for feature in response.get("features", []):
-                properties = feature.get("properties", {})
-                index = properties.get("taco_index")
-                if isinstance(index, int):
-                    value = properties.get(name)
-                    if name.startswith("admin_") and value is not None:
-                        value = str(value)
-                    values[index] = value
-            return name, values
+            groups[reducer].append((name, image.rename(name)))
+        groups = {name: products for name, products in groups.items() if products}
+        chunks = [points[start : start + self.batch_size] for start in range(0, count, self.batch_size)]
+        result: dict[str, list[Any]] = {
+            name: (["Ocean/Sea/Lakes"] * count if name.startswith("admin_") else [0.0] * count)
+            for name in self.variables
+        }
 
-        with ThreadPoolExecutor(max_workers=min(8, len(self.variables))) as executor:
-            for name, values in executor.map(fetch, self.variables):
-                for index, value in values.items():
-                    result[name][index] = value
+        def fetch(chunk: list[tuple[int, float, float]]) -> list[tuple[int, dict[str, Any]]]:
+            features = [ee.Feature(ee.Geometry.Point(lon, lat), {"taco_index": index}) for index, lon, lat in chunk]
+            collection = ee.FeatureCollection(features)
+            rows: dict[int, dict[str, Any]] = {index: {} for index, _, _ in chunk}
+            for reducer, products in groups.items():
+                image = ee.Image([product[1] for product in products])
+                operation = ee.Reducer.mean() if reducer == "mean" else ee.Reducer.mode()
+                response = image.reduceRegions(collection=collection, reducer=operation, scale=self.scale_m).getInfo()
+                for feature in response.get("features", []):
+                    properties = feature.get("properties", {})
+                    index = properties.get("taco_index")
+                    if not isinstance(index, int):
+                        continue
+                    for position, (name, _) in enumerate(products):
+                        fallback = reducer if position == 0 else f"{reducer}_{position}"
+                        rows[index][name] = properties.get(name, properties.get(fallback))
+            return list(rows.items())
+
+        with ThreadPoolExecutor(max_workers=min(self.max_concurrency, max(1, len(chunks)))) as executor:
+            for chunk_rows in executor.map(fetch, chunks):
+                for index, values in chunk_rows:
+                    for name, value in values.items():
+                        if name.startswith("admin_"):
+                            level = {"admin_countries": 0, "admin_states": 1, "admin_districts": 2}[name]
+                            code = 65535 if value is None else int(value)
+                            result[name][index] = _admin_names(level).get(code, "Ocean/Sea/Lakes")
+                        else:
+                            result[name][index] = float(np.float32(0 if value is None else value))
         return result
 
 

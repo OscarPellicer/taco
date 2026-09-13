@@ -201,8 +201,11 @@ def test_major_tom_rejects_non_point() -> None:
 
 
 class FakeImage:
-    def __init__(self, path: str) -> None:
-        self.name = path
+    calls: list[tuple[str, int, float]] = []
+    unmask_values: list[int] = []
+
+    def __init__(self, path) -> None:
+        self.names = [image.names[0] for image in path] if isinstance(path, list) else [str(path)]
 
     def mosaic(self) -> FakeImage:
         return self
@@ -211,22 +214,32 @@ class FakeImage:
         return self
 
     def rename(self, name: str) -> FakeImage:
-        self.name = name
+        self.names = [name]
+        return self
+
+    def unmask(self, value: int) -> FakeImage:
+        self.unmask_values.append(value)
         return self
 
     def reduceRegions(self, *, collection, reducer, scale):
-        name = self.name
+        self.calls.append((reducer, len(collection), scale))
+
+        def properties(feature):
+            values = {"taco_index": feature["index"]}
+            if reducer == "mode":
+                values["mode"] = 0 if feature["index"] == 0 else 65535
+            else:
+                values.update(dict.fromkeys(self.names, feature["index"] + 0.5))
+            return values
+
         return SimpleNamespace(
-            getInfo=lambda: {
-                "features": [
-                    {"properties": {"taco_index": feature["index"], name: feature["index"] + 0.5}}
-                    for feature in collection
-                ]
-            }
+            getInfo=lambda: {"features": [{"properties": properties(feature)} for feature in collection]}
         )
 
 
 def test_geoenrich_batches_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeImage.calls.clear()
+    FakeImage.unmask_values.clear()
     fake = SimpleNamespace(
         Feature=lambda geometry, values: {"index": values["taco_index"]},
         Geometry=SimpleNamespace(Point=lambda lon, lat: (lon, lat)),
@@ -236,9 +249,20 @@ def test_geoenrich_batches_requests(monkeypatch: pytest.MonkeyPatch) -> None:
         Reducer=SimpleNamespace(mean=lambda: "mean", mode=lambda: "mode"),
     )
     monkeypatch.setitem(sys.modules, "ee", fake)
-    extension = taco.metadata.sample.GeoEnrich(["elevation", "admin_countries"])
+    extension = taco.metadata.sample.GeoEnrich(["elevation", "admin_countries"], batch_size=1, max_concurrency=1)
     result = extension.compute({"stac:centroid": [point(0, 0), point(1, 1)]})
-    assert result == {"elevation": [0.5, 1.5], "admin_countries": ["0.5", "1.5"]}
+    assert result == {
+        "elevation": [0.5, 1.5],
+        "admin_countries": ["Afghanistan", "Ocean/Sea/Lakes"],
+    }
+    assert all(type(value) is float for value in result["elevation"])
+    assert FakeImage.unmask_values == [0, 65535]
+    assert FakeImage.calls == [
+        ("mean", 1, 5120.0),
+        ("mode", 1, 5120.0),
+        ("mean", 1, 5120.0),
+        ("mode", 1, 5120.0),
+    ]
 
 
 def test_geoenrich_configuration() -> None:
@@ -252,6 +276,16 @@ def test_geoenrich_configuration() -> None:
         taco.metadata.sample.GeoEnrich(["elevation", "elevation"])
     with pytest.raises(TypeError, match="sequence"):
         taco.metadata.sample.GeoEnrich("elevation")
+    with pytest.raises(ValueError, match="batch_size"):
+        taco.metadata.sample.GeoEnrich(batch_size=0)
+    with pytest.raises(ValueError, match="max_concurrency"):
+        taco.metadata.sample.GeoEnrich(max_concurrency=0)
+
+    fields = taco.metadata.sample.GeoEnrich(["gdp", "admin_countries"]).fields
+    assert fields.field("gdp").type == pa.float32()
+    assert fields.field("admin_countries").type == pa.string()
+    assert not fields.field("gdp").nullable
+    assert fields.field("admin_countries").metadata[b"description"]
 
 
 def test_arrow_type_inference() -> None:
