@@ -5,6 +5,14 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- Distinct `SAC`, `ISAC`, and `TAC` metadata profiles for regular spatial,
+  irregular spatial, and temporal-only samples. `STAC` and `ISTAC` remain the
+  combined spatial-temporal profiles.
+- `MajorTOM` and `GeoEnrich` accept a qualified `centroid` dependency, allowing
+  them to compose with any spatial profile without copying columns.
+
 ## 0.5.1 - 2026-09-13
 
 ### Fixed

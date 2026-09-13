@@ -104,6 +104,26 @@ def stac(
     )
 
 
+def spatial_profile(
+    profile: str,
+    index: int,
+    model: type[BaseModel],
+) -> BaseModel:
+    x = -76.0 + index
+    if profile == "sac":
+        return model(
+            crs="EPSG:4326",
+            tensor_shape=(1, 16, 16),
+            geotransform=(x - 0.1, 0.2 / 16, 0, -11.9, 0, -0.2 / 16),
+        )
+    if profile == "isac":
+        return model(crs="EPSG:4326", geometry=polygon(x - 0.1, -12.1, x + 0.1, -11.9))
+    return model(
+        time_start=datetime(2024, 1, index + 1, tzinfo=timezone.utc),
+        time_end=datetime(2024, 1, index + 2, tzinfo=timezone.utc),
+    )
+
+
 def asset(dataset: str, index: int, path: str, **metadata: BaseModel) -> taco.Asset:
     content = f"{dataset}:{index}:{path}".encode()
     return taco.Asset(content, path=path, metadata=taco.Metadata(**metadata))
@@ -448,6 +468,43 @@ def derived_metadata() -> DatasetCase:
     )
 
 
+def independent_profile(profile: str) -> DatasetCase:
+    sample_extension = {"sac": taco.extensions.SAC, "isac": taco.extensions.ISAC, "tac": taco.extensions.TAC}[profile]
+    folder_model = {
+        "sac": taco.metadata.folder.SAC,
+        "isac": taco.metadata.folder.ISAC,
+        "tac": taco.metadata.folder.TAC,
+    }[profile]
+    contract = taco.Contract(
+        structure=["scene/data.bin"],
+        metadata=taco.MetadataSchema(
+            taco.Level("sample", **{profile: sample_extension()}),
+            taco.Level("children", **{profile: sample_extension(model=folder_model)}),
+        ),
+    )
+    samples = tuple(
+        taco.Sample(
+            metadata=taco.Metadata(**{profile: spatial_profile(profile, index, sample_extension().input_model)}),
+            folders=[
+                taco.Folder(
+                    "scene",
+                    metadata=taco.Metadata(**{profile: spatial_profile(profile, index, folder_model)}),
+                )
+            ],
+            assets=[asset(profile, index, "scene/data.bin")],
+        )
+        for index in range(2)
+    )
+    return DatasetCase(
+        f"{profile}_profile",
+        collection(f"{profile}-profile", contract),
+        samples,
+        contract.levels,
+        (("scene/data.bin",),) * 2,
+        (2, 2, 2),
+    )
+
+
 CASES = (
     single_file(),
     flat_assets(),
@@ -457,6 +514,9 @@ CASES = (
     deep_hierarchy(),
     rich_metadata(),
     derived_metadata(),
+    independent_profile("sac"),
+    independent_profile("isac"),
+    independent_profile("tac"),
 )
 
 

@@ -43,6 +43,14 @@ def stac(model: type[taco.metadata.sample.STAC] = taco.metadata.sample.STAC) -> 
     )
 
 
+def sac(model: type[taco.metadata.sample.SAC] = taco.metadata.sample.SAC) -> taco.metadata.sample.SAC:
+    return model(
+        crs="EPSG:4326",
+        tensor_shape=(1, 10, 10),
+        geotransform=(-1, 0.2, 0, 1, 0, -0.2),
+    )
+
+
 def test_extension_dependencies_ignore_declaration_order(tmp_path: Path) -> None:
     contract = taco.Contract(
         structure=None,
@@ -61,6 +69,68 @@ def test_extension_dependencies_ignore_declaration_order(tmp_path: Path) -> None
     assert row["stac:centroid"] == point(0, 0)
     assert row["stac:time_middle"] == datetime(2024, 1, 2, tzinfo=timezone.utc)
     assert row["majortom:code"].startswith("0010km_")
+
+
+def test_sac_is_regular_spatial_only_and_composes_with_majortom(tmp_path: Path) -> None:
+    contract = taco.Contract(
+        structure=None,
+        metadata=taco.MetadataSchema(
+            taco.Level(
+                "sample",
+                majortom=taco.extensions.MajorTOM(centroid="sac:centroid"),
+                sac=taco.extensions.SAC(),
+            )
+        ),
+    )
+    with taco.open_writer(collection(contract), tmp_path / "dataset") as writer:
+        writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(sac=sac())))
+        writer.run()
+
+    dataset = open_view(tmp_path / "dataset")
+    row = dataset.level("sample").to_pylist()[0]
+    assert row["sac:centroid"] == point(0, 0)
+    assert row["majortom:code"].startswith("0100km_")
+    assert not any(name.startswith(("stac:", "tac:")) for name in row)
+    assert dataset.collection.extent == taco.contract.Extent((0, 0, 0, 0))
+
+
+def test_tac_is_temporal_only(tmp_path: Path) -> None:
+    contract = taco.Contract(
+        structure=None,
+        metadata=taco.MetadataSchema(taco.Level("sample", tac=taco.extensions.TAC())),
+    )
+    metadata = taco.metadata.sample.TAC(
+        time_start=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        time_end=datetime(2024, 1, 3, tzinfo=timezone.utc),
+    )
+    with taco.open_writer(collection(contract), tmp_path / "dataset") as writer:
+        writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(tac=metadata)))
+        writer.run()
+
+    dataset = open_view(tmp_path / "dataset")
+    row = dataset.level("sample").to_pylist()[0]
+    assert row["tac:time_middle"] == datetime(2024, 1, 2, tzinfo=timezone.utc)
+    assert not any(name.startswith(("sac:", "stac:", "istac:", "isac:")) for name in row)
+    assert dataset.collection.extent is None
+
+
+def test_isac_is_irregular_spatial_only(tmp_path: Path) -> None:
+    contract = taco.Contract(
+        structure=None,
+        metadata=taco.MetadataSchema(taco.Level("sample", isac=taco.extensions.ISAC())),
+    )
+    metadata = taco.metadata.sample.ISAC(
+        crs="EPSG:4326",
+        geometry=Polygon([(-77, -13), (-75, -13), (-75, -11), (-77, -11)]).wkb,
+    )
+    with taco.open_writer(collection(contract), tmp_path / "dataset") as writer:
+        writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(isac=metadata)))
+        writer.run()
+
+    dataset = open_view(tmp_path / "dataset")
+    row = dataset.level("sample").to_pylist()[0]
+    assert coordinates(row["isac:centroid"]) == pytest.approx((-76, -12))
+    assert dataset.collection.extent == taco.contract.Extent((-76, -12, -76, -12))
 
 
 def test_stac_centroid_uses_the_complete_affine_transform() -> None:

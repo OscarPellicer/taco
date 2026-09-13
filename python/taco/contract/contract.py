@@ -19,7 +19,21 @@ from .types import coerce_value, parse_type, type_name
 SAMPLE_LEVEL = "sample"
 CHILDREN_LEVEL = "children"
 
-_SPATIAL_PROFILE_TYPES = {
+_PROFILE_TYPES = {
+    "sac": {
+        "crs": "string",
+        "tensor_shape": "list<int64>",
+        "geotransform": "list<double>",
+        "centroid": "binary",
+    },
+    "isac": {
+        "crs": "string",
+        "geometry": "binary",
+        "centroid": "binary",
+    },
+    "tac": {
+        "time_start": "timestamp[us, UTC]",
+    },
     "stac": {
         "crs": "string",
         "tensor_shape": "list<int64>",
@@ -34,7 +48,7 @@ _SPATIAL_PROFILE_TYPES = {
         "centroid": "binary",
     },
 }
-_SPATIAL_OPTIONAL_TYPES = {
+_PROFILE_OPTIONAL_TYPES = {
     "time_end": "timestamp[us, UTC]",
     "time_middle": "timestamp[us, UTC]",
 }
@@ -177,7 +191,7 @@ class Contract:
             }
             groups = dict.fromkeys(levels, ())
             derived_ = self._normalize_extensions(derived or {}, levels, normalized)
-        self._check_spatial_groups(normalized)
+        self._check_profiles(normalized)
 
         object.__setattr__(self, "structure", declarations)
         object.__setattr__(self, "metadata", normalized)
@@ -191,28 +205,42 @@ class Contract:
         object.__setattr__(self, "_groups", groups)
 
     @staticmethod
-    def _check_spatial_groups(metadata: Mapping[str, Mapping[str, Field]]) -> None:
+    def _check_profiles(metadata: Mapping[str, Mapping[str, Field]]) -> None:
         for level, fields in metadata.items():
             namespaces = {name.partition(":")[0] for name in fields}
-            if {"stac", "istac"}.issubset(namespaces):
-                raise ContractError(f"metadata level {level!r} must choose either STAC or ISTAC, not both")
-            if "stac:geometry" in fields:
-                raise ContractError(
-                    f"metadata level {level!r} puts geometry in STAC; use the ISTAC group for irregular footprints"
-                )
-            irregular_grid_fields = {"istac:tensor_shape", "istac:geotransform"}.intersection(fields)
-            if irregular_grid_fields:
-                raise ContractError(
-                    f"metadata level {level!r} puts affine-grid fields in ISTAC; use the STAC group for regular chunks"
-                )
-            for namespace, expected in _SPATIAL_PROFILE_TYPES.items():
+            profiles = sorted(namespaces.intersection(_PROFILE_TYPES))
+            if len(profiles) > 1:
+                if profiles == ["istac", "stac"]:
+                    raise ContractError(f"metadata level {level!r} must choose either STAC or ISTAC, not both")
+                names = ", ".join(name.upper() for name in profiles)
+                raise ContractError(f"metadata level {level!r} must choose one metadata profile, got {names}")
+            for namespace in ("sac", "stac"):
+                if f"{namespace}:geometry" in fields:
+                    irregular = "ISAC" if namespace == "sac" else "ISTAC"
+                    raise ContractError(
+                        f"metadata level {level!r} puts geometry in {namespace.upper()}; "
+                        f"use the {irregular} group for irregular footprints"
+                    )
+            for namespace in ("isac", "istac"):
+                irregular_grid_fields = {
+                    f"{namespace}:tensor_shape",
+                    f"{namespace}:geotransform",
+                }.intersection(fields)
+                if irregular_grid_fields:
+                    regular = "SAC" if namespace == "isac" else "STAC"
+                    raise ContractError(
+                        f"metadata level {level!r} puts affine-grid fields in {namespace.upper()}; "
+                        f"use the {regular} group for regular chunks"
+                    )
+            for namespace, expected in _PROFILE_TYPES.items():
                 present = {name.partition(":")[2] for name in fields if name.startswith(f"{namespace}:")}
                 if not present:
                     continue
                 missing = sorted(set(expected) - present)
                 if missing:
                     raise ContractError(f"{namespace.upper()} metadata at level {level!r} is missing fields {missing}")
-                for name, expected_type in {**expected, **_SPATIAL_OPTIONAL_TYPES}.items():
+                optional = _PROFILE_OPTIONAL_TYPES if namespace in {"tac", "stac", "istac"} else {}
+                for name, expected_type in {**expected, **optional}.items():
                     qualified = f"{namespace}:{name}"
                     if qualified in fields and fields[qualified].type != expected_type:
                         actual = fields[qualified].type

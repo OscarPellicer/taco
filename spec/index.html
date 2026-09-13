@@ -242,15 +242,18 @@ figcaption b{color:var(--fg);font-style:normal}
 <p>The column names <code>cozip:location</code> and <code>taco:location</code> are owned exclusively by readers. A producer MUST NOT store either column in any Parquet file under <code>METADATA/</code>. A reader that encounters a stored value under either name MUST ignore or remove it, and MUST calculate locations at read time from the physical payload location, offset, size, and containing file.</p>
 <p>On disk, a namespace only qualifies a column name. It does not create a nested struct or identify a Python class. Contracts are equivalent when their structure, levels, qualified fields, types, nullability, descriptions, and writer-time extension declarations are the same.</p>
 
-<h4>STAC and ISTAC profiles</h4>
-<p>TACO defines two mutually exclusive spatiotemporal metadata profiles inherited from v2. A metadata level MAY declare <code>stac</code> for regular raster chunks or <code>istac</code> for irregular footprints. The same level MUST NOT declare both. These profiles are compact tabular metadata groups; they are not serializations of a complete STAC Item.</p>
+<h4>Spatial and temporal profiles</h4>
+<p>TACO defines five mutually exclusive metadata profiles. <code>SAC</code> is regular spatial metadata, <code>ISAC</code> is irregular spatial metadata, and <code>TAC</code> is temporal metadata. <code>STAC</code> combines regular spatial and temporal metadata; <code>ISTAC</code> combines irregular spatial and temporal metadata. A metadata level MUST choose at most one profile. These are compact tabular metadata groups, not serializations of a complete STAC Item.</p>
 <table>
 <tr><th>Profile</th><th>Producer inputs</th><th>Writer outputs</th><th>Spatial representation</th></tr>
+<tr><td><code>sac</code></td><td><code>crs</code>, <code>tensor_shape</code>, <code>geotransform</code>; optional <code>centroid</code> override</td><td><code>centroid</code></td><td>Regular affine grid; no footprint geometry is stored</td></tr>
+<tr><td><code>isac</code></td><td><code>crs</code>, <code>geometry</code>; optional <code>centroid</code> override</td><td><code>centroid</code></td><td>Irregular WKB footprint in the declared CRS</td></tr>
+<tr><td><code>tac</code></td><td><code>time_start</code>; optional <code>time_end</code></td><td><code>time_middle</code></td><td>None</td></tr>
 <tr><td><code>stac</code></td><td><code>crs</code>, <code>tensor_shape</code>, <code>geotransform</code>, <code>time_start</code>; optional <code>time_end</code> and <code>centroid</code> override</td><td><code>centroid</code>, <code>time_middle</code></td><td>Regular affine grid; no footprint geometry is stored</td></tr>
 <tr><td><code>istac</code></td><td><code>crs</code>, <code>geometry</code>, <code>time_start</code>; optional <code>time_end</code> and <code>centroid</code> override</td><td><code>centroid</code>, <code>time_middle</code></td><td>Irregular WKB footprint in the declared CRS</td></tr>
 </table>
-<p>For STAC, <code>tensor_shape</code> is a non-empty list of positive integers with at least two dimensions; its final two values are height and width. <code>geotransform</code> is the six-value GDAL affine transform. The STAC extension MUST calculate <code>centroid</code> from the complete affine transform and reproject it to EPSG:4326 unless the producer supplies an override. The ISTAC extension MUST calculate <code>centroid</code> from <code>geometry</code> in its declared CRS unless the producer supplies an override. When <code>time_end</code> is present and <code>time_middle</code> is absent, either extension MUST populate the midpoint.</p>
-<p>The built-in Python extensions MUST use their canonical namespaces: <code>stac=taco.extensions.STAC()</code> and <code>istac=taco.extensions.ISTAC()</code>. Their input values use the matching <code>taco.metadata.sample</code> model at sample scope or <code>taco.metadata.folder</code> model at folder scope. A producer chooses one profile per metadata level. STAC is RECOMMENDED for fixed or affine image chunks, while ISTAC is reserved for swaths, vectors, and other samples whose footprint cannot be recovered from a regular grid.</p>
+<p>For SAC and STAC, <code>tensor_shape</code> is a non-empty list of positive integers with at least two dimensions; its final two values are height and width. <code>geotransform</code> is the six-value GDAL affine transform. Their extensions MUST calculate <code>centroid</code> from the complete affine transform and reproject it to EPSG:4326 unless the producer supplies an override. ISAC and ISTAC MUST calculate <code>centroid</code> from <code>geometry</code> in its declared CRS unless the producer supplies an override. TAC, STAC, and ISTAC MUST populate <code>time_middle</code> when <code>time_end</code> is present and no midpoint is supplied.</p>
+<p>The built-in Python extensions MUST use their canonical namespaces, such as <code>sac=taco.extensions.SAC()</code> or <code>stac=taco.extensions.STAC()</code>. Their input values use the matching <code>taco.metadata.sample</code> model at sample scope or <code>taco.metadata.folder</code> model at folder scope. SAC and STAC are for fixed or affine image chunks; ISAC and ISTAC are for swaths, vectors, and other samples whose footprint cannot be recovered from a regular grid.</p>
 
 <h4>Writer-time extensions</h4>
 <p>A writer-time extension combines optional validated producer inputs with columns computed during <code>run()</code>. Its declaration is stored in <code>taco:derived</code> for TACO v3 reader compatibility. Each entry records its required columns, produced columns, and JSON-serializable configuration. The produced columns MUST also appear in <code>taco:metadata</code>.</p>
@@ -499,7 +502,7 @@ contract = taco.Contract(
         ),
     ),
 )</code></pre>
-<p>The keyword is the namespace. A Pydantic model defines passive fields, types, nullability, and descriptions. An extension additionally declares the fields it requires and produces. The writer stores them as qualified columns such as <code>stac:geotransform</code>, <code>stac:centroid</code>, and <code>majortom:code</code>. Built-in STAC and ISTAC are restricted to their canonical namespaces.</p>
+<p>The keyword is the namespace. A Pydantic model defines passive fields, types, nullability, and descriptions. An extension additionally declares the fields it requires and produces. The writer stores them as qualified columns such as <code>sac:geotransform</code>, <code>sac:centroid</code>, and <code>majortom:code</code>. Built-in SAC, ISAC, TAC, STAC, and ISTAC are restricted to their canonical namespaces.</p>
 <p>A model assigned directly to a level is required on every row. <code>Model | None</code> allows the complete group to be absent on some rows and makes its stored columns nullable. Within a model, <code>value: T | None</code> makes one field nullable. <code>Field(description=...)</code> supplies its description. Exact Arrow types may use <code>Annotated</code>.</p>
 <pre><code>from datetime import datetime
 from typing import Annotated
@@ -521,7 +524,7 @@ TimestampUTC = Annotated[datetime, pa.timestamp("us", tz="UTC")]</code></pre>
 <p>A collection group is validated once. It is never copied into every sample row. The writer adds <code>taco:version</code> automatically.</p>
 
 <h4>Collection summaries</h4>
-<p>STAC and ISTAC produce <code>extent</code> from their centroid and time columns. Users provide one of these profiles on samples and do not repeat its spatial or temporal coverage in <code>Collection</code>.</p>
+<p>SAC and ISAC produce the spatial part of <code>extent</code> from their centroids. STAC and ISTAC additionally produce its temporal part. TAC has no spatial coverage and therefore does not synthesize a collection <code>extent</code>.</p>
 <p>Summaries run independently for every output partition. They consume metadata in batches and retain only the values needed for the summary. They do not keep the complete metadata table in memory.</p>
 
 <h4>Sample metadata</h4>
@@ -544,9 +547,9 @@ TimestampUTC = Annotated[datetime, pa.timestamp("us", tz="UTC")]</code></pre>
 )</code></pre>
 
 <h4>Writer-time extensions</h4>
-<p>An extension declares the columns it needs and produces. It may also declare a Pydantic input model when the producer supplies part of its metadata. STAC receives affine-grid values and produces <code>stac:centroid</code>; MajorTOM requires that output and produces <code>majortom:code</code>. The contract is invalid when a required column is missing.</p>
+<p>An extension declares the columns it needs and produces. It may also declare a Pydantic input model when the producer supplies part of its metadata. SAC receives affine-grid values and produces <code>sac:centroid</code>; <code>MajorTOM(centroid="sac:centroid")</code> can require that output and produce <code>majortom:code</code>. The contract is invalid when a required column is missing.</p>
 <p>The writer computes extension outputs from batches of validated metadata during <code>run()</code>. Each context also contains the local asset associated with every row, allowing format extensions to inspect payloads without asking producers to duplicate file metadata.</p>
-<p><code>taco.extensions.Rumi(stats=True)</code> requires a local <code>.rumi</code> asset and produces the canonical binary <code>rumi:header</code> plus named per-band <code>rumi:stats</code>. <code>taco.extensions.GeoEnrich</code> derives selected Earth Engine variables from <code>stac:centroid</code>.</p>
+<p><code>taco.extensions.Rumi(stats=True)</code> requires a local <code>.rumi</code> asset and produces the canonical binary <code>rumi:header</code> plus named per-band <code>rumi:stats</code>. <code>taco.extensions.GeoEnrich</code> derives selected Earth Engine variables from its configurable centroid field.</p>
 <p>The configuration of an extension is part of the contract. Appending data with different settings is not allowed.</p>
 
 <h4>Writer lifecycle</h4>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -13,6 +14,12 @@ import pyarrow.parquet as pq
 
 from ._base import DerivedMetadata
 from .spatiotemporal import point_from_wkb
+
+
+def _centroid_field(value: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[a-z][a-z0-9_]*:centroid", value) is None:
+        raise ValueError("centroid must be a qualified metadata field ending in ':centroid'")
+    return value
 
 
 @lru_cache(maxsize=32)
@@ -66,6 +73,7 @@ class MajorTOM(DerivedMetadata):
     latitude_range: tuple[float, float] = (-85.0, 85.0)
     longitude_range: tuple[float, float] = (-180.0, 180.0)
     sep: str = "_"
+    centroid: str = "stac:centroid"
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.dist_km) or self.dist_km <= 0:
@@ -79,10 +87,11 @@ class MajorTOM(DerivedMetadata):
         object.__setattr__(self, "dist_km", float(self.dist_km))
         object.__setattr__(self, "latitude_range", tuple(float(value) for value in self.latitude_range))
         object.__setattr__(self, "longitude_range", tuple(float(value) for value in self.longitude_range))
+        object.__setattr__(self, "centroid", _centroid_field(self.centroid))
 
     @property
     def requires(self) -> tuple[str, ...]:
-        return ("stac:centroid",)
+        return (self.centroid,)
 
     @property
     def fields(self) -> pa.Schema:
@@ -92,12 +101,15 @@ class MajorTOM(DerivedMetadata):
         )
 
     def configuration(self) -> dict[str, Any]:
-        return {
+        configuration = {
             "dist_km": self.dist_km,
             "latitude_range": list(self.latitude_range),
             "longitude_range": list(self.longitude_range),
             "sep": self.sep,
         }
+        if self.centroid != "stac:centroid":
+            configuration["centroid"] = self.centroid
+        return configuration
 
     def compute(self, columns: Mapping[str, Sequence[Any]]) -> Mapping[str, Sequence[Any]]:
         try:
@@ -105,7 +117,7 @@ class MajorTOM(DerivedMetadata):
         except ImportError as exc:
             raise ImportError("MajorTOM requires numpy") from exc
 
-        points = [point_from_wkb(value) for value in columns["stac:centroid"]]
+        points = [point_from_wkb(value, field=self.centroid) for value in columns[self.centroid]]
         longitudes = np.asarray([point[0] for point in points])
         latitudes = np.asarray([point[1] for point in points])
         lats, row_labels, longitude_rows, column_labels = _grid(self.dist_km, self.latitude_range, self.longitude_range)
@@ -170,6 +182,7 @@ class GeoEnrich(DerivedMetadata):
     scale_m: float
     batch_size: int
     max_concurrency: int
+    centroid: str
     _PRODUCTS: ClassVar[dict[str, tuple[str, str | None, bool, str, int]]] = {
         "elevation": ("projects/sat-io/open-datasets/GLO-30", None, True, "mean", 0),
         "cisi": ("projects/sat-io/open-datasets/CISI/global_CISI", None, False, "mean", 0),
@@ -224,6 +237,7 @@ class GeoEnrich(DerivedMetadata):
         scale_m: float = 5120,
         batch_size: int = 250,
         max_concurrency: int = 8,
+        centroid: str = "stac:centroid",
     ) -> None:
         if isinstance(variables, (str, bytes)):
             raise TypeError("variables must be a sequence of names")
@@ -245,10 +259,11 @@ class GeoEnrich(DerivedMetadata):
         object.__setattr__(self, "scale_m", float(scale_m))
         object.__setattr__(self, "batch_size", int(batch_size))
         object.__setattr__(self, "max_concurrency", int(max_concurrency))
+        object.__setattr__(self, "centroid", _centroid_field(centroid))
 
     @property
     def requires(self) -> tuple[str, ...]:
-        return ("stac:centroid",)
+        return (self.centroid,)
 
     @property
     def fields(self) -> pa.Schema:
@@ -263,12 +278,15 @@ class GeoEnrich(DerivedMetadata):
         )
 
     def configuration(self) -> dict[str, Any]:
-        return {
+        configuration = {
             "variables": list(self.variables),
             "scale_m": self.scale_m,
             "batch_size": self.batch_size,
             "max_concurrency": self.max_concurrency,
         }
+        if self.centroid != "stac:centroid":
+            configuration["centroid"] = self.centroid
+        return configuration
 
     def compute(self, columns: Mapping[str, Sequence[Any]]) -> Mapping[str, Sequence[Any]]:
         try:
@@ -280,8 +298,10 @@ class GeoEnrich(DerivedMetadata):
         except ImportError as exc:
             raise ImportError("GeoEnrich requires earthengine-api; install taco-eo[geoenrich]") from exc
 
-        count = len(columns["stac:centroid"])
-        points = [(index, *point_from_wkb(value)) for index, value in enumerate(columns["stac:centroid"])]
+        count = len(columns[self.centroid])
+        points = [
+            (index, *point_from_wkb(value, field=self.centroid)) for index, value in enumerate(columns[self.centroid])
+        ]
         points.sort(key=lambda point: _morton_key(point[1], point[2]))
         groups: dict[str, list[tuple[str, Any]]] = {"mean": [], "mode": []}
         for name in self.variables:
