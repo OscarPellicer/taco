@@ -701,19 +701,13 @@ class Contract:
         self.apply_extensions(level, rows, assets=assets, verify=verify)
 
     def to_dict(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
+        return {
             "taco:structure": None if self.structure is None else list(self.structure),
             "taco:metadata": {
                 level: {name: spec.to_dict() for name, spec in fields.items()}
                 for level, fields in self.metadata.items()
             },
         }
-        if self.extensions:
-            # The serialized name remains taco:derived for TACO v3 reader
-            # compatibility. The Python execution API is the broader
-            # Extension abstraction.
-            result["taco:derived"] = self.extensions
-        return result
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Contract:

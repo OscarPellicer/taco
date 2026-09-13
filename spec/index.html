@@ -256,19 +256,8 @@ figcaption b{color:var(--fg);font-style:normal}
 <p>The built-in Python extensions MUST use their canonical namespaces, such as <code>spatial=taco.extensions.Spatial()</code> or <code>stac=taco.extensions.STAC()</code>. Their input values use the matching <code>taco.metadata.sample</code> model at sample scope or <code>taco.metadata.folder</code> model at folder scope. Spatial and STAC are for fixed or affine image chunks; ISpatial and ISTAC are for swaths, vectors, and other samples whose footprint cannot be recovered from a regular grid.</p>
 
 <h4>Writer-time extensions</h4>
-<p>A writer-time extension combines optional validated producer inputs with columns computed during <code>run()</code>. Its declaration is stored in <code>taco:derived</code> for TACO v3 reader compatibility. Each entry records its required columns, produced columns, and JSON-serializable configuration. The produced columns MUST also appear in <code>taco:metadata</code>.</p>
-<pre><code>{
-  "taco:derived": {
-    "sample": {
-      "majortom": {
-        "requires": ["stac:centroid"],
-        "produces": ["majortom:code"],
-        "configuration": {"dist_km": 100}
-      }
-    }
-  }
-}</code></pre>
-<p>A requirement may refer to a producer input column or to the output of another extension at the same level. The writer MUST resolve this graph rather than use declaration order. Cycles, missing requirements, and duplicate output columns make the contract invalid. Extensions are explicit: a writer MUST NOT run one that the contract does not declare. The declaration describes the result and makes contracts comparable. Executable Python code and import paths are not stored in the dataset.</p>
+<p>A writer-time extension combines optional validated producer inputs with columns computed during <code>run()</code>. A requirement may refer to a producer input column or to the output of another extension at the same level. The writer MUST resolve this graph rather than use declaration order. Cycles, missing requirements, and duplicate output columns make the active writer contract invalid.</p>
+<p>The dependency graph and operational configuration exist only while writing. They MUST NOT be stored in <code>COLLECTION.json</code>. Produced columns are ordinary dataset metadata and MUST appear in <code>taco:metadata</code> with their final types, nullability, and descriptions.</p>
 
 <h4>Rumi extension</h4>
 <p>The Rumi extension operates on one local <code>.rumi</code> asset per row. It MUST obtain <code>rumi:header</code> from <code>rumi.info(source=asset_path).header</code>; producers MUST NOT construct this binary value themselves. The header is stored as Parquet <code>binary</code> and enables stateless selective reads without first parsing the payload.</p>
@@ -334,17 +323,16 @@ figcaption b{color:var(--fg);font-style:normal}
 <tr><td><code>tasks</code></td><td>list[string]</td><td>MUST</td><td>ML task types (e.g. <code>segmentation</code>, <code>classification</code>)</td></tr>
 <tr><td><code>taco:structure</code></td><td>list or null</td><td>MUST</td><td>Sample structure</td></tr>
 <tr><td><code>taco:metadata</code></td><td>object</td><td>MUST</td><td>Tabular metadata schema</td></tr>
-<tr><td><code>taco:derived</code></td><td>object</td><td>MAY</td><td>Derived metadata declarations</td></tr>
 <tr><td><code>title</code></td><td>string</td><td>MAY</td><td>Human-readable title</td></tr>
 <tr><td><code>curators</code></td><td>list[object]</td><td>MAY</td><td>Dataset curators</td></tr>
 <tr><td><code>keywords</code></td><td>list[string]</td><td>MAY</td><td>Keywords for discovery</td></tr>
-<tr><td><code>extent</code></td><td>object</td><td>STAC/ISTAC</td><td>Writer-generated spatial and temporal summary</td></tr>
+<tr><td><code>extent</code></td><td>object</td><td>Spatial profiles</td><td>Writer-generated spatial and optional temporal summary</td></tr>
 <tr><td><code>taco:sources</code></td><td>object</td><td>TACOCAT</td><td>Source ZIP partitions</td></tr>
 </table>
 
 <p>A provider MUST have a non-empty <code>name</code>. It MAY have <code>roles</code>, <code>url</code>, and <code>links</code>. A curator MUST have a <code>name</code> or <code>organization</code> and MAY have <code>email</code> and <code>role</code>.</p>
 <p>An extent contains <code>spatial</code> and MAY contain <code>temporal</code>. <code>spatial</code> is <code>[west, south, east, north]</code> in EPSG:4326. A value where west is greater than east crosses the antimeridian. <code>temporal</code> is either null or <code>[start, end]</code> using ISO 8601 timestamps in UTC.</p>
-<p><code>extent</code> is a summary produced by the writer. When a metadata level declares built-in STAC or ISTAC, the writer MUST calculate the extent from the rows at the shallowest level containing either profile. The spatial interval covers that profile's EPSG:4326 <code>centroid</code> values. The temporal interval starts at the earliest <code>time_start</code> and ends at the latest <code>time_end</code>, using <code>time_start</code> when an end is absent. The centroid interval is intentionally a compact index and does not claim to be the union of every footprint. If no row contains STAC or ISTAC metadata, the writer MUST omit <code>extent</code>.</p>
+<p><code>extent</code> is a summary produced by the writer. When a metadata level declares built-in Spatial, ISpatial, STAC, or ISTAC metadata, the writer MUST calculate the extent from the rows at the shallowest level containing a spatial profile. The spatial interval covers that profile's EPSG:4326 <code>centroid</code> values. For STAC and ISTAC, the temporal interval starts at the earliest <code>time_start</code> and ends at the latest <code>time_end</code>, using <code>time_start</code> when an end is absent. The centroid interval is intentionally a compact index and does not claim to be the union of every footprint. If no row contains a spatial profile, the writer MUST omit <code>extent</code>.</p>
 <p>Each ZIP partition MUST summarize only its own rows. TACOCAT stores each partition extent in <code>taco:sources</code> and uses their union as its collection extent. A FOLDER append MUST summarize both the existing and appended rows.</p>
 
 <h4>Collection metadata</h4>
@@ -369,7 +357,7 @@ figcaption b{color:var(--fg);font-style:normal}
 <h3><span class="sn">6.1.</span> Version Levels</h3>
 <p><strong>PATCH</strong> such as <code>1.0.0</code> to <code>1.0.1</code> corrects existing content without changing the contract or adding samples. Examples include fixing metadata values, replacing corrupted files, or updating the description or keywords. Corrected STAC or ISTAC metadata may also produce a different extent.</p>
 <p><strong>MINOR</strong> such as <code>1.0.0</code> to <code>1.1.0</code> adds samples under the existing contract.</p>
-<p><strong>MAJOR</strong> such as <code>1.0.0</code> to <code>2.0.0</code> changes the contract or the meaning of existing fields. Examples include adding, removing, or renaming files, folders, or metadata fields, changing field types, changing derived metadata configuration, or reorganizing the sample hierarchy.</p>
+<p><strong>MAJOR</strong> such as <code>1.0.0</code> to <code>2.0.0</code> changes the contract or the meaning of existing fields. Examples include adding, removing, or renaming files, folders, or metadata fields, changing field types, changing field semantics, or reorganizing the sample hierarchy.</p>
 
 <h3><span class="sn">6.2.</span> When to Create a New Dataset</h3>
 <p>A new <code>id</code> is required when the identity or purpose of the dataset changes, not merely because its contract changes. For example, turning a cloud segmentation dataset into a land-cover dataset creates a new dataset. Releasing the same cloud dataset with a different sample structure creates a new major version under the existing <code>id</code>.</p>
@@ -550,7 +538,7 @@ TimestampUTC = Annotated[datetime, pa.timestamp("us", tz="UTC")]</code></pre>
 <p>An extension declares the columns it needs and produces. It may also declare a Pydantic input model when the producer supplies part of its metadata. Spatial receives affine-grid values and produces <code>spatial:centroid</code>; <code>MajorTOM(centroid="spatial:centroid")</code> can require that output and produce <code>majortom:code</code>. The contract is invalid when a required column is missing.</p>
 <p>The writer computes extension outputs from batches of validated metadata during <code>run()</code>. Each context also contains the local asset associated with every row, allowing format extensions to inspect payloads without asking producers to duplicate file metadata.</p>
 <p><code>taco.extensions.Rumi(stats=True)</code> requires a local <code>.rumi</code> asset and produces the canonical binary <code>rumi:header</code> plus named per-band <code>rumi:stats</code>. <code>taco.extensions.GeoEnrich</code> derives selected Earth Engine variables from its configurable centroid field.</p>
-<p>The configuration of an extension is part of the contract. Appending data with different settings is not allowed.</p>
+<p>Extension dependencies and operational settings remain in the active Python contract while writing. The persisted contract contains only the resulting structure and metadata schema.</p>
 
 <h4>Writer lifecycle</h4>
 <p><code>add()</code> and <code>extend()</code> validate and stage samples. They do not modify the final dataset.</p>
@@ -670,7 +658,7 @@ SELECT * FROM read_taco('change_detection.zip', files := ['before/B02.tif', 'aft
 <p>When <code>taco:structure</code> is null, the default result contains one reader-calculated <code>taco:location</code> column for the sample file. Query results have no implicit row order. Callers MUST use <code>ORDER BY</code> when order matters.</p>
 
 <h4>taco_contract(path)</h4>
-<p><code>taco_contract</code> returns the structure, levels, and derived group declarations as <code>kind</code> and <code>value</code> rows. Structure and level values are names. When derived groups exist, one derived row contains the complete <code>taco:derived</code> object as JSON. The extension also provides <code>taco_structure</code>, <code>taco_levels</code>, <code>taco_derived</code>, and <code>taco_collection</code> for direct inspection. <code>taco_sql</code> shows the SQL generated by <code>read_taco</code>.</p>
+<p><code>taco_contract</code> returns the structure and levels as <code>kind</code> and <code>value</code> rows. The extension also provides <code>taco_structure</code>, <code>taco_levels</code>, and <code>taco_collection</code> for direct inspection. <code>taco_sql</code> shows the SQL generated by <code>read_taco</code>.</p>
 
 <h3 id="dataset-api"><span class="sn">8.3.</span> Dataset API</h3>
 <p>The Python, R, and Julia readers use the same API. <code>open_dataset()</code> returns a <code>Dataset</code> that holds the sources, collection, and shared contract. <code>read()</code> materializes a selected view in the language's native table type.</p>

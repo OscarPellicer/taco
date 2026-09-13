@@ -137,7 +137,7 @@ def test_derived_declaration_and_dependency() -> None:
             taco.Level("sample", stac=taco.extensions.STAC(), grid=taco.extensions.MajorTOM(50))
         ),
     )
-    descriptor = contract.to_dict()["taco:derived"]["sample"]["grid"]
+    descriptor = contract.extensions["sample"]["grid"]
     assert descriptor["requires"] == ["stac:centroid"]
     assert descriptor["produces"] == ["grid:code"]
     assert descriptor["configuration"]["dist_km"] == 50
@@ -187,6 +187,22 @@ def test_serialized_derived_declaration_is_validated() -> None:
                 }
             },
         )
+
+
+def test_execution_graph_is_not_serialized() -> None:
+    contract = taco.Contract(
+        structure=None,
+        metadata=taco.MetadataSchema(
+            taco.Level("sample", stac=taco.extensions.STAC(), grid=taco.extensions.MajorTOM())
+        ),
+    )
+    assert contract.extensions
+    assert "taco:derived" not in contract.to_dict()
+
+    legacy = {**contract.to_dict(), "taco:derived": contract.extensions}
+    loaded = taco.Contract.from_dict(legacy)
+    assert loaded.extensions == contract.extensions
+    assert "taco:derived" not in loaded.to_dict()
 
 
 def test_derived_configuration_must_be_json() -> None:

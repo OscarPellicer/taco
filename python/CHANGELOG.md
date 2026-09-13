@@ -5,6 +5,12 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+### Removed
+
+- Writer-time extension graphs and operational configuration are no longer
+  serialized as `taco:derived` in `COLLECTION.json`. The active contract keeps
+  them only in memory while `run()` computes the declared metadata columns.
+
 ## 0.6.1 - 2026-09-13
 
 ### Changed

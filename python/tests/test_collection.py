@@ -15,6 +15,7 @@ def test_collection_round_trip(collection: taco.Collection) -> None:
     assert data["taco:version"] == "3.0.0"
     assert data["labels:num_classes"] == 2
     assert "metadata" not in data
+    assert "taco:derived" not in data
     loaded = taco.Collection.from_json(collection.to_json())
     assert loaded.to_dict() == data
 

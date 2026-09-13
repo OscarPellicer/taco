@@ -422,7 +422,7 @@ def test_custom_derived_group(tmp_path) -> None:
         structure=None,
         metadata=taco.MetadataSchema(taco.Level("sample", base=Base, next=PlusOne())),
     )
-    assert contract.to_dict()["taco:derived"]["sample"]["next"]["configuration"] == {"values": [1, 2]}
+    assert contract.extensions["sample"]["next"]["configuration"] == {"values": [1, 2]}
     collection = taco.Collection(
         contract=contract,
         id="derived",
@@ -437,7 +437,9 @@ def test_custom_derived_group(tmp_path) -> None:
         writer.run()
     from taco._view import open_view
 
-    assert open_view(tmp_path / "derived").level("sample").column("next:value").to_pylist() == [3]
+    dataset = open_view(tmp_path / "derived")
+    assert dataset.level("sample").column("next:value").to_pylist() == [3]
+    assert "taco:derived" not in dataset.collection_json
 
 
 @dataclass(frozen=True)
