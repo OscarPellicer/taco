@@ -94,7 +94,7 @@ module = ["pyarrow", "pyarrow.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["taco._view", "taco.tacocat", "taco.writer.metadata_tables"]
+module = ["taco._view", "taco.tacocat", "taco.metadata.derived", "taco.writer.metadata_tables"]
 disable_error_code = ["no-untyped-call"]
 
 [tool.coverage.run]

@@ -155,9 +155,7 @@ def _morton_key(longitude: float, latitude: float, bits: int = 24) -> int:
 def _admin_names(level: int) -> dict[int, str]:
     resource = files("taco").joinpath("metadata", "data", "admin", f"admin{level}.parquet")
     with as_file(resource) as path:
-        table = pq.read_table(  # type: ignore[no-untyped-call]
-            path, columns=[f"admin_code{level}", "name"]
-        )
+        table = pq.read_table(path, columns=[f"admin_code{level}", "name"])
     codes, names = table.columns
     return dict(zip(codes.to_pylist(), names.to_pylist(), strict=True))
 
