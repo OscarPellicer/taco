@@ -5,6 +5,17 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+## 0.5.1 - 2026-09-13
+
+### Fixed
+
+- `GeoEnrich` once again batches and spatially orders Earth Engine requests,
+  groups products by reducer, fills masked numeric values with zero, and
+  resolves administrative raster codes to human-readable country, state, and
+  district names using lookup tables shipped in the wheel.
+- GeoEnrich numeric outputs are rounded explicitly to their declared
+  `float32` representation before strict contract validation.
+
 ## 0.5.0 - 2026-09-13
 
 ### Added
