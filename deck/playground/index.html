@@ -7,7 +7,7 @@
   <meta name="description" content="Browse TACO samples by their spatial centroid.">
   <title>TACO viewer</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="styles.css?v=6">
+  <link rel="stylesheet" href="styles.css?v=8">
   <script type="importmap">
     {
       "imports": {
@@ -32,6 +32,9 @@
         </select>
         <input id="datasetUrl" type="url" placeholder="https://example.com/dataset.zip" aria-label="TACO dataset URL" spellcheck="false">
       </div>
+      <select id="plotField" class="plot-field" aria-label="Color points by metadata field" disabled>
+        <option value="">Color by metadata</option>
+      </select>
       <button id="loadDataset" class="dataset-button primary" type="button">Load</button>
     </div>
 
@@ -40,12 +43,6 @@
 
   <main>
     <div id="map" aria-label="Map of TACO sample centroids"></div>
-
-    <div class="legend" aria-label="Split legend">
-      <span><i class="train"></i>train</span>
-      <span><i class="validation"></i>validation</span>
-      <span><i class="test"></i>test</span>
-    </div>
 
     <div id="message" class="message" role="status" hidden></div>
 
@@ -80,6 +77,6 @@
     </a>
   </main>
 
-  <script type="module" src="app.js?v=6"></script>
+  <script type="module" src="app.js?v=8"></script>
 </body>
 </html>

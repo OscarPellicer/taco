@@ -4,11 +4,11 @@ const FIXTURE_ROOT = "https://huggingface.co/datasets/asterisk-labs/taco-api-fix
 const MANIFEST_URL = `${FIXTURE_ROOT}/manifest.json`;
 const CENTROID_PROFILES = new Set(["spatial", "ispacial", "ispatial", "stac", "stac-interval", "shared-stac", "istac"]);
 const CENTROID_FIELDS = ["spatial:centroid", "ispatial:centroid", "stac:centroid", "istac:centroid"];
-const COLORS = { train: "#0f766e", validation: "#d97706", test: "#7c3aed" };
+const PLOT_COLORS = ["#0f766e", "#2563eb", "#7c3aed", "#d97706", "#dc2626", "#0891b2", "#65a30d", "#c026d3"];
 
 const element = Object.fromEntries(
   [
-    "fixtureSelect", "datasetUrl", "loadDataset", "status", "message",
+    "fixtureSelect", "datasetUrl", "plotField", "loadDataset", "status", "message",
     "metadataPanel", "pointPosition", "pointTitle", "pointCoordinates", "metadataBody", "closeMetadata",
     "metadataPath", "metadataSource", "metadataCount", "loading",
   ].map((id) => [id, document.getElementById(id)]),
@@ -35,6 +35,7 @@ const state = {
   points: [],
   markers: [],
   pointBaseZoom: 2,
+  plotField: null,
   selectedPoint: -1,
   panelMode: null,
   metadataPages: [],
@@ -87,6 +88,10 @@ function bindEvents() {
     loadFixture(next);
   });
   element.loadDataset.addEventListener("click", () => { void loadDatasetUrl(element.datasetUrl.value); });
+  element.plotField.addEventListener("change", () => {
+    state.plotField = element.plotField.value || null;
+    recolorPoints();
+  });
   element.datasetUrl.addEventListener("keydown", (event) => {
     if (event.key === "Enter") void loadDatasetUrl(element.datasetUrl.value);
   });
@@ -174,6 +179,7 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
     state.currentUrl = url;
     state.dataset = dataset;
     state.points = points;
+    populatePlotFields(sampleFields);
     renderDataset(url, index);
     renderPoints();
     setStatus("ready", `${points.length} points`);
@@ -198,8 +204,7 @@ function renderPoints() {
   clearMarkers();
   const bounds = [];
   state.points.forEach((point, index) => {
-    const split = String(point.row["ml:split"] || "train");
-    const color = COLORS[split] || COLORS.train;
+    const color = pointColor(point);
     const marker = L.circleMarker([point.latitude, point.longitude], {
       renderer: pointRenderer,
       radius: pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom),
@@ -218,6 +223,38 @@ function renderPoints() {
   else map.fitBounds(bounds, { padding: [70, 70], maxZoom: 5 });
   state.pointBaseZoom = map.getZoom();
   resizePoints();
+}
+
+function populatePlotFields(sampleFields) {
+  const fields = Object.keys(sampleFields).filter((name) => !CENTROID_FIELDS.includes(name));
+  element.plotField.replaceChildren();
+  const uniform = document.createElement("option");
+  uniform.value = "";
+  uniform.textContent = "Single color";
+  element.plotField.append(uniform);
+  fields.forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    element.plotField.append(option);
+  });
+  state.plotField = fields.includes("geoenrich:admin_states") ? "geoenrich:admin_states" : null;
+  element.plotField.value = state.plotField || "";
+  element.plotField.disabled = fields.length === 0;
+}
+
+function pointColor(point) {
+  if (!state.plotField) return PLOT_COLORS[0];
+  const value = point.row[state.plotField];
+  if (value === null || value === undefined || value === "") return "#94a3b8";
+  const text = String(value);
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) hash = ((hash << 5) - hash + text.charCodeAt(index)) | 0;
+  return PLOT_COLORS[Math.abs(hash) % PLOT_COLORS.length];
+}
+
+function recolorPoints() {
+  state.markers.forEach((marker, index) => marker.setStyle({ fillColor: pointColor(state.points[index]) }));
 }
 
 function pointRadius(count, zoom, baseZoom) {
@@ -275,8 +312,11 @@ async function selectPoint(index) {
 async function metadataPagesForPoint(point) {
   const sourceFile = point.row.source_file;
   const sampleId = Number(point.row.sample_id);
-  const [levelRows, longRows] = await Promise.all([
-    Promise.all(state.dataset.levels.map((level) => state.dataset.readLevel(level))),
+  const sampleOptions = sourceFile === undefined
+    ? { rowStart: sampleId, rowEnd: sampleId + 1 }
+    : { filter: metadataIdentityFilter("internal:current_id", [BigInt(sampleId)], sourceFile) };
+  const [samples, longRows] = await Promise.all([
+    state.dataset.readLevel("sample", sampleOptions),
     state.dataset.read({ layout: "long", idx: sampleId, location: true }),
   ]);
 
@@ -287,23 +327,29 @@ async function metadataPagesForPoint(point) {
   const pages = [];
 
   const selectedRows = new Map();
-  const samples = levelRows[0].filter((row) =>
-    Number(row["internal:current_id"]) === sampleId && sameSource(row["internal:source_file"], sourceFile),
-  );
   selectedRows.set("sample", samples);
   pages.push(parquetPage("sample", samples, locations));
 
   for (let index = 1; index < state.dataset.levels.length; index += 1) {
     const level = state.dataset.levels[index];
     const parents = selectedRows.get(parentMetadataLevel(level)) ?? [];
-    const parentIds = new Set(parents.map(rowIdentity));
-    const rows = levelRows[index].filter((row) =>
-      parentIds.has(parentIdentity(row)) && sameSource(row["internal:source_file"], sourceFile),
-    );
+    const parentIds = parents.map((row) => row["internal:current_id"]);
+    const rows = parentIds.length
+      ? await state.dataset.readLevel(level, {
+          filter: metadataIdentityFilter("internal:parent_id", parentIds, sourceFile),
+        })
+      : [];
     selectedRows.set(level, rows);
     pages.push(parquetPage(level, rows, locations));
   }
   return pages;
+}
+
+function metadataIdentityFilter(field, ids, sourceFile) {
+  const identity = { [field]: { $in: ids } };
+  return sourceFile === undefined
+    ? identity
+    : { $and: [identity, { "internal:source_file": { $eq: sourceFile } }] };
 }
 
 function parquetPage(level, rows, locations) {
@@ -827,6 +873,8 @@ function disableDatasetNavigation(disabled) {
   element.fixtureSelect.disabled = disabled;
   element.datasetUrl.disabled = disabled;
   element.loadDataset.disabled = disabled;
+  if (disabled) element.plotField.disabled = true;
+  else if (state.dataset) element.plotField.disabled = element.plotField.options.length <= 1;
 }
 
 function setLoading(loading) {
