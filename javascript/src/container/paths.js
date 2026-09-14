@@ -1,4 +1,4 @@
-import { fail } from "./errors.js";
+import { fail } from "../errors.js";
 
 const FORBIDDEN_COMPONENT = /[<>:"\\|?]/;
 

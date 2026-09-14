@@ -1,4 +1,4 @@
-import { fail } from "./errors.js";
+import { fail } from "../errors.js";
 
 const OPERATORS = new Set(["$gt", "$gte", "$lt", "$lte", "$eq", "$ne", "$in", "$nin", "$not"]);
 

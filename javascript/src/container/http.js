@@ -1,4 +1,4 @@
-import { fail } from "./errors.js";
+import { fail } from "../errors.js";
 
 /** @typedef {typeof globalThis.fetch} FetchFunction */
 
@@ -69,16 +69,37 @@ export class HttpClient {
    * @returns {Promise<Uint8Array>}
    */
   async get(url) {
+    const response = await this.getResponse(url);
+    if (!response.ok) {
+      fail("HTTP_ERROR", `HTTP ${response.status} ${response.statusText} for ${url}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  /**
+   * Fetch an object, returning null only when the server answers with 404.
+   *
+   * @param {string} url
+   * @returns {Promise<Uint8Array | null>}
+   */
+  async getOptional(url) {
+    const response = await this.getResponse(url);
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      fail("HTTP_ERROR", `HTTP ${response.status} ${response.statusText} for ${url}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  /** @param {string} url @returns {Promise<Response>} */
+  async getResponse(url) {
     const headers = new Headers(this.requestInit.headers);
     const response = await this.fetch(url, {
       ...this.requestInit,
       method: "GET",
       headers,
     });
-    if (!response.ok) {
-      fail("HTTP_ERROR", `HTTP ${response.status} ${response.statusText} for ${url}`);
-    }
-    return new Uint8Array(await response.arrayBuffer());
+    return response;
   }
 
   /**

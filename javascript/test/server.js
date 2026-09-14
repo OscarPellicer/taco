@@ -7,6 +7,19 @@ const fixturePath = new URL("../../r/tests/testthat/data/taco.zip", import.meta.
 export async function fixtureServer() {
   const archive = new Uint8Array(await readFile(fixturePath));
   const entries = storedEntries(archive);
+  const collection = JSON.parse(new TextDecoder().decode(entries.get("COLLECTION.json")));
+  const versionedCollection = { ...collection, dataset_version: "2.0.0" };
+  const manifest = new TextEncoder().encode(JSON.stringify({
+    "taco:container": "versioned",
+    "taco:default_version": "2.0.0",
+    "taco:versions": {
+      "1.0.0": {
+        href: "1.0.0/",
+        collection: { ...collection, dataset_version: "1.0.0" },
+      },
+      "2.0.0": { href: "2.0.0/", collection: versionedCollection },
+    },
+  }));
   /** @type {{ path: string, range: string | undefined }[]} */
   const requests = [];
 
@@ -25,6 +38,12 @@ export async function fixtureServer() {
       bytes[bytes.length - 100] ^= 1;
       return serve(response, bytes, request.headers.range);
     }
+    if (path === "/versioned/taco.json") return serve(response, manifest, request.headers.range);
+    if (path.startsWith("/versioned/1.0.0/") || path.startsWith("/versioned/2.0.0/")) {
+      const name = decodeURIComponent(path.split("/").slice(3).join("/"));
+      const bytes = entries.get(name);
+      if (bytes) return serve(response, bytes, request.headers.range);
+    }
     if (path.startsWith("/folder/")) {
       const name = decodeURIComponent(path.slice("/folder/".length));
       const bytes = entries.get(name);
@@ -40,6 +59,7 @@ export async function fixtureServer() {
     baseUrl: `http://127.0.0.1:${address.port}`,
     archive,
     entries,
+    manifest,
     requests,
     close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
   };

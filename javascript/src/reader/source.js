@@ -1,21 +1,21 @@
-import { openTacoArchive } from "./cozip-profile2.js";
-import { parseCollection } from "./contract.js";
-import { fail } from "./errors.js";
-import { directoryUrl, httpUrl, openHttpObject } from "./http.js";
-import { encodeRelativePath, levelFilename, relativePath } from "./paths.js";
+import { openTacoArchive } from "../container/cozip.js";
+import { directoryUrl, httpUrl, openHttpObject } from "../container/http.js";
+import { encodeRelativePath, levelFilename, relativePath } from "../container/paths.js";
+import { fail } from "../errors.js";
+import { loadCollection, parseCollectionJson } from "./collection.js";
 
 const COLLECTION = "COLLECTION.json";
 const METADATA = "METADATA";
 
 /**
- * @typedef {ReturnType<typeof parseCollection>} ParsedCollection
+ * @typedef {import("../contract/collection.js").ParsedCollection} ParsedCollection
  * @typedef {"auto" | "folder" | "zip" | "tacocat"} ContainerHint
  */
 
 class Source {
   /**
    * @param {string} url
-   * @param {import("./http.js").HttpClient} client
+   * @param {import("../container/http.js").HttpClient} client
    * @param {ParsedCollection} parsed
    * @param {"folder" | "zip" | "tacocat"} container
    */
@@ -41,7 +41,7 @@ class Source {
 }
 
 class FolderSource extends Source {
-  /** @param {string} url @param {import("./http.js").HttpClient} client @param {ParsedCollection} parsed */
+  /** @param {string} url @param {import("../container/http.js").HttpClient} client @param {ParsedCollection} parsed */
   constructor(url, client, parsed) {
     super(directoryUrl(url), client, parsed, "folder");
   }
@@ -62,9 +62,9 @@ class FolderSource extends Source {
 class ZipSource extends Source {
   /**
    * @param {string} url
-   * @param {import("./http.js").HttpClient} client
+   * @param {import("../container/http.js").HttpClient} client
    * @param {ParsedCollection} parsed
-   * @param {import("./cozip-profile2.js").TacoArchive} archive
+   * @param {import("../container/cozip.js").TacoArchive} archive
    */
   constructor(url, client, parsed, archive) {
     super(url, client, parsed, "zip");
@@ -84,7 +84,7 @@ class ZipSource extends Source {
 }
 
 class TacocatSource extends Source {
-  /** @param {string} url @param {import("./http.js").HttpClient} client @param {ParsedCollection} parsed */
+  /** @param {string} url @param {import("../container/http.js").HttpClient} client @param {ParsedCollection} parsed */
   constructor(url, client, parsed) {
     const base = directoryUrl(url);
     super(base, client, parsed, "tacocat");
@@ -111,20 +111,20 @@ class TacocatSource extends Source {
 
 /**
  * @param {string} source
- * @param {import("./http.js").HttpClient} client
+ * @param {import("../container/http.js").HttpClient} client
  * @param {ContainerHint} hint
+ * @param {ParsedCollection | null} [embedded]
  */
-export async function openSource(source, client, hint = "auto") {
+export async function openSource(source, client, hint = "auto", embedded = null) {
   const url = httpUrl(source);
   if (!["auto", "folder", "zip", "tacocat"].includes(hint)) {
     throw new TypeError("taco: container must be auto, folder, zip, or tacocat");
   }
   const zip = hint === "zip" || (hint === "auto" && new URL(url).pathname.toLowerCase().endsWith(".zip"));
-  if (zip) return openZip(url, client);
+  if (zip) return openZip(url, client, embedded);
 
   const base = directoryUrl(url);
-  const bytes = await client.get(new URL(COLLECTION, base).href);
-  const parsed = parseCollectionJson(bytes, new URL(COLLECTION, base).href);
+  const parsed = embedded ?? (await loadCollection(client, new URL(COLLECTION, base).href));
   const actual = parsed.sources ? "tacocat" : "folder";
   if (hint !== "auto" && hint !== actual) {
     fail("CONTAINER_MISMATCH", `requested ${hint} but COLLECTION.json describes ${actual}`);
@@ -134,10 +134,14 @@ export async function openSource(source, client, hint = "auto") {
     : new FolderSource(base, client, parsed);
 }
 
-/** @param {string} url @param {import("./http.js").HttpClient} client */
-async function openZip(url, client) {
+/**
+ * @param {string} url
+ * @param {import("../container/http.js").HttpClient} client
+ * @param {ParsedCollection | null} embedded
+ */
+async function openZip(url, client, embedded) {
   const archive = await openTacoArchive(url, client);
-  const parsed = parseCollectionJson(await archive.read(COLLECTION), `${url}#${COLLECTION}`);
+  const parsed = embedded ?? parseCollectionJson(await archive.read(COLLECTION), `${url}#${COLLECTION}`);
   if (parsed.sources) {
     fail("INVALID_COLLECTION", "taco:sources must not appear inside a ZIP partition");
   }
@@ -154,17 +158,6 @@ async function openZip(url, client) {
     );
   }
   return new ZipSource(url, client, parsed, archive);
-}
-
-/** @param {Uint8Array} bytes @param {string} source */
-function parseCollectionJson(bytes, source) {
-  let value;
-  try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch (error) {
-    fail("INVALID_COLLECTION", `could not parse ${source}: ${error instanceof Error ? error.message : error}`);
-  }
-  return parseCollection(value);
 }
 
 /** @param {Record<string, any>} row */

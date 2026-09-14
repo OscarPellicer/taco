@@ -1,7 +1,7 @@
 import { parquetMetadataAsync, parquetQuery } from "hyparquet";
 import { compressors } from "hyparquet-compressors";
-import { fail } from "./errors.js";
-import { filterColumns } from "./filter.js";
+import { fail } from "../errors.js";
+import { filterColumns } from "../reader/filter.js";
 
 export const PROTECTED_LOCATION_COLUMNS = new Set(["cozip:location", "taco:location"]);
 

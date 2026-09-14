@@ -1,4 +1,4 @@
-import { fail } from "./errors.js";
+import { fail } from "../errors.js";
 import { arrayBuffer, httpUrl } from "./http.js";
 
 export class TacoAsset {

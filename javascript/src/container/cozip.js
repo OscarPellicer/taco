@@ -1,4 +1,4 @@
-import { fail } from "./errors.js";
+import { fail } from "../errors.js";
 import { HttpObject, openHttpObject } from "./http.js";
 
 const LFH_SIZE = 51;

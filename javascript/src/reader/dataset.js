@@ -1,10 +1,10 @@
-import { matchLeaf } from "./contract.js";
-import { fail } from "./errors.js";
+import { matchLeaf } from "../contract/structure.js";
+import { fail } from "../errors.js";
 import { matchesFilter } from "./filter.js";
-import { TacoParquet, PROTECTED_LOCATION_COLUMNS } from "./parquet.js";
-import { basename, contractPath, parentLevel } from "./paths.js";
+import { TacoAsset } from "../container/asset.js";
+import { TacoParquet, PROTECTED_LOCATION_COLUMNS } from "../container/parquet.js";
+import { basename, contractPath, parentLevel } from "../container/paths.js";
 import { safeInteger } from "./source.js";
-import { TacoAsset } from "./asset.js";
 
 const ID_CURRENT = "internal:current_id";
 const ID_PARENT = "internal:parent_id";
@@ -15,7 +15,7 @@ const ID_SOURCE = "internal:source_file";
 
 /**
  * @typedef {Record<string, any>} Row
- * @typedef {import("./contract.js").TacoLeaf} TacoLeaf
+ * @typedef {import("../contract/structure.js").TacoLeaf} TacoLeaf
  * @typedef {object} Node
  * @property {Row} row
  * @property {string} level
@@ -31,6 +31,7 @@ const ID_SOURCE = "internal:source_file";
  * @typedef {object} ReadOptions
  * @property {"wide" | "long"} [layout]
  * @property {number | [number, number] | null} [idx]
+ * @property {string | null} [level]
  * @property {string[] | null} [files]
  * @property {boolean} [location]
  * @property {Record<string, any>} [filter]
@@ -39,17 +40,19 @@ const ID_SOURCE = "internal:source_file";
 export class Dataset {
   /** @type {import("./source.js").Source} */
   #source;
-  /** @type {import("./http.js").HttpClient} */
+  /** @type {import("../container/http.js").HttpClient} */
   #client;
   /** @type {Map<string, Promise<TacoParquet>>} */
   #parquets;
 
   /**
    * @param {import("./source.js").Source} source
-   * @param {import("./http.js").HttpClient} client
+   * @param {import("../container/http.js").HttpClient} client
+   * @param {{sources: string[], version: string | null, versions: string[], manifest: string | null}} resolution
    */
-  constructor(source, client) {
+  constructor(source, client, resolution) {
     this.url = source.url;
+    this.sources = [...resolution.sources];
     this.container = source.container;
     this.profile = "taco";
     this.collection = source.parsed.collection;
@@ -57,6 +60,9 @@ export class Dataset {
     this.structure = source.parsed.contract.structure;
     this.levels = [...source.parsed.levels];
     this.derived = source.parsed.contract.derived;
+    this.version = resolution.version ?? source.parsed.collection.dataset_version;
+    this.versions = [...resolution.versions];
+    this.manifest = resolution.manifest;
     this.#source = source;
     this.#client = client;
     this.#parquets = new Map();
@@ -93,6 +99,23 @@ export class Dataset {
     const location = options.location ?? true;
     if (typeof location !== "boolean") throw new TypeError("taco: location must be a boolean");
     const idx = normalizeIdx(options.idx);
+    const level = options.level ?? null;
+    if (level !== null) {
+      if (typeof level !== "string" || level.length === 0) {
+        throw new TypeError("taco: level must be a non-empty string or null");
+      }
+      /** @type {ReadLevelOptions} */
+      const rawOptions = {};
+      if (typeof idx === "number") {
+        rawOptions.rowStart = idx;
+        rawOptions.rowEnd = idx + 1;
+      } else if (idx !== null) {
+        rawOptions.rowStart = idx[0];
+        rawOptions.rowEnd = idx[1];
+      }
+      if (options.filter) rawOptions.filter = options.filter;
+      return this.readLevel(level, rawOptions);
+    }
     const leaves = this.#selectedLeaves(options.files);
     const samples = await this.#sampleRows(idx);
 
