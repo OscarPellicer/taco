@@ -1,4 +1,4 @@
-import { parquetMetadataAsync, parquetQuery } from "hyparquet";
+import { parquetMetadataAsync, parquetQuery, parquetScan, parquetSchema } from "hyparquet";
 import { compressors } from "hyparquet-compressors";
 import { fail } from "../errors.js";
 import { filterColumns } from "../reader/filter.js";
@@ -7,7 +7,7 @@ export const PROTECTED_LOCATION_COLUMNS = new Set(["cozip:location", "taco:locat
 
 export class TacoParquet {
   /**
-   * @param {{ byteLength: number, slice(start: number, end?: number): Promise<ArrayBuffer> }} file
+   * @param {{ byteLength: number, slice(start: number, end?: number): Promise<ArrayBuffer>, readAll?(onProgress?: (progress: {loaded: number, total: number}) => void): Promise<ArrayBuffer> }} file
    * @param {string} level
    */
   constructor(file, level) {
@@ -17,10 +17,13 @@ export class TacoParquet {
     this.cachePromise = null;
   }
 
-  /** Keep the complete compressed Parquet in memory without decoding its rows. */
-  async cache() {
+  /** @param {(progress: {loaded: number, total: number}) => void} [onProgress] */
+  async cache(onProgress) {
     if (!this.cachePromise) {
-      this.cachePromise = this.file.slice(0, this.file.byteLength).then((buffer) => {
+      const download = this.file.readAll
+        ? this.file.readAll(onProgress)
+        : this.file.slice(0, this.file.byteLength);
+      this.cachePromise = download.then((buffer) => {
         /** @type {{byteLength: number, slice(start: number, end?: number): Promise<ArrayBuffer>}} */
         const cachedFile = {
           byteLength: buffer.byteLength,
@@ -30,6 +33,7 @@ export class TacoParquet {
       });
     }
     await this.cachePromise;
+    onProgress?.({ loaded: this.file.byteLength, total: this.file.byteLength });
   }
 
   /** Return the number of rows without decoding the Parquet body. */
@@ -59,10 +63,12 @@ export class TacoParquet {
    *   filter?: Record<string, any>,
    *   rowStart?: number,
    *   rowEnd?: number,
+   *   rowIndexes?: number[],
    * }} [options]
    */
   async read(options = {}) {
     validateRows(options.rowStart, options.rowEnd);
+    validateRowIndexes(options.rowIndexes, options);
     if (
       options.columns !== undefined &&
       (!Array.isArray(options.columns) ||
@@ -88,22 +94,92 @@ export class TacoParquet {
       sentinel = true;
     }
     const metadata = await this.metadataPromise;
-    const rows = await parquetQuery({
-      file: this.file,
-      metadata,
-      compressors,
-      columns,
-      filter: options.filter,
-      rowStart: options.rowStart,
-      rowEnd: options.rowEnd,
-      useOffsetIndex: true,
-      utf8: false,
-    });
+    /** @type {Record<string, any>[]} */
+    const rows = options.rowIndexes
+      ? await readRowIndexes(this.file, metadata, columns, options.rowIndexes)
+      : await parquetQuery({
+          file: this.file,
+          metadata,
+          compressors,
+          columns,
+          filter: options.filter,
+          rowStart: options.rowStart,
+          rowEnd: options.rowEnd,
+          useOffsetIndex: true,
+          utf8: false,
+        });
     for (const row of rows) {
       for (const name of PROTECTED_LOCATION_COLUMNS) delete row[name];
       if (sentinel) delete row["internal:current_id"];
     }
     return rows;
+  }
+}
+
+/**
+ * @param {{byteLength: number, slice(start: number, end?: number): Promise<ArrayBuffer>}} file
+ * @param {import("hyparquet").FileMetaData} metadata
+ * @param {string[] | undefined} columns
+ * @param {number[]} rowIndexes
+ */
+async function readRowIndexes(file, metadata, columns, rowIndexes) {
+  const totalRows = Number(metadata.num_rows);
+  if (rowIndexes.some((index) => index >= totalRows)) {
+    throw new RangeError(`taco: rowIndexes must be smaller than ${totalRows}`);
+  }
+  const selectedColumns = columns ?? parquetSchema(metadata).children.map((child) => child.element.name);
+  const requests = rowIndexes
+    .map((row, output) => ({ row, output }))
+    .sort((left, right) => left.row - right.row);
+  /** @type {Record<string, any>[]} */
+  const rows = Array.from({ length: rowIndexes.length }, () => ({}));
+  const scan = await parquetScan({
+    file,
+    metadata,
+    compressors,
+    columns: selectedColumns,
+    utf8: false,
+  });
+
+  for (const range of scan.ranges) {
+    const first = lowerBound(requests, range.rowStart);
+    const last = lowerBound(requests, range.rowEnd);
+    if (first === last) continue;
+    const selected = requests.slice(first, last);
+    for (const column of selectedColumns) {
+      const values = await scan.readColumn({
+        column,
+        rowStart: range.rowStart,
+        rowEnd: range.rowEnd,
+      });
+      for (const request of selected) {
+        rows[request.output][column] = values[request.row - range.rowStart];
+      }
+    }
+  }
+  return rows;
+}
+
+/** @param {{row: number}[]} rows @param {number} target */
+function lowerBound(rows, target) {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (rows[middle].row < target) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/** @param {number[] | undefined} rowIndexes @param {Record<string, any>} options */
+function validateRowIndexes(rowIndexes, options) {
+  if (rowIndexes === undefined) return;
+  if (!Array.isArray(rowIndexes) || rowIndexes.some((index) => !Number.isSafeInteger(index) || index < 0)) {
+    throw new RangeError("taco: rowIndexes must be an array of non-negative integers");
+  }
+  if (options.rowStart !== undefined || options.rowEnd !== undefined || options.filter !== undefined) {
+    throw new TypeError("taco: rowIndexes cannot be combined with rowStart, rowEnd, or filter");
   }
 }
 

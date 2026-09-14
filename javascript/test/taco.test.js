@@ -46,9 +46,33 @@ test("raw level reads delegate projection and filters to Parquet", async () => {
   assert.deepEqual(rows, [{ "internal:current_id": 2n, "ml:split": "test" }]);
 });
 
+test("raw level reads select sparse physical row indexes", async () => {
+  const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
+  const rows = await dataset.readLevel("sample", {
+    columns: ["internal:current_id", "ml:split"],
+    rowIndexes: [2, 0, 2],
+  });
+  assert.deepEqual(rows, [
+    { "internal:current_id": 2n, "ml:split": "test" },
+    { "internal:current_id": 0n, "ml:split": "train" },
+    { "internal:current_id": 2n, "ml:split": "test" },
+  ]);
+  await assert.rejects(
+    () => dataset.readLevel("sample", { rowIndexes: [3] }),
+    /rowIndexes must be smaller/,
+  );
+  await assert.rejects(
+    () => dataset.readLevel("sample", { rowIndexes: [0], rowStart: 0 }),
+    /cannot be combined/,
+  );
+});
+
 test("caches compressed metadata before projected queries", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
-  await dataset.cacheLevel("sample");
+  const progress = [];
+  await dataset.cacheLevel("sample", { onProgress: (event) => progress.push(event) });
+  assert.equal(progress.at(-1).loaded, progress.at(-1).total);
+  assert.ok(progress.at(-1).total > 0);
   const rows = await dataset.readLevel("sample", {
     columns: ["internal:current_id", "ml:split"],
     filter: { "ml:split": { $eq: "test" } },

@@ -1,6 +1,7 @@
 import { fail } from "../errors.js";
 
 /** @typedef {typeof globalThis.fetch} FetchFunction */
+/** @typedef {(progress: {loaded: number, total: number}) => void} ProgressCallback */
 
 /**
  * @param {unknown} value
@@ -109,9 +110,10 @@ export class HttpClient {
    * @param {string} url
    * @param {number} start
    * @param {number} end Inclusive end byte.
+   * @param {ProgressCallback} [onProgress]
    * @returns {Promise<{bytes: Uint8Array, totalSize: number, fullBytes: Uint8Array | null}>}
    */
-  async range(url, start, end) {
+  async range(url, start, end, onProgress) {
     if (
       !Number.isSafeInteger(start) ||
       !Number.isSafeInteger(end) ||
@@ -130,7 +132,6 @@ export class HttpClient {
     if (response.status !== 206 && response.status !== 200) {
       fail("HTTP_ERROR", `HTTP ${response.status} ${response.statusText} for ${url}`);
     }
-    const responseBytes = new Uint8Array(await response.arrayBuffer());
     if (response.status === 206) {
       const contentRange = response.headers.get("content-range");
       const match = contentRange?.match(/^bytes (\d+)-(\d+)\/(\d+)$/i);
@@ -150,6 +151,7 @@ export class HttpClient {
         fail("INVALID_RANGE", `invalid Content-Range ${JSON.stringify(contentRange)} for ${url}`);
       }
       const expected = responseEnd - responseStart + 1;
+      const responseBytes = await readResponseBytes(response, expected, onProgress);
       if (responseBytes.length !== expected) {
         fail(
           "INVALID_RANGE",
@@ -159,6 +161,11 @@ export class HttpClient {
       return { bytes: responseBytes, totalSize, fullBytes: null };
     }
 
+    const declaredLength = Number(response.headers.get("content-length"));
+    const expected = Number.isSafeInteger(declaredLength) && declaredLength >= 0
+      ? declaredLength
+      : undefined;
+    const responseBytes = await readResponseBytes(response, expected, onProgress);
     if (responseBytes.length === 0 || start >= responseBytes.length) {
       fail("INVALID_RANGE", `server ignored Range and did not return byte ${start} for ${url}`);
     }
@@ -187,9 +194,10 @@ export class HttpObject {
   /**
    * @param {number} start
    * @param {number} end Exclusive end byte.
+   * @param {ProgressCallback} [onProgress]
    * @returns {Promise<Uint8Array>}
    */
-  async sliceBytes(start, end) {
+  async sliceBytes(start, end, onProgress) {
     if (
       !Number.isSafeInteger(start) ||
       !Number.isSafeInteger(end) ||
@@ -200,8 +208,11 @@ export class HttpObject {
       throw new RangeError(`taco: invalid object slice ${start}-${end}`);
     }
     if (start === end) return new Uint8Array(0);
-    if (this.fullBytes) return this.fullBytes.subarray(start, end);
-    const result = await this.client.range(this.url, start, end - 1);
+    if (this.fullBytes) {
+      onProgress?.({ loaded: end - start, total: end - start });
+      return this.fullBytes.subarray(start, end);
+    }
+    const result = await this.client.range(this.url, start, end - 1, onProgress);
     if (result.totalSize !== this.byteLength) {
       fail(
         "SOURCE_CHANGED",
@@ -221,10 +232,25 @@ export class HttpObject {
     return arrayBuffer(await this.sliceBytes(start, end));
   }
 
+  /** @param {ProgressCallback} [onProgress] */
+  async readAll(onProgress) {
+    if (this.fullBytes) {
+      onProgress?.({ loaded: this.byteLength, total: this.byteLength });
+      return arrayBuffer(this.fullBytes);
+    }
+    const result = await this.client.range(this.url, 0, this.byteLength - 1, onProgress);
+    const bytes = result.fullBytes ?? result.bytes;
+    if (result.totalSize !== this.byteLength || bytes.byteLength !== this.byteLength) {
+      fail("SOURCE_CHANGED", `object size changed while reading ${this.url}`);
+    }
+    this.fullBytes = bytes;
+    return arrayBuffer(bytes);
+  }
+
   /**
    * @param {number} offset
    * @param {number} size
-   * @returns {{ byteLength: number, slice(start: number, end?: number): Promise<ArrayBuffer> }}
+   * @returns {{ byteLength: number, slice(start: number, end?: number): Promise<ArrayBuffer>, readAll(onProgress?: ProgressCallback): Promise<ArrayBuffer> }}
    */
   subBuffer(offset, size) {
     if (
@@ -250,8 +276,59 @@ export class HttpObject {
         }
         return this.slice(offset + start, offset + end);
       },
+      readAll: async (onProgress) => arrayBuffer(
+        await this.sliceBytes(offset, offset + size, onProgress),
+      ),
     };
   }
+}
+
+/**
+ * @param {Response} response
+ * @param {number | undefined} expected
+ * @param {ProgressCallback | undefined} onProgress
+ */
+async function readResponseBytes(response, expected, onProgress) {
+  if (!onProgress || !response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    onProgress?.({ loaded: bytes.byteLength, total: expected ?? bytes.byteLength });
+    return bytes;
+  }
+
+  const reader = response.body.getReader();
+  const output = expected === undefined ? null : new Uint8Array(expected);
+  const chunks = [];
+  let loaded = 0;
+  let lastUpdate = Date.now();
+  onProgress({ loaded, total: expected ?? 0 });
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (output) {
+      if (loaded + value.byteLength > output.byteLength) {
+        throw new Error("HTTP response exceeds its declared Content-Length");
+      }
+      output.set(value, loaded);
+    } else {
+      chunks.push(value);
+    }
+    loaded += value.byteLength;
+    const now = Date.now();
+    if (now - lastUpdate >= 100) {
+      onProgress({ loaded, total: expected ?? 0 });
+      lastUpdate = now;
+    }
+  }
+  onProgress({ loaded, total: expected ?? 0 });
+  if (output) return output.subarray(0, loaded);
+
+  const bytes = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 /**

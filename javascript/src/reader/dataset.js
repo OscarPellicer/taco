@@ -27,6 +27,7 @@ const ID_SOURCE = "internal:source_file";
  * @property {Record<string, any>} [filter]
  * @property {number} [rowStart]
  * @property {number} [rowEnd]
+ * @property {number[]} [rowIndexes]
  *
  * @typedef {object} ReadOptions
  * @property {"wide" | "long"} [layout]
@@ -82,12 +83,21 @@ export class Dataset {
     return (await this.#levelReader(level)).read(options);
   }
 
-  /** @param {string} level Cache one complete compressed metadata Parquet without decoding its rows. */
-  async cacheLevel(level) {
+  /**
+   * @param {string} level
+   * @param {{onProgress?: (progress: {loaded: number, total: number}) => void}} [options]
+   */
+  async cacheLevel(level, options = {}) {
     if (typeof level !== "string" || !this.levels.includes(level)) {
       fail("UNKNOWN_LEVEL", `unknown metadata level ${JSON.stringify(level)}`);
     }
-    await (await this.#levelReader(level)).cache();
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      throw new TypeError("taco: cache options must be an object");
+    }
+    if (options.onProgress !== undefined && typeof options.onProgress !== "function") {
+      throw new TypeError("taco: onProgress must be a function");
+    }
+    await (await this.#levelReader(level)).cache(options.onProgress);
   }
 
   /** @param {string} level Return the number of rows in one metadata level without decoding it. */
