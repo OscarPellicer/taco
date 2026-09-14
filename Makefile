@@ -2,9 +2,7 @@
 # make r         check the R reader
 # make julia     check the Julia reader
 # make javascript check and package the JavaScript reader
-# make deck      assemble the deck into _site/deck
-# make onepager  assemble the onepager into _site/onepager
-# make site      docs landing + deck + onepager + spec (what GitHub Pages deploys)
+# make site      compile docs/ into _site/ (what GitHub Pages deploys)
 # make clean     remove build output and caches
 
 PYTHON ?= python
@@ -17,12 +15,12 @@ COZIP_PYTHON ?= ../cozip/python
 COZIP_EXTENSION ?= $(abspath ../cozip_reader/build/release/extension/cozip/cozip.duckdb_extension)
 export COZIP_EXTENSION
 
-.PHONY: python r julia javascript deck onepager site clean
+.PHONY: python r julia javascript site clean
 
 python:
 	$(PYTHON) -m pip install -q "duckdb==$(DUCKDB_VERSION)" -e $(COZIP_PYTHON) -e "python[dev,test-eo]"
 	$(PYTHON) -m ruff format --check --config python/pyproject.toml python/taco python/tests python/examples
-	$(PYTHON) -m ruff check --config python/pyproject.toml python/taco python/tests python/examples tools
+	$(PYTHON) -m ruff check --config python/pyproject.toml python/taco python/tests python/examples docs/_build
 	$(PYTHON) -m mypy --config-file python/pyproject.toml python/taco
 	$(PYTHON) -m pytest python --cov=taco --cov-config=python/pyproject.toml --cov-report=term-missing
 	rm -rf python/dist && cd python && (command -v uv >/dev/null && uv build -q || $(PYTHON) -m pip wheel -q --no-deps -w dist .) && ls dist
@@ -37,17 +35,8 @@ julia:
 javascript:
 	cd javascript && npm ci && npm run types && npm test && npm pack --dry-run
 
-deck:
-	rm -rf $(SITE)/deck $(SITE)/javascript && mkdir -p $(SITE)/javascript && \
-	  cp -R deck $(SITE)/deck && cp -R javascript/src $(SITE)/javascript/src && touch $(SITE)/.nojekyll
-	@echo "open $(SITE)/deck/overview/index.html"
-
-onepager:
-	rm -rf $(SITE)/onepager && mkdir -p $(SITE) && cp -R onepager $(SITE)/onepager && touch $(SITE)/.nojekyll
-	@echo "open $(SITE)/onepager/index.html"
-
 site:
-	$(PYTHON) tools/build_site.py --output $(SITE) --clean
+	$(PYTHON) docs/_build/build.py --output $(SITE) --clean
 
 clean:
 	rm -rf $(SITE) python/dist python/build python/*.egg-info .pytest_cache python/.pytest_cache \

@@ -8,11 +8,12 @@
   <title>TACO viewer</title>
   <script>
     if (window.location.protocol === "file:") {
-      window.location.replace(`http://127.0.0.1:8765/deck/playground/${window.location.search}${window.location.hash}`);
+      window.location.replace(`http://127.0.0.1:8765/playground/${window.location.search}${window.location.hash}`);
     }
   </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.css">
   <link rel="stylesheet" href="styles.css?v=34">
+  <link rel="stylesheet" href="../shared/navigation.css">
   <script type="importmap">
     {
       "imports": {
@@ -24,10 +25,16 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="../overview/" aria-label="TACO overview">
-      <span class="brand-mark" aria-hidden="true">🌮</span>
-      <span><strong>TACO</strong><small>viewer</small></span>
-    </a>
+    <div class="brand-group">
+      <a class="brand" href="../" aria-label="TACO home">
+        <span class="brand-mark" aria-hidden="true">🌮</span>
+        <span><strong>TACO</strong><small>viewer</small></span>
+      </a>
+      <a class="taco-home-link" href="../" aria-label="Back to home" title="Back to home">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5L12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M9.5 20v-6h5v6"/></svg>
+        <span>Home</span>
+      </a>
+    </div>
 
     <div class="dataset-picker" aria-label="Open a TACO dataset">
       <div class="url-combobox">

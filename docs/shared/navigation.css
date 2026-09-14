@@ -1,0 +1,42 @@
+.taco-home-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 76px;
+  height: 32px;
+  border: 1px solid #94a3b8;
+  border-radius: 3px;
+  padding: 0 10px;
+  color: #334155;
+  background: #fff;
+  font: 700 11px/1 Inter, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: .01em;
+  text-decoration: none;
+  transition: color .14s ease, background .14s ease;
+}
+
+.taco-home-link svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.taco-home-link:hover {
+  border-color: #334155;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+.taco-home-link:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, .2);
+  outline-offset: 2px;
+}
+
+@media print {
+  .taco-home-link { display: none; }
+}

@@ -420,22 +420,6 @@ td.desc    { color: #555; }
   color: #ccc;
 }
 
-/* === HEADER HOME LINK === */
-.header-home {
-  display: inline-block;
-  margin-bottom: 4px;
-  background: #2563eb;
-  color: #fff;
-  border-radius: 999px;
-  padding: 3px 9px;
-  font-size: 6.7pt;
-  font-weight: 800;
-  letter-spacing: .35px;
-  text-decoration: none;
-  box-shadow: 0 2px 5px rgba(37, 99, 235, .2);
-}
-.header-home:hover { background: #1d4ed8; }
-
 /* === PRINT BUTTON === */
 .footer-heart { color: #ef4444; }
 

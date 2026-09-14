@@ -161,7 +161,7 @@ Version 1 is reader-only and supports TACO specification 3.0.0:
 - calculated locations and browser-native asset range reads.
 
 It does not implement a writer, arbitrary SQL, local filesystem paths, or Rumi
-decoding. The separate [fixture playground](https://github.com/asterisk-labs/taco/tree/main/deck/playground)
+decoding. The separate [fixture playground](https://github.com/asterisk-labs/taco/tree/main/docs/playground)
 consumes this package directly and keeps payload decoding outside TACO.
 
 ## License

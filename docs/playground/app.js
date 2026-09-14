@@ -1,4 +1,4 @@
-import { openDataset } from "../../javascript/src/index.js?v=16";
+import { openDataset } from "../javascript/src/index.js?v=16";
 import * as maplibregl from "https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.mjs";
 import { extendRandomRowIndexes, randomRowIndexes } from "./sampling.js?v=2";
 

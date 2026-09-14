@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="images/banner.svg" alt="TACO — AI-ready Earth Observation datasets." width="700"/>
+  <img src="docs/images/banner.svg" alt="TACO — AI-ready Earth Observation datasets." width="700"/>
   <p>
-    <a href="spec/LICENSE"><img src="https://img.shields.io/badge/license-MIT-EAB308?style=flat-square" alt="License MIT"/></a>
+    <a href="docs/spec/LICENSE"><img src="https://img.shields.io/badge/license-MIT-EAB308?style=flat-square" alt="License MIT"/></a>
     <a href="https://github.com/asterisk-labs/taco/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/asterisk-labs/taco/release.yml?label=python%20tests&style=flat-square" alt="Python tests"/></a>
     <a href="https://github.com/asterisk-labs/taco/actions/workflows/release.yml"><img src="https://img.shields.io/badge/python%20coverage-88%25-brightgreen?style=flat-square" alt="Python coverage 88%"/></a>
     <a href="https://pypi.org/project/taco-eo"><img src="https://img.shields.io/pypi/v/taco-eo?label=python&logo=python&logoColor=white&color=3776AB&style=flat-square" alt="Python"/></a>
@@ -32,12 +32,12 @@ access from folders, cloud-optimized ZIPs, and partitioned catalogs.
 | Julia | `Pkg.Registry.add(url="https://github.com/asterisk-labs/AsteriskRegistry"); Pkg.add("Taco")` | **reader** | [README](julia/README.md) |
 | JavaScript | `npm install @asterisk-labs/taco` | **reader** | [README](javascript/README.md) |
 
-The [TACO viewer](deck/playground/) uses the JavaScript reader with the public
+The [TACO viewer](docs/playground/) uses the JavaScript reader with the public
 TACO/Rumi fixtures.
 
 ## Specification
 
-See the [TACO v3 specification](spec/) for the contract, metadata model, and
+See the [TACO v3 specification](docs/spec/SPEC.md) for the contract, metadata model, and
 container formats.
 
 ## License

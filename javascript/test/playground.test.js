@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { extendRandomRowIndexes, randomRowIndexes } from "../../deck/playground/sampling.js";
+import { extendRandomRowIndexes, randomRowIndexes } from "../../docs/playground/sampling.js";
 
 test("selects a sorted random sample without replacement", () => {
   let seed = 123456789;

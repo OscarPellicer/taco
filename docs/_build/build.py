@@ -1,3 +1,5 @@
+"""Compile the documentation source tree into the deployable ``_site`` directory."""
+
 from __future__ import annotations
 
 import argparse
@@ -9,21 +11,23 @@ from urllib.parse import unquote, urlsplit
 
 import markdown
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
+DOCS_SOURCE = ROOT / "docs"
 SOURCES = {
-    "spec": ROOT / "spec",
-    "deck": ROOT / "deck",
     "javascript/src": ROOT / "javascript" / "src",
 }
-LANDING_SOURCE = ROOT / "docs"
-IGNORED = shutil.ignore_patterns("README.md", ".DS_Store", "LICENSE", "__pycache__")
+IGNORED = shutil.ignore_patterns("_build", "README.md", ".DS_Store", "LICENSE", "__pycache__")
 REQUIRED = (
     "index.html",
+    "api/index.html",
+    "api/write/index.html",
+    "api/read/index.html",
+    "api/style.css",
+    "api/app.js",
     "spec/index.html",
     "spec/assets/datamodel.png",
-    "deck/overview/index.html",
-    "deck/playground/index.html",
-    "deck/playground/app.js",
+    "playground/index.html",
+    "playground/app.js",
     "javascript/src/index.js",
     "onepager/index.html",
     "onepager/style.css",
@@ -98,9 +102,7 @@ def assert_local_links(output: Path) -> None:
             parsed = urlsplit(reference)
             if parsed.scheme or parsed.netloc or reference.startswith(("mailto:", "data:", "#", "javascript:")):
                 continue
-            # deck/*/sections/*.html are fragments injected into the deck's
-            # index.html, so their relative paths resolve from the deck root.
-            base = page.parent.parent if page.parent.name == "sections" else page.parent
+            base = page.parent
             target = page if not parsed.path else (base / unquote(parsed.path)).resolve()
             if not target.is_relative_to(root):
                 errors.append(f"{page.relative_to(root)} escapes the site: {reference}")
@@ -119,7 +121,7 @@ def assert_local_links(output: Path) -> None:
 
 
 def build_spec(output: Path) -> None:
-    source = ROOT / "spec" / "SPEC.md"
+    source = DOCS_SOURCE / "spec" / "SPEC.md"
     if not source.is_file():
         raise FileNotFoundError(f"missing specification source: {source}")
     content = markdown.markdown(
@@ -132,18 +134,15 @@ def build_spec(output: Path) -> None:
 
 def build(output: Path, *, clean: bool = False) -> None:
     prepare_output(output, clean=clean)
-    if not LANDING_SOURCE.is_dir():
-        raise FileNotFoundError(f"missing landing page source: {LANDING_SOURCE}")
-    shutil.copytree(LANDING_SOURCE, output, ignore=IGNORED)
+    if not DOCS_SOURCE.is_dir():
+        raise FileNotFoundError(f"missing documentation source: {DOCS_SOURCE}")
+    shutil.copytree(DOCS_SOURCE, output, ignore=IGNORED)
     for name, source in SOURCES.items():
         if not source.is_dir():
             raise FileNotFoundError(f"missing site source: {source}")
         shutil.copytree(source, output / name, ignore=IGNORED)
     build_spec(output)
     (output / ".nojekyll").touch()
-    cname = ROOT / "CNAME"
-    if cname.is_file():
-        shutil.copy(cname, output / "CNAME")
     assert_required(output)
     assert_local_links(output)
 

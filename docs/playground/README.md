@@ -30,6 +30,6 @@ Run it from the repository root:
 python -m http.server 8000
 ```
 
-Then open `http://localhost:8000/deck/playground/`.
+Then open `http://localhost:8000/_site/playground/` after running `make site`.
 
 Sammy Carlos Romualdo
