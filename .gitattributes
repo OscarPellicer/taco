@@ -8,3 +8,6 @@
 # ---- Generated: build artifacts (defensive; usually .gitignored) ----
 **/build/**             linguist-generated
 **/dist/**              linguist-generated
+
+# ---- Documentation: website and source material ----
+docs/**                 linguist-documentation
