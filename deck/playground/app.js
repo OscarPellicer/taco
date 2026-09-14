@@ -270,7 +270,7 @@ function resizePoints() {
 
 map.on("zoomend", resizePoints);
 
-async function selectPoint(index) {
+function selectPoint(index) {
   if (!state.points.length) return;
   const normalized = (index + state.points.length) % state.points.length;
   const token = ++state.metadataToken;
@@ -292,21 +292,48 @@ async function selectPoint(index) {
   element.pointCoordinates.textContent = `${formatLatitude(point.latitude)}, ${formatLongitude(point.longitude)}`;
   element.metadataPanel.classList.add("open");
   element.metadataPanel.setAttribute("aria-hidden", "false");
-  renderMetadataLoading();
+  state.metadataPages = [samplePageFromMemory(point)];
+  state.metadataPageIndex = 0;
+  renderMetadataNavigation();
+  appendFileMetadataButton(point, token, normalized);
+  renderMetadataPage();
+}
 
-  try {
-    const pages = await metadataPagesForPoint(point);
-    if (token !== state.metadataToken || normalized !== state.selectedPoint) return;
-    state.metadataPages = pages;
-    state.metadataPageIndex = 0;
-    renderMetadataNavigation();
-    renderMetadataPage();
-  } catch (error) {
-    if (token !== state.metadataToken) return;
-    element.metadataSource.textContent = "Metadata error";
-    element.metadataCount.textContent = "";
-    element.metadataBody.replaceChildren(metadataMessage(messageOf(error)));
-  }
+function samplePageFromMemory(point) {
+  return {
+    label: "sample.parquet",
+    depth: 0,
+    records: [{
+      title: pointName(point),
+      values: compactObject(point.row),
+    }],
+  };
+}
+
+function appendFileMetadataButton(point, token, selectedIndex) {
+  if (state.dataset.levels.length < 2) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Load file metadata";
+  button.style.setProperty("--depth", "1");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "Reading file metadata…";
+    try {
+      const pages = await metadataPagesForPoint(point);
+      if (token !== state.metadataToken || selectedIndex !== state.selectedPoint) return;
+      state.metadataPages = pages;
+      state.metadataPageIndex = Math.min(1, pages.length - 1);
+      renderMetadataNavigation();
+      renderMetadataPage();
+    } catch (error) {
+      if (token !== state.metadataToken) return;
+      button.disabled = false;
+      button.textContent = "Retry file metadata";
+      showMessage(messageOf(error));
+    }
+  });
+  element.metadataPath.append(button);
 }
 
 async function metadataPagesForPoint(point) {
@@ -379,16 +406,6 @@ function parquetPage(level, rows, locations) {
   };
 }
 
-function renderMetadataLoading() {
-  state.metadataPages = [];
-  state.metadataPageIndex = -1;
-  element.metadataPath.replaceChildren();
-  element.metadataSource.textContent = "Reading hierarchy…";
-  element.metadataCount.textContent = "";
-  element.metadataBody.replaceChildren();
-  element.metadataBody.append(metadataMessage("Reading Parquet metadata for this point…"));
-}
-
 function renderMetadataNavigation() {
   element.metadataPath.replaceChildren();
   state.metadataPages.forEach((page, index) => {
@@ -437,7 +454,7 @@ function appendMetadataRecord(record) {
   heading.textContent = record.title;
   const list = document.createElement("dl");
   for (const [name, value] of orderedMetadataEntries(record.values)) {
-    if (name === "stac:centroid" || name === "istac:centroid") continue;
+    if (CENTROID_FIELDS.includes(name)) continue;
     const wrapper = document.createElement("div");
     wrapper.className = "metadata-row";
     const term = document.createElement("dt");
