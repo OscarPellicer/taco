@@ -171,7 +171,6 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
 
     const identityColumns = ["internal:current_id", centroidField];
     if (dataset.container === "tacocat") identityColumns.push("internal:source_file");
-    if (typeof dataset.cacheLevel === "function") await dataset.cacheLevel("sample");
     const sampleRows = await dataset.readLevel("sample", { columns: identityColumns });
     const rows = sampleRows.map(sampleRowFromMetadata);
     const points = rows.flatMap((row) => {
@@ -192,8 +191,8 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
     populatePlotFields(sampleFields);
     renderDataset(url, index);
     renderPoints();
-    setStatus("ready", `${points.length} points`);
-    state.parquetCachePromise = cacheRemainingParquets(dataset, token);
+    setStatus("ready", `${points.length} points · caching metadata`);
+    state.parquetCachePromise = cacheParquets(dataset, token, points.length);
   } catch (error) {
     if (token === state.loadToken) fail(error);
   } finally {
@@ -204,10 +203,11 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   }
 }
 
-async function cacheRemainingParquets(dataset, token) {
+async function cacheParquets(dataset, token, pointCount) {
   if (typeof dataset.cacheLevel !== "function") return;
   try {
-    await Promise.all(dataset.levels.slice(1).map((level) => dataset.cacheLevel(level)));
+    await Promise.all(dataset.levels.map((level) => dataset.cacheLevel(level)));
+    if (token === state.loadToken && dataset === state.dataset) setStatus("ready", `${pointCount} points`);
   } catch (error) {
     if (token === state.loadToken && dataset === state.dataset) showMessage(messageOf(error));
   }
@@ -290,6 +290,7 @@ async function loadPlotField(field) {
   state.plotField = field;
   element.plotField.disabled = true;
   try {
+    await state.parquetCachePromise;
     if (!field) {
       state.colorIndexes = new Uint8Array(state.points.length);
     } else {
@@ -350,6 +351,23 @@ function selectPoint(index) {
   renderMetadataNavigation();
   appendFileMetadataButton(point, token, normalized);
   renderMetadataPage();
+  void hydrateSampleMetadata(point, token, normalized);
+}
+
+async function hydrateSampleMetadata(point, token, selectedIndex) {
+  try {
+    await state.parquetCachePromise;
+    const sourceFile = point.row.source_file;
+    const sampleId = Number(point.row.sample_id);
+    const rows = await state.dataset.readLevel("sample", {
+      filter: metadataSampleFilter(sampleId, sourceFile),
+    });
+    if (token !== state.metadataToken || selectedIndex !== state.selectedPoint) return;
+    state.metadataPages[0] = parquetPage("sample", rows, new Map());
+    if (state.metadataPageIndex === 0) renderMetadataPage();
+  } catch (error) {
+    if (token === state.metadataToken && selectedIndex === state.selectedPoint) showMessage(messageOf(error));
+  }
 }
 
 function samplePageFromMemory(point) {
