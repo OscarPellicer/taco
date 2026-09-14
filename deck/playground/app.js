@@ -61,11 +61,10 @@ async function initialize() {
     populateFixtureSelect();
     const requestedUrl = new URL(window.location.href).searchParams.get("url");
     if (requestedUrl) {
-      await loadDatasetUrl(requestedUrl);
-      return;
+      element.datasetUrl.value = requestedUrl;
+      element.fixtureSelect.value = "custom";
     }
-    const first = state.fixtures.findIndex((item) => state.centroidCases.has(item.case));
-    await loadFixture(first < 0 ? 0 : first);
+    setStatus("idle", "Ready to load");
   } catch (error) {
     fail(error);
   }
