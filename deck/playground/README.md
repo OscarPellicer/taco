@@ -4,12 +4,15 @@ A minimal browser viewer for the public
 [`asterisk-labs/taco-api-fixtures`](https://huggingface.co/datasets/asterisk-labs/taco-api-fixtures).
 
 The page uses `@asterisk-labs/taco` to open FOLDER, ZIP, and TACOCAT fixtures.
-It plots one point per sample from `stac:centroid` or `istac:centroid`. The
-fixture control lists the 20 combinations with sample-level STAC or ISTAC
-centroids. ISTAC footprints remain metadata: the map deliberately represents
-every sample as its EPSG:4326 centroid. A programmatically requested fixture
-without one still falls forward to the next compatible case while preserving
-the container topology.
+It plots one point per sample from the EPSG:4326 centroid produced by Spatial,
+ISpatial, STAC, or ISTAC metadata. Geometry and footprints remain metadata: the
+map deliberately represents every sample by its centroid. A programmatically
+requested fixture without one still falls forward to the next compatible case
+while preserving the container topology.
+
+The top bar also accepts any public HTTP or HTTPS TACO dataset URL. `Copy link`
+creates a shareable playground URL with the dataset encoded in the `url` query
+parameter; opening that link loads the same dataset automatically.
 
 Click a point to follow its metadata from `sample.parquet` to the deepest
 metadata Parquet. Payload rows expose the reader-calculated `taco:location`;

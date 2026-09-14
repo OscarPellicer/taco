@@ -4,7 +4,7 @@
 # make javascript check and package the JavaScript reader
 # make deck      assemble the deck into _site/deck
 # make onepager  assemble the onepager into _site/onepager
-# make site      deck + onepager + spec (what GitHub Pages deploys)
+# make site      docs landing + deck + onepager + spec (what GitHub Pages deploys)
 # make clean     remove build output and caches
 
 PYTHON ?= python

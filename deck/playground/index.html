@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="author" content="Sammy Carlos Romualdo">
-  <meta name="description" content="Browse TACO fixture samples by STAC or ISTAC centroid.">
+  <meta name="description" content="Browse TACO samples by their spatial centroid.">
   <title>TACO viewer</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="styles.css">
@@ -25,14 +25,14 @@
       <span><strong>TACO</strong><small>viewer</small></span>
     </a>
 
-    <div class="dataset-picker">
-      <label>
-        <span>Fixture</span>
-        <select id="fixtureSelect" aria-label="TACO fixture">
-          <option>Loading fixtures…</option>
+    <div class="dataset-picker" aria-label="Open a TACO dataset">
+      <div class="url-combobox">
+        <select id="fixtureSelect" aria-label="Example TACO datasets">
+          <option>Loading examples…</option>
         </select>
-      </label>
-      <button id="datasetMetadata" class="dataset-button" type="button" disabled>Dataset</button>
+        <input id="datasetUrl" type="url" placeholder="https://example.com/dataset.zip" aria-label="TACO dataset URL" spellcheck="false">
+      </div>
+      <button id="loadDataset" class="dataset-button primary" type="button">Load</button>
     </div>
 
     <div id="status" class="status"><i></i><span>Loading</span></div>

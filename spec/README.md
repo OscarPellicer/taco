@@ -5,8 +5,8 @@ The formal specification for TACO (Transparent Access to Cloud-Optimized dataset
 ## Files
 
 ```
-├── index.html              ← specification document
-├── style.css               ← embedded (inline)
+├── SPEC.md                 ← normative source
+├── style.css               ← presentation only
 └── assets/
     ├── isp_logo.png
     ├── leipzig_logo.png
@@ -16,7 +16,9 @@ The formal specification for TACO (Transparent Access to Cloud-Optimized dataset
 
 ## Usage
 
-Open `index.html` in a browser. No build step required.
+Edit `SPEC.md`, then run `make site` from the repository root. The generated
+document is written to `_site/spec/index.html`; HTML is build output, not an
+independent copy of the specification.
 
 ## Sections
 

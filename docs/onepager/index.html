@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TACO v3.0.0 — One Pager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- PDF BUTTON -->
+  <div class="btn-wrap">
+    <button class="btn-pdf" onclick="window.print()">📄 Get PDF</button>
+  </div>
+
+  <div class="page">
+
+    <!-- ==================== HEADER ==================== -->
+    <div class="header">
+      <div class="header-left">
+        <div style="margin-top:-2px;">
+          <span class="title">🌮 TACO</span>
+          <span class="version">v3.0.0</span>
+        </div>
+        <div class="subtitle">Transparent Access to Cloud-Optimized Datasets</div>
+      </div>
+      <div class="header-right">
+        <a class="header-home" href="../">← TACO HOME</a>
+        <div>Specification 3.0.0</div>
+        <div>
+          <span class="tag tag-blue">AI4EO</span>
+          <span class="tag tag-green">Open Source</span>
+          <span class="tag tag-amber">MIT</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== COLUMNS ==================== -->
+    <div class="cols">
+
+      <!-- ========== LEFT COLUMN ========== -->
+      <div>
+
+        <!-- PROBLEM -->
+        <div class="section">
+          <div class="s-label">The Problem</div>
+          <div class="s-title">AI4EO needs data at scale</div>
+          <p>
+            Training and running <span class="bold">AI4EO</span> models requires
+            ingesting large volumes of Earth observation data. The challenge is not
+            only storing those files, but keeping them organized, described, and
+            directly accessible throughout training, validation, and inference.
+          </p>
+          <p>
+            An AI4EO dataset is a collection of <span class="bold">samples</span>.
+            Each sample may contain multiple files organized in folders, while
+            metadata can exist at different levels. Without a shared model for this
+            structure, every dataset requires custom packaging, validation, and
+            loading logic.
+          </p>
+        </div>
+
+        <!-- SOLUTION -->
+        <div class="section">
+          <div class="s-label">The Solution</div>
+          <div class="s-title">Declare a contract, build your dataset</div>
+          <p>
+            TACO packages data and queryable metadata as one unit. Before writing,
+            a producer declares a <span class="bold">contract (σ, μ)</span> shared
+            by every sample. The writer validates samples against it.
+          </p>
+          <div class="contract-box">
+            <div class="contract-formula">Contract = (σ, μ)</div>
+            <div class="contract-sub">σ = structure tree · μ = metadata schema</div>
+          </div>
+          <p>
+            <span class="bold">Structure (σ)</span> defines the file tree inside
+            each sample. It supports fixed files such as <code>B02.tif</code> and
+            bounded sequences such as <code>img*[4,16].tif</code>, useful for time
+            series and other multitemporal samples with a variable number of files.
+          </p>
+          <p>
+            <span class="bold">Metadata (μ)</span> assigns namespaced, typed fields
+            to sample, folder, and asset levels. Each level becomes a Parquet table
+            that DuckDB can query without an API server.
+          </p>
+        </div>
+
+        <!-- EXTENSIONS -->
+        <div class="section">
+          <div class="s-label">Metadata Extensions</div>
+          <div class="s-title">Derive useful columns while writing</div>
+          <p>
+            TACO extensions automatically derive metadata while samples are written.
+            Their results are stored as typed columns and can be queried later.
+          </p>
+          <div class="extension-grid">
+            <div><span>STAC</span> Spatial and temporal metadata</div>
+            <div><span>Rumi</span> Raster headers and band statistics</div>
+            <div><span>MajorTOM</span> Geographic grid codes</div>
+            <div><span>GeoEnrich</span> Environmental and administrative context</div>
+          </div>
+        </div>
+
+        <!-- CONTAINER MODES -->
+        <div class="section">
+          <div class="s-label">Container Modes</div>
+          <div class="s-title">Choose how the dataset is stored</div>
+          <div class="container-modes">
+            <div>
+              <span>FOLDER</span>
+              <strong>Mutable.</strong> Use while building a dataset. Samples can
+              be appended without rebuilding existing data.
+            </div>
+            <div>
+              <span>ZIP</span>
+              <strong>Immutable.</strong> Use for stable releases, optimized for
+              selective access from local or remote storage.
+            </div>
+          </div>
+        </div>
+
+        <!-- TRADEOFFS -->
+        <div class="section">
+          <div class="s-label">Tradeoffs</div>
+          <p>
+            <span class="bold">Structural immutability.</span> The contract (σ,&nbsp;μ)
+            is fixed at creation time. Adding new file types or metadata fields
+            requires a new major dataset version. Bounded sequences allow controlled
+            variation, but samples cannot evolve independently. TACO trades open-ended
+            structure for predictable paths, schema validation, and reproducible
+            releases.
+          </p>
+        </div>
+
+      </div>
+
+      <!-- ========== RIGHT COLUMN ========== -->
+      <div>
+
+        <!-- HOW IT WORKS -->
+        <div class="section">
+          <div class="s-label">How It Works</div>
+          <div class="s-title">Three technologies, one pipeline</div>
+          <div class="pillars">
+            <div class="pillar">
+              <div class="pillar-icon">📦</div>
+              <div class="pillar-title">Cloud-Optimized ZIP</div>
+              <p class="pillar-text">
+                CoZIP lets readers locate and fetch individual files without
+                downloading or extracting the complete archive.
+              </p>
+            </div>
+            <div class="pillar">
+              <div class="pillar-icon">🗂️</div>
+              <div class="pillar-title">Apache Parquet</div>
+              <p class="pillar-text">
+                Parquet stores metadata in compact columnar tables, so queries read
+                only the rows and columns they need.
+              </p>
+            </div>
+            <div class="pillar">
+              <div class="pillar-icon">🔗</div>
+              <div class="pillar-title">GDAL VSI Paths</div>
+              <p class="pillar-text">
+                Stateless, positional access to files in local storage, cloud
+                providers, or directly inside archives.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- PHYSICAL LAYOUT -->
+        <div class="section">
+          <div class="s-label">Physical Layout</div>
+          <div class="tree">dataset/
+├── COLLECTION.json          ← contract (σ, μ) + dataset metadata
+├── METADATA/
+│   ├── sample.parquet       ← 1 row per sample
+│   ├── children.parquet     ← direct children
+│   ├── children__before.parquet
+│   └── children__after.parquet
+└── DATA/
+    ├── 0/
+    │   ├── before/
+    │   │   ├── B02.tif
+    │   │   └── B03.tif
+    │   ├── after/
+    │   │   ├── B02.tif
+    │   │   └── B03.tif
+    │   └── change_map.tif
+    ├── 1/ ...
+    └── N-1/ ...</div>
+          <p style="color:#666;">
+            FOLDER supports append; ZIP is immutable and optimized for stable
+            releases. Both preserve the same contract and logical dataset structure.
+          </p>
+        </div>
+
+        <!-- LANGUAGE ACCESS -->
+        <div class="section">
+          <div class="s-label">Language Access</div>
+          <div class="s-title">One dataset, every workflow</div>
+          <div class="language-orbit" aria-label="TACO connects SQL, Python, R, Julia, JavaScript, MATLAB, and C++ through DuckDB">
+            <svg class="connector-lines" viewBox="0 0 300 144" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <marker id="arrow-to-taco" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+                  <path d="M0,0 L5,2.5 L0,5 Z"></path>
+                </marker>
+              </defs>
+              <path d="M34 70 Q72 47 107 70"></path>
+              <path d="M65 18 Q108 12 127 48"></path>
+              <path d="M148 14 Q167 29 150 46"></path>
+              <path d="M236 18 Q193 12 173 48"></path>
+              <path d="M270 70 Q230 47 193 70"></path>
+              <path d="M91 126 Q112 112 127 96"></path>
+              <path d="M209 126 Q189 112 173 96"></path>
+            </svg>
+            <div class="orbit-core">
+              <strong>🌮 TACO</strong>
+              <span>powered by DuckDB</span>
+            </div>
+            <div class="language-node node-sql">
+              <span class="sql-mark">▰</span><strong>SQL</strong>
+            </div>
+            <div class="language-node node-python">
+              <img src="https://cdn.simpleicons.org/python" alt=""><strong>Python</strong>
+            </div>
+            <div class="language-node node-r">
+              <img src="https://cdn.simpleicons.org/r" alt=""><strong>R</strong>
+            </div>
+            <div class="language-node node-julia">
+              <img src="https://cdn.simpleicons.org/julia" alt=""><strong>Julia</strong>
+            </div>
+            <div class="language-node node-js">
+              <img src="https://cdn.simpleicons.org/javascript" alt=""><strong>JavaScript</strong>
+            </div>
+            <div class="language-node node-matlab">
+              <img src="https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/matlab/matlab-original.svg" alt=""><strong>MATLAB</strong>
+            </div>
+            <div class="language-node node-cpp">
+              <img src="https://cdn.simpleicons.org/cplusplus" alt=""><strong>C++</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- DESIGN PRINCIPLES -->
+        <div class="section">
+          <div class="s-label">Design Principles</div>
+          <p>
+            <span class="bold">Self-contained.</span> Data and metadata travel together.
+            <span class="bold">Contract-first.</span> Structure declared before data is written.
+            <span class="bold">Cloud-optimized.</span> Partial reads via byte-range access.
+            <span class="bold">Language-agnostic.</span> DuckDB exposes one reader to Python, R, and Julia.
+            <span class="bold">Supports FAIR datasets.</span> Description, licensing,
+            providers, and extents are mandatory and explicit.
+          </p>
+        </div>
+
+        <!-- USE CASES -->
+        <div class="section">
+          <div class="s-label">Use Cases</div>
+          <div class="s-title">Designed for AI4EO workflows</div>
+          <div class="ecosystem-grid">
+            <div class="ecosystem-item">
+              <span class="ecosystem-name">Multimodal</span>
+              <span>Combine imagery, labels, and auxiliary data within each sample.</span>
+            </div>
+            <div class="ecosystem-item">
+              <span class="ecosystem-name">Change detection</span>
+              <span>Organize before and after observations alongside their labels.</span>
+            </div>
+            <div class="ecosystem-item">
+              <span class="ecosystem-name">Time series</span>
+              <span>Represent variable-length sequences with predictable filenames and bounds.</span>
+            </div>
+            <div class="ecosystem-item">
+              <span class="ecosystem-name">Foundation models</span>
+              <span>Query and stream large dataset partitions without full downloads.</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ==================== FOOTER ==================== -->
+    <div class="footer">
+      <div>
+        Made with <span class="footer-heart">♥</span> by
+        <a class="asterisk-brand" href="https://asterisk.coop" aria-label="Asterisk Labs">
+          <img src="asterisk_banner.svg" alt="Asterisk Labs">
+        </a>
+      </div>
+      <div class="footer-links">
+        <a href="http://asterisk.coop/taco">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          asterisk.coop/taco
+        </a>
+        <span class="sep">·</span>
+        <a href="https://source.coop/taco">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          source.coop/taco
+        </a>
+        <span class="sep">·</span>
+        <a href="https://github.com/asterisk-labs/taco">
+          <svg class="ico" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+          github.com/asterisk-labs/taco
+        </a>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

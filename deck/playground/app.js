@@ -2,12 +2,13 @@ import { openDataset } from "../../javascript/src/index.js";
 
 const FIXTURE_ROOT = "https://huggingface.co/datasets/asterisk-labs/taco-api-fixtures/resolve/main";
 const MANIFEST_URL = `${FIXTURE_ROOT}/manifest.json`;
-const CENTROID_PROFILES = new Set(["stac", "stac-interval", "shared-stac", "istac"]);
+const CENTROID_PROFILES = new Set(["spatial", "ispacial", "ispatial", "stac", "stac-interval", "shared-stac", "istac"]);
+const CENTROID_FIELDS = ["spatial:centroid", "ispatial:centroid", "stac:centroid", "istac:centroid"];
 const COLORS = { train: "#0f766e", validation: "#d97706", test: "#7c3aed" };
 
 const element = Object.fromEntries(
   [
-    "fixtureSelect", "datasetMetadata", "status", "message",
+    "fixtureSelect", "datasetUrl", "loadDataset", "status", "message",
     "metadataPanel", "pointPosition", "pointTitle", "pointCoordinates", "metadataBody", "closeMetadata",
     "metadataPath", "metadataSource", "metadataCount", "loading",
   ].map((id) => [id, document.getElementById(id)]),
@@ -28,6 +29,7 @@ const state = {
   fixtures: [],
   centroidCases: new Set(),
   fixtureIndex: -1,
+  currentUrl: null,
   dataset: null,
   points: [],
   markers: [],
@@ -57,6 +59,11 @@ async function initialize() {
     );
     if (state.fixtures.length !== 50) throw new Error(`Expected 50 fixtures, found ${state.fixtures.length}`);
     populateFixtureSelect();
+    const requestedUrl = new URL(window.location.href).searchParams.get("url");
+    if (requestedUrl) {
+      await loadDatasetUrl(requestedUrl);
+      return;
+    }
     const first = state.fixtures.findIndex((item) => state.centroidCases.has(item.case));
     await loadFixture(first < 0 ? 0 : first);
   } catch (error) {
@@ -74,13 +81,13 @@ function bindEvents() {
       return;
     }
     const next = findCompatibleFixture(requested, 1, fixture.topology);
-    if (next < 0) return fail(new Error("No fixture with a sample-level STAC or ISTAC centroid was found."));
+    if (next < 0) return fail(new Error("No fixture with a sample-level spatial centroid was found."));
     showMessage(`${fixture.case} has no sample centroid. Opened ${state.fixtures[next].case}.`);
     loadFixture(next);
   });
-  element.datasetMetadata.addEventListener("click", () => {
-    if (state.panelMode === "dataset" && element.metadataPanel.classList.contains("open")) closeMetadata();
-    else showDatasetMetadata();
+  element.loadDataset.addEventListener("click", () => { void loadDatasetUrl(element.datasetUrl.value); });
+  element.datasetUrl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") void loadDatasetUrl(element.datasetUrl.value);
   });
   element.closeMetadata.addEventListener("click", closeMetadata);
   document.addEventListener("keydown", (event) => {
@@ -94,6 +101,10 @@ function bindEvents() {
 
 function populateFixtureSelect() {
   element.fixtureSelect.replaceChildren();
+  const custom = document.createElement("option");
+  custom.value = "custom";
+  custom.textContent = "Custom URL";
+  element.fixtureSelect.append(custom);
   const groups = new Map();
   state.fixtures.forEach((fixture, index) => {
     if (!state.centroidCases.has(fixture.case)) return;
@@ -115,8 +126,19 @@ function populateFixtureSelect() {
 
 async function loadFixture(index) {
   if (index < 0 || index >= state.fixtures.length) return;
-  const token = ++state.loadToken;
   const fixture = state.fixtures[index];
+  await loadDatasetUrl(fixtureUrl(fixture), { fixture, index });
+}
+
+async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
+  let url;
+  try {
+    url = normalizedDatasetUrl(value);
+  } catch (error) {
+    fail(error);
+    return;
+  }
+  const token = ++state.loadToken;
   setLoading(true);
   closeMetadata();
   clearMarkers();
@@ -126,21 +148,17 @@ async function loadFixture(index) {
   element.fixtureSelect.value = String(index);
 
   try {
-    const dataset = await openDataset(fixtureUrl(fixture));
+    const dataset = await openDataset(url);
     const sampleFields = dataset.contract.metadata.sample || {};
-    const centroidField = "stac:centroid" in sampleFields
-      ? "stac:centroid"
-      : "istac:centroid" in sampleFields
-        ? "istac:centroid"
-        : null;
+    const centroidField = CENTROID_FIELDS.find((field) => field in sampleFields) ?? null;
     if (!centroidField) {
-      const next = findCompatibleFixture(index, 1, fixture.topology);
+      const next = fixture ? findCompatibleFixture(index, 1, fixture.topology) : -1;
       if (next >= 0 && next !== index) {
         showMessage(`${fixture.case} has no sample centroid. Moving to ${state.fixtures[next].case}.`);
         if (token === state.loadToken) await loadFixture(next);
         return;
       }
-      throw new Error("This fixture has no sample-level STAC or ISTAC centroid.");
+      throw new Error("This dataset has no sample-level spatial centroid.");
     }
 
     const rows = await dataset.read({ layout: "wide", location: false });
@@ -152,9 +170,10 @@ async function loadFixture(index) {
     if (token !== state.loadToken) return;
 
     state.fixtureIndex = index;
+    state.currentUrl = url;
     state.dataset = dataset;
     state.points = points;
-    renderDataset(fixture);
+    renderDataset(url, index);
     renderPoints();
     setStatus("ready", `${points.length} points`);
   } catch (error) {
@@ -167,8 +186,11 @@ async function loadFixture(index) {
   }
 }
 
-function renderDataset(fixture) {
-  element.fixtureSelect.value = String(state.fixtureIndex);
+function renderDataset(url, index) {
+  element.datasetUrl.value = url;
+  if (index >= 0) element.fixtureSelect.value = String(index);
+  else element.fixtureSelect.value = "custom";
+  window.history.replaceState(null, "", shareablePlaygroundUrl(url));
 }
 
 function renderPoints() {
@@ -208,7 +230,6 @@ async function selectPoint(index) {
   map.panTo([point.latitude, point.longitude]);
   state.panelMode = "point";
   element.metadataPanel.classList.remove("dataset-mode");
-  element.datasetMetadata.setAttribute("aria-expanded", "false");
   element.pointPosition.textContent = `Point ${normalized + 1} of ${state.points.length}`;
   element.pointTitle.textContent = pointName(point);
   element.pointCoordinates.textContent = `${formatLatitude(point.latitude)}, ${formatLongitude(point.longitude)}`;
@@ -283,7 +304,11 @@ function parquetPage(level, rows, locations) {
       }
       const location = locations.get(locationKey(row["internal:source_file"], path));
       if (location) values["taco:location"] = location;
-      return { title: path || String(row["fixture:sample_key"] ?? `row ${index}`), values };
+      const fallbackTitle =
+        level === "sample" && row["internal:current_id"] !== undefined
+          ? `sample__${row["internal:current_id"]}`
+          : `row ${index}`;
+      return { title: path || String(row["fixture:sample_key"] ?? fallbackTitle), values };
     }),
   };
 }
@@ -444,7 +469,6 @@ function showDatasetMetadata() {
   const collection = state.dataset.collection;
   element.metadataPanel.classList.add("dataset-mode", "open");
   element.metadataPanel.setAttribute("aria-hidden", "false");
-  element.datasetMetadata.setAttribute("aria-expanded", "true");
   element.pointPosition.textContent = `Dataset · ${topologyLabel(fixture.topology)}`;
   element.pointTitle.textContent = String(collection.title || collection.id);
   element.metadataPath.replaceChildren();
@@ -589,7 +613,6 @@ function closeMetadata() {
   state.metadataToken += 1;
   element.metadataPanel.classList.remove("open");
   element.metadataPanel.setAttribute("aria-hidden", "true");
-  element.datasetMetadata.setAttribute("aria-expanded", "false");
   clearSelectedPoint();
   state.panelMode = null;
   state.metadataPages = [];
@@ -696,6 +719,24 @@ function fixtureUrl(fixture) {
   return `${FIXTURE_ROOT}/${String(fixture.path).replace(/^\/+/, "")}`;
 }
 
+function normalizedDatasetUrl(value) {
+  const text = String(value ?? "").trim();
+  if (!text) throw new Error("Enter a TACO dataset URL.");
+  const url = new URL(text);
+  if (!new Set(["http:", "https:"]).has(url.protocol)) {
+    throw new Error("The dataset URL must use HTTP or HTTPS.");
+  }
+  return url.href;
+}
+
+function shareablePlaygroundUrl(datasetUrl) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("url", datasetUrl);
+  return url.href;
+}
+
 function topologyLabel(value) {
   return ({ folder: "folder", "single-zip": "zip", "by-size": "cat / size", "by-split": "cat / split", "manual-catalog": "cat / manual" })[value] || value;
 }
@@ -758,7 +799,8 @@ async function copyText(value) {
 
 function disableDatasetNavigation(disabled) {
   element.fixtureSelect.disabled = disabled;
-  element.datasetMetadata.disabled = disabled || !state.dataset;
+  element.datasetUrl.disabled = disabled;
+  element.loadDataset.disabled = disabled;
 }
 
 function setLoading(loading) {

@@ -7,13 +7,15 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+import markdown
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = {
     "spec": ROOT / "spec",
     "deck": ROOT / "deck",
-    "onepager": ROOT / "onepager",
     "javascript/src": ROOT / "javascript" / "src",
 }
+LANDING_SOURCE = ROOT / "docs"
 IGNORED = shutil.ignore_patterns("README.md", ".DS_Store", "LICENSE", "__pycache__")
 REQUIRED = (
     "index.html",
@@ -27,35 +29,17 @@ REQUIRED = (
     "onepager/style.css",
 )
 
-LANDING = """<!doctype html>
+SPEC_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TACO</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #0f1115; color: #e8e8e8; display: grid; place-items: center; min-height: 100vh; }
-  main { max-width: 40rem; padding: 2rem; }
-  h1 { font-size: 2.5rem; margin: 0 0 .25rem; }
-  p { color: #b5b5b5; margin: 0 0 1.5rem; }
-  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: .75rem; }
-  a { display: block; padding: 1rem 1.25rem; border: 1px solid #2c3140; border-radius: 12px; color: inherit; text-decoration: none; }
-  a:hover { border-color: #f2b134; }
-  a span { display: block; color: #9a9a9a; font-size: .9rem; }
-</style>
+<title>TACO Specification</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main>
-  <h1>TACO</h1>
-  <p>Transparent Access to Cloud-Optimized datasets. A specification for Earth Observation datasets.</p>
-  <ul>
-    <li><a href="spec/">Specification<span>TACO v3.0.0 normative document</span></a></li>
-    <li><a href="deck/overview/">Overview deck<span>What TACO is and how the pipeline works</span></a></li>
-    <li><a href="deck/playground/">TACO viewer<span>Explore FOLDER, ZIP and TACOCAT fixtures in the browser</span></a></li>
-    <li><a href="onepager/">One pager<span>Print-ready summary for sharing</span></a></li>
-    <li><a href="https://github.com/asterisk-labs/taco">Source code<span>Writer package, spec and site</span></a></li>
-  </ul>
+{content}
 </main>
 </body>
 </html>
@@ -134,14 +118,28 @@ def assert_local_links(output: Path) -> None:
         raise ValueError("; ".join(errors))
 
 
+def build_spec(output: Path) -> None:
+    source = ROOT / "spec" / "SPEC.md"
+    if not source.is_file():
+        raise FileNotFoundError(f"missing specification source: {source}")
+    content = markdown.markdown(
+        source.read_text(encoding="utf-8"),
+        extensions=["fenced_code", "sane_lists", "tables", "toc"],
+        output_format="html5",
+    )
+    (output / "spec" / "index.html").write_text(SPEC_TEMPLATE.format(content=content), encoding="utf-8")
+
+
 def build(output: Path, *, clean: bool = False) -> None:
     prepare_output(output, clean=clean)
-    output.mkdir(parents=True)
+    if not LANDING_SOURCE.is_dir():
+        raise FileNotFoundError(f"missing landing page source: {LANDING_SOURCE}")
+    shutil.copytree(LANDING_SOURCE, output, ignore=IGNORED)
     for name, source in SOURCES.items():
         if not source.is_dir():
             raise FileNotFoundError(f"missing site source: {source}")
         shutil.copytree(source, output / name, ignore=IGNORED)
-    (output / "index.html").write_text(LANDING, encoding="utf-8")
+    build_spec(output)
     (output / ".nojekyll").touch()
     cname = ROOT / "CNAME"
     if cname.is_file():
