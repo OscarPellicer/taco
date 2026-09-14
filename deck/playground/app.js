@@ -32,6 +32,7 @@ const state = {
   fixtureIndex: -1,
   currentUrl: null,
   dataset: null,
+  levelRows: new Map(),
   points: [],
   markers: [],
   pointBaseZoom: 2,
@@ -149,6 +150,7 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   closeMetadata();
   clearMarkers();
   state.points = [];
+  state.levelRows.clear();
   setStatus("loading", "Reading TACO");
   disableDatasetNavigation(true);
   element.fixtureSelect.value = String(index);
@@ -167,7 +169,9 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
       throw new Error("This dataset has no sample-level spatial centroid.");
     }
 
-    const rows = await dataset.read({ layout: "wide", location: false });
+    const tables = await Promise.all(dataset.levels.map((level) => dataset.readLevel(level)));
+    const levelRows = new Map(dataset.levels.map((level, position) => [level, tables[position]]));
+    const rows = (levelRows.get("sample") || []).map(sampleRowFromMetadata);
     const points = rows.flatMap((row) => {
       const centroid = decodeWkbPoint(row[centroidField]);
       return centroid ? [{ row, centroidField, longitude: centroid[0], latitude: centroid[1] }] : [];
@@ -178,6 +182,7 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
     state.fixtureIndex = index;
     state.currentUrl = url;
     state.dataset = dataset;
+    state.levelRows = levelRows;
     state.points = points;
     populatePlotFields(sampleFields);
     renderDataset(url, index);
@@ -191,6 +196,15 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
       disableDatasetNavigation(false);
     }
   }
+}
+
+function sampleRowFromMetadata(row) {
+  const sample = { sample_id: Number(row["internal:current_id"]) };
+  if (row["internal:source_file"] !== undefined) sample.source_file = row["internal:source_file"];
+  for (const [name, value] of Object.entries(row)) {
+    if (!name.startsWith("internal:")) sample[name] = value;
+  }
+  return sample;
 }
 
 function renderDataset(url, index) {
@@ -339,44 +353,44 @@ function appendFileMetadataButton(point, token, selectedIndex) {
 async function metadataPagesForPoint(point) {
   const sourceFile = point.row.source_file;
   const sampleId = Number(point.row.sample_id);
-  const sampleOptions = sourceFile === undefined
-    ? { rowStart: sampleId, rowEnd: sampleId + 1 }
-    : { filter: metadataIdentityFilter("internal:current_id", [BigInt(sampleId)], sourceFile) };
-  const [samples, longRows] = await Promise.all([
-    state.dataset.readLevel("sample", sampleOptions),
-    state.dataset.read({ layout: "long", idx: sampleId, location: true }),
-  ]);
-
-  const selectedLongRows = longRows.filter((row) => sourceFile === undefined || row.source_file === sourceFile);
-  const locations = new Map(
-    selectedLongRows.map((row) => [locationKey(row.source_file, row.path), row["taco:location"]]),
-  );
+  const locations = new Map();
   const pages = [];
 
   const selectedRows = new Map();
+  const samples = (state.levelRows.get("sample") || []).filter((row) =>
+    Number(row["internal:current_id"]) === sampleId && sameSource(row["internal:source_file"], sourceFile),
+  );
   selectedRows.set("sample", samples);
   pages.push(parquetPage("sample", samples, locations));
 
   for (let index = 1; index < state.dataset.levels.length; index += 1) {
     const level = state.dataset.levels[index];
     const parents = selectedRows.get(parentMetadataLevel(level)) ?? [];
-    const parentIds = parents.map((row) => row["internal:current_id"]);
-    const rows = parentIds.length
-      ? await state.dataset.readLevel(level, {
-          filter: metadataIdentityFilter("internal:parent_id", parentIds, sourceFile),
-        })
-      : [];
+    const parentIds = new Set(parents.map(rowIdentity));
+    const rows = (state.levelRows.get(level) || []).filter((row) =>
+      parentIds.has(parentIdentity(row)) && sameSource(row["internal:source_file"], sourceFile),
+    );
+    rows.forEach((row) => {
+      const path = contractPath(row["internal:relative_path"]);
+      const location = metadataLocation(row);
+      if (path && location) locations.set(locationKey(row["internal:source_file"], path), location);
+    });
     selectedRows.set(level, rows);
     pages.push(parquetPage(level, rows, locations));
   }
   return pages;
 }
 
-function metadataIdentityFilter(field, ids, sourceFile) {
-  const identity = { [field]: { $in: ids } };
-  return sourceFile === undefined
-    ? identity
-    : { $and: [identity, { "internal:source_file": { $eq: sourceFile } }] };
+function metadataLocation(row) {
+  const offset = row["internal:offset"];
+  const size = row["internal:size"];
+  const source = row["internal:source_file"] || state.dataset.url;
+  if (offset !== undefined && size !== undefined) {
+    return `/vsisubfile/${offset}_${size},/vsicurl/${source}`;
+  }
+  const path = row["internal:relative_path"];
+  if (!path) return null;
+  return new URL(path, source.endsWith("/") ? source : `${source}/`).href;
 }
 
 function parquetPage(level, rows, locations) {
