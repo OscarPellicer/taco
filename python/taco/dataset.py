@@ -6,10 +6,11 @@ from typing import Literal
 import pyarrow as pa
 
 from . import reader
-from ._source import Location, Source, normalize
+from ._source import Location, Source
 from .contract.collection import Collection, Extent
 from .contract.contract import Contract
-from .errors import ContainerError
+from .errors import CollectionError, ContainerError
+from .reader.versioned import resolve
 
 Layout = Literal["wide", "long"]
 
@@ -37,8 +38,18 @@ def _collection(paths: tuple[Location, ...]) -> Collection:
 
 class Dataset:
     def __init__(self, source: Source) -> None:
-        self.sources = normalize(source)
-        self.collection = _collection(self.sources)
+        resolution = resolve(source)
+        self.sources = resolution.sources
+        if resolution.collection is None:
+            self.collection = _collection(self.sources)
+        else:
+            try:
+                self.collection = Collection.from_dict(resolution.collection)
+            except CollectionError as error:
+                raise ContainerError(f"version {resolution.version!r} embeds an invalid collection: {error}") from error
+        self.version = resolution.version or self.collection.dataset_version
+        self.versions = resolution.versions
+        self.manifest = resolution.manifest
 
     @property
     def contract(self) -> Contract:
@@ -72,7 +83,7 @@ def read(
     if isinstance(source, Dataset):
         sources = source.sources
     else:
-        sources = normalize(source)
+        sources = resolve(source).sources
         if len(sources) > 1:
             sources = open_dataset(sources).sources
     return reader.read(
