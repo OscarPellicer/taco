@@ -1,29 +1,76 @@
 import { openDataset } from "../../javascript/src/index.js?v=15";
+import * as maplibregl from "https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.mjs";
 
 const FIXTURE_ROOT = "https://huggingface.co/datasets/asterisk-labs/taco-api-fixtures/resolve/main";
 const MANIFEST_URL = `${FIXTURE_ROOT}/manifest.json`;
 const CENTROID_PROFILES = new Set(["spatial", "ispacial", "ispatial", "stac", "stac-interval", "shared-stac", "istac"]);
 const CENTROID_FIELDS = ["spatial:centroid", "ispatial:centroid", "stac:centroid", "istac:centroid"];
 const PLOT_COLORS = ["#0f766e", "#2563eb", "#7c3aed", "#d97706", "#dc2626", "#0891b2", "#65a30d", "#c026d3"];
+const requestedUrl = new URL(window.location.href).searchParams.get("url");
 
 const element = Object.fromEntries(
   [
-    "fixtureSelect", "datasetUrl", "plotField", "loadDataset", "status", "message",
+    "fixtureSelect", "datasetUrl", "plotField", "plotMode", "plotLegend", "loadDataset", "status", "message",
     "metadataPanel", "pointPosition", "pointTitle", "pointCoordinates", "metadataBody", "closeMetadata",
     "metadataPath", "metadataSource", "metadataCount", "loading",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
-const map = L.map("map", { attributionControl: false, zoomControl: false, worldCopyJump: true }).setView([12, 0], 2);
-const pointRenderer = L.canvas({ padding: .5 });
-L.control.zoom({ position: "bottomright" }).addTo(map);
-L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+const POINT_SOURCE = "taco-samples";
+const POINT_LAYER = "taco-points";
+const map = new maplibregl.Map({
+  container: "map",
+  center: [0, 12],
+  zoom: 2,
+  attributionControl: false,
   maxZoom: 16,
-}).addTo(map);
-L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {
-  maxZoom: 16,
-  pane: "overlayPane",
-}).addTo(map);
+  style: {
+    version: 8,
+    sources: {
+      basemap: {
+        type: "raster",
+        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256,
+        maxzoom: 16,
+      },
+      labels: {
+        type: "raster",
+        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256,
+        maxzoom: 16,
+      },
+    },
+    layers: [
+      { id: "basemap", type: "raster", source: "basemap" },
+      { id: "labels", type: "raster", source: "labels" },
+    ],
+  },
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+const mapReady = new Promise((resolve) => map.on("load", resolve));
+const pointPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
+
+map.on("click", (event) => {
+  if (!map.getLayer(POINT_LAYER)) return;
+  const feature = map.queryRenderedFeatures(event.point, { layers: [POINT_LAYER] })[0];
+  if (feature?.id !== undefined) void selectPoint(Number(feature.id));
+});
+map.on("mousemove", (event) => {
+  if (!map.getLayer(POINT_LAYER)) return;
+  const feature = map.queryRenderedFeatures(event.point, { layers: [POINT_LAYER] })[0];
+  map.getCanvas().style.cursor = feature ? "pointer" : "";
+  if (!feature?.geometry || feature.id === undefined) {
+    pointPopup.remove();
+    return;
+  }
+  const point = state.points[Number(feature.id)];
+  if (!point) return;
+  pointPopup.setLngLat(feature.geometry.coordinates).setText(pointName(point)).addTo(map);
+});
+map.on("mouseout", () => {
+  map.getCanvas().style.cursor = "";
+  pointPopup.remove();
+});
 
 const state = {
   manifest: null,
@@ -35,9 +82,11 @@ const state = {
   points: [],
   colorIndexes: new Uint8Array(),
   plotToken: 0,
-  markers: [],
+  pointData: null,
   pointBaseZoom: 2,
   plotField: null,
+  plotMode: "auto",
+  sampleFields: {},
   selectedPoint: -1,
   panelMode: null,
   metadataPages: [],
@@ -48,8 +97,14 @@ const state = {
   loadToken: 0,
 };
 
+prefillRequestedUrl();
 bindEvents();
 initialize();
+
+function prefillRequestedUrl() {
+  if (!requestedUrl) return;
+  element.datasetUrl.value = requestedUrl;
+}
 
 async function initialize() {
   setStatus("loading", "Loading fixtures");
@@ -65,14 +120,14 @@ async function initialize() {
     );
     if (state.fixtures.length !== 50) throw new Error(`Expected 50 fixtures, found ${state.fixtures.length}`);
     populateFixtureSelect();
-    const requestedUrl = new URL(window.location.href).searchParams.get("url");
     if (requestedUrl) {
-      element.datasetUrl.value = requestedUrl;
       element.fixtureSelect.value = "custom";
     }
-    setStatus("idle", "Ready to load");
+    if (state.loadToken === 0) setStatus("idle", "Ready to load");
   } catch (error) {
-    fail(error);
+    populateFixtureSelect();
+    if (state.loadToken === 0) setStatus("idle", "Ready to load");
+    showMessage(`Examples unavailable. ${messageOf(error)}`);
   }
 }
 
@@ -91,7 +146,15 @@ function bindEvents() {
     loadFixture(next);
   });
   element.loadDataset.addEventListener("click", () => { void loadDatasetUrl(element.datasetUrl.value); });
-  element.plotField.addEventListener("change", () => { void loadPlotField(element.plotField.value || null); });
+  element.plotField.addEventListener("change", () => {
+    state.plotMode = "auto";
+    element.plotMode.value = "auto";
+    void loadPlotField(element.plotField.value || null);
+  });
+  element.plotMode.addEventListener("change", () => {
+    state.plotMode = element.plotMode.value;
+    if (state.plotField) void loadPlotField(state.plotField);
+  });
   element.datasetUrl.addEventListener("keydown", (event) => {
     if (event.key === "Enter") void loadDatasetUrl(element.datasetUrl.value);
   });
@@ -190,7 +253,7 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
     state.colorIndexes = new Uint8Array(points.length);
     populatePlotFields(sampleFields);
     renderDataset(url, index);
-    renderPoints();
+    await renderPoints();
     setStatus("ready", `${points.length} points · caching metadata`);
     state.parquetCachePromise = cacheParquets(dataset, token, points.length);
   } catch (error) {
@@ -229,32 +292,45 @@ function renderDataset(url, index) {
   window.history.replaceState(null, "", shareablePlaygroundUrl(url));
 }
 
-function renderPoints() {
+async function renderPoints() {
   clearMarkers();
-  const bounds = [];
-  state.points.forEach((point, index) => {
-    const color = pointColor(index);
-    const marker = L.circleMarker([point.latitude, point.longitude], {
-      renderer: pointRenderer,
-      radius: pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom),
-      color: "#ffffff",
-      weight: state.points.length > 10_000 ? 0 : 1,
-      fillColor: color,
-      fillOpacity: state.points.length > 5_000 ? .5 : .82,
-    });
-    marker.bindTooltip(pointName(point), { direction: "top", offset: [0, -6] });
-    marker.on("click", () => { void selectPoint(index); });
-    marker.addTo(map);
-    state.markers.push(marker);
-    bounds.push([point.latitude, point.longitude]);
+  await mapReady;
+  state.pointData = {
+    type: "FeatureCollection",
+    features: state.points.map((point, index) => ({
+      type: "Feature",
+      id: index,
+      properties: { sample_index: index, color_index: state.colorIndexes[index] },
+      geometry: { type: "Point", coordinates: [point.longitude, point.latitude] },
+    })),
+  };
+  map.addSource(POINT_SOURCE, {
+    type: "geojson",
+    data: state.pointData,
+    maxzoom: 12,
   });
-  if (bounds.length === 1) map.setView(bounds[0], 7);
-  else map.fitBounds(bounds, { padding: [70, 70], maxZoom: 5 });
+
+  const bounds = new maplibregl.LngLatBounds();
+  state.points.forEach((point) => bounds.extend([point.longitude, point.latitude]));
+  if (state.points.length === 1) map.jumpTo({ center: bounds.getCenter(), zoom: 7 });
+  else map.fitBounds(bounds, { padding: 70, maxZoom: 5, duration: 0 });
   state.pointBaseZoom = map.getZoom();
-  resizePoints();
+  map.addLayer({
+    id: POINT_LAYER,
+    type: "circle",
+    source: POINT_SOURCE,
+    paint: {
+      "circle-radius": pointRadiusExpression(state.points.length, state.pointBaseZoom),
+      "circle-color": categoricalColorExpression(),
+      "circle-opacity": state.points.length > 5_000 ? .6 : .84,
+      "circle-stroke-color": ["case", ["boolean", ["feature-state", "selected"], false], "#20251f", "#ffffff"],
+      "circle-stroke-width": ["case", ["boolean", ["feature-state", "selected"], false], 2, state.points.length > 10_000 ? 0 : 1],
+    },
+  });
 }
 
 function populatePlotFields(sampleFields) {
+  state.sampleFields = sampleFields;
   const fields = Object.keys(sampleFields).filter((name) => !CENTROID_FIELDS.includes(name));
   element.plotField.replaceChildren();
   const uniform = document.createElement("option");
@@ -268,7 +344,11 @@ function populatePlotFields(sampleFields) {
     element.plotField.append(option);
   });
   state.plotField = null;
+  state.plotMode = "auto";
   element.plotField.value = "";
+  element.plotMode.value = "auto";
+  element.plotMode.disabled = true;
+  element.plotLegend.hidden = true;
   element.plotField.disabled = fields.length === 0;
 }
 
@@ -280,65 +360,236 @@ function colorIndex(value) {
   return Math.abs(hash) % PLOT_COLORS.length;
 }
 
-function pointColor(index) {
-  const value = state.colorIndexes[index];
-  return value === 255 ? "#94a3b8" : PLOT_COLORS[value];
+function categoricalColorExpression() {
+  return [
+    "match", ["get", "color_index"],
+    0, PLOT_COLORS[0], 1, PLOT_COLORS[1], 2, PLOT_COLORS[2], 3, PLOT_COLORS[3],
+    4, PLOT_COLORS[4], 5, PLOT_COLORS[5], 6, PLOT_COLORS[6], 7, PLOT_COLORS[7],
+    "#94a3b8",
+  ];
+}
+
+function continuousColorExpression() {
+  return [
+    "case", ["==", ["get", "color_index"], 255], "#94a3b8",
+    ["interpolate", ["linear"], ["get", "color_index"],
+      0, "#440154", 64, "#3b528b", 128, "#21918c", 192, "#5ec962", 254, "#fde725"],
+  ];
 }
 
 async function loadPlotField(field) {
   const token = ++state.plotToken;
   state.plotField = field;
   element.plotField.disabled = true;
+  element.plotMode.disabled = true;
   try {
     await state.parquetCachePromise;
+    let analysis = null;
     if (!field) {
       state.colorIndexes = new Uint8Array(state.points.length);
+      map.setPaintProperty(POINT_LAYER, "circle-color", categoricalColorExpression());
     } else {
       const columns = ["internal:current_id", field];
       if (state.dataset.container === "tacocat") columns.push("internal:source_file");
       const rows = await state.dataset.readLevel("sample", { columns });
       if (token !== state.plotToken) return;
-      const colors = new Uint8Array(rows.length);
-      rows.forEach((row, index) => { colors[index] = colorIndex(row[field]); });
-      state.colorIndexes = colors;
+      analysis = analyzePlotValues(rows, field, state.sampleFields[field], state.plotMode);
+      state.colorIndexes = analysis.colors;
+      map.setPaintProperty(
+        POINT_LAYER,
+        "circle-color",
+        analysis.mode === "continuous" ? continuousColorExpression() : categoricalColorExpression(),
+      );
     }
     if (token !== state.plotToken) return;
-    state.markers.forEach((marker, index) => marker.setStyle({ fillColor: pointColor(index) }));
+    state.pointData.features.forEach((feature, index) => {
+      feature.properties.color_index = state.colorIndexes[index];
+    });
+    await map.getSource(POINT_SOURCE).setData(state.pointData);
+    renderPlotLegend(field, analysis);
   } catch (error) {
     if (token === state.plotToken) showMessage(messageOf(error));
   } finally {
-    if (token === state.plotToken) element.plotField.disabled = false;
+    if (token === state.plotToken) {
+      element.plotField.disabled = false;
+      element.plotMode.disabled = !state.plotField;
+    }
   }
 }
 
-function pointRadius(count, zoom, baseZoom) {
-  const base = count > 50_000 ? .35 : count > 10_000 ? .6 : count > 5_000 ? 1 : count > 1_000 ? 2 : 6;
-  return Math.min(7, base * (1.6 ** Math.max(0, zoom - baseZoom)));
+function analyzePlotValues(rows, field, declaration, requestedMode) {
+  const values = rows.map((row) => row[field]);
+  const declaredType = String(declaration?.type ?? "").toLowerCase();
+  const declaredNumeric = /(int|float|double|decimal|number)/.test(declaredType);
+  const collectHeavyHitters = requestedMode === "categorical" || (requestedMode === "auto" && !declaredNumeric);
+  const sample = [];
+  const unique = new Set();
+  const heavyHitters = new Map();
+  let validCount = 0;
+  let numericCount = 0;
+  let allIntegers = true;
+
+  values.forEach((value) => {
+    if (value === null || value === undefined || value === "") return;
+    validCount += 1;
+    const key = String(value);
+    if (unique.size <= 64) unique.add(key);
+    if (heavyHitters.has(key)) heavyHitters.set(key, heavyHitters.get(key) + 1);
+    else if (heavyHitters.size < 64) heavyHitters.set(key, 1);
+    else if (collectHeavyHitters) {
+      let lightestKey;
+      let lightestCount = Infinity;
+      for (const [candidate, count] of heavyHitters) {
+        if (count < lightestCount) {
+          lightestKey = candidate;
+          lightestCount = count;
+        }
+      }
+      heavyHitters.delete(lightestKey);
+      heavyHitters.set(key, lightestCount + 1);
+    }
+
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    numericCount += 1;
+    allIntegers &&= Number.isInteger(numeric);
+    if (sample.length < 4096) sample.push(numeric);
+    else {
+      const slot = ((numericCount * 2654435761) >>> 0) % numericCount;
+      if (slot < sample.length) sample[slot] = numeric;
+    }
+  });
+
+  let mode = requestedMode;
+  if (mode === "auto") {
+    const lowCardinalityInteger = allIntegers && unique.size <= 20
+      && (unique.size <= 4 || unique.size / Math.max(validCount, 1) <= .02);
+    mode = declaredNumeric && !lowCardinalityInteger ? "continuous" : "categorical";
+  }
+
+  if (mode === "continuous") {
+    if (!numericCount) throw new Error(`${field} contains no numeric values.`);
+    sample.sort((left, right) => left - right);
+    let low = quantile(sample, .02);
+    let high = quantile(sample, .98);
+    if (low === high) {
+      low = sample[0];
+      high = sample[sample.length - 1];
+    }
+    const colors = new Uint8Array(values.length);
+    values.forEach((value, index) => {
+      const numeric = Number(value);
+      if (value === null || value === undefined || value === "" || !Number.isFinite(numeric)) {
+        colors[index] = 255;
+      } else if (high === low) {
+        colors[index] = 127;
+      } else {
+        colors[index] = Math.round(Math.max(0, Math.min(1, (numeric - low) / (high - low))) * 254);
+      }
+    });
+    return { mode, colors, validCount, low, high };
+  }
+
+  const colors = new Uint8Array(values.length);
+  values.forEach((value, index) => { colors[index] = colorIndex(value); });
+  const candidates = unique.size <= 64 ? unique : new Set(heavyHitters.keys());
+  const exactCounts = new Map([...candidates].map((value) => [value, 0]));
+  values.forEach((value) => {
+    const key = String(value);
+    if (value !== null && value !== undefined && value !== "" && exactCounts.has(key)) {
+      exactCounts.set(key, exactCounts.get(key) + 1);
+    }
+  });
+  const categories = [...exactCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 6);
+  return { mode, colors, validCount, categories, uniqueCount: unique.size, truncated: unique.size > 64 };
 }
 
-function resizePoints() {
-  if (!state.markers.length) return;
-  const radius = pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom);
-  state.markers.forEach((marker) => marker.setRadius(radius));
+function quantile(sorted, probability) {
+  if (sorted.length === 1) return sorted[0];
+  const position = (sorted.length - 1) * probability;
+  const lower = Math.floor(position);
+  const fraction = position - lower;
+  return sorted[lower] + ((sorted[Math.min(lower + 1, sorted.length - 1)] - sorted[lower]) * fraction);
 }
 
-map.on("zoomend", resizePoints);
+function renderPlotLegend(field, analysis) {
+  element.plotLegend.replaceChildren();
+  element.plotLegend.hidden = !field || !analysis;
+  if (!field || !analysis) return;
+  const title = document.createElement("strong");
+  title.textContent = field;
+  const summary = document.createElement("small");
+  summary.textContent = analysis.mode === "continuous"
+    ? `Continuous · robust 2–98% range`
+    : `Categorical · ${analysis.truncated ? "64+" : analysis.uniqueCount} values`;
+  element.plotLegend.append(title, summary);
+
+  if (analysis.mode === "continuous") {
+    const gradient = document.createElement("div");
+    gradient.className = "legend-gradient";
+    const range = document.createElement("div");
+    range.className = "legend-range";
+    const low = document.createElement("span");
+    low.textContent = formatLegendNumber(analysis.low);
+    const high = document.createElement("span");
+    high.textContent = formatLegendNumber(analysis.high);
+    range.append(low, high);
+    element.plotLegend.append(gradient, range);
+    return;
+  }
+
+  const categories = document.createElement("div");
+  categories.className = "legend-categories";
+  analysis.categories.forEach(([value, count]) => {
+    const row = document.createElement("div");
+    row.className = "legend-category";
+    const swatch = document.createElement("span");
+    swatch.className = "legend-swatch";
+    swatch.style.background = PLOT_COLORS[colorIndex(value)];
+    const label = document.createElement("span");
+    label.textContent = value;
+    const frequency = document.createElement("span");
+    frequency.textContent = count.toLocaleString();
+    row.append(swatch, label, frequency);
+    categories.append(row);
+  });
+  element.plotLegend.append(categories);
+}
+
+function formatLegendNumber(value) {
+  const magnitude = Math.abs(value);
+  if (magnitude !== 0 && (magnitude >= 100_000 || magnitude < .001)) return value.toExponential(2);
+  return new Intl.NumberFormat(undefined, { maximumSignificantDigits: 4 }).format(value);
+}
+
+function pointRadiusBase(count) {
+  return count > 50_000 ? .8 : count > 10_000 ? 1.1 : count > 5_000 ? 1.5 : count > 1_000 ? 2.2 : 5;
+}
+
+function pointRadiusExpression(count, baseZoom) {
+  const base = pointRadiusBase(count);
+  const selected = ["boolean", ["feature-state", "selected"], false];
+  const stops = [[baseZoom, ["case", selected, 6, base]]];
+  for (let step = 1; step <= 5; step += 1) {
+    const radius = Math.min(7, base * (2 ** step));
+    stops.push([baseZoom + step, ["case", selected, Math.max(6, radius + 2), radius]]);
+  }
+  return ["interpolate", ["linear"], ["zoom"], ...stops.flat()];
+}
 
 function selectPoint(index) {
   if (!state.points.length) return;
   const normalized = (index + state.points.length) % state.points.length;
   const token = ++state.metadataToken;
+  if (state.selectedPoint >= 0 && map.getSource(POINT_SOURCE)) {
+    map.setFeatureState({ source: POINT_SOURCE, id: state.selectedPoint }, { selected: false });
+  }
   state.selectedPoint = normalized;
-  const normalRadius = pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom);
-  state.markers.forEach((marker, markerIndex) => {
-    const selected = markerIndex === normalized;
-    marker.setRadius(selected ? Math.max(6, normalRadius + 2) : normalRadius);
-    marker.setStyle(selected
-      ? { color: "#20251f", weight: 2 }
-      : { color: "#ffffff", weight: state.points.length > 10_000 ? 0 : 1 });
-  });
+  map.setFeatureState({ source: POINT_SOURCE, id: normalized }, { selected: true });
   const point = state.points[normalized];
-  map.panTo([point.latitude, point.longitude]);
+  map.easeTo({ center: [point.longitude, point.latitude], duration: 280 });
   state.panelMode = "point";
   element.metadataPanel.classList.remove("dataset-mode");
   element.pointPosition.textContent = `Point ${normalized + 1} of ${state.points.length}`;
@@ -791,21 +1042,18 @@ function closeMetadata() {
 }
 
 function clearSelectedPoint() {
-  if (state.selectedPoint >= 0 && state.markers[state.selectedPoint]) {
-    state.markers[state.selectedPoint].setRadius(
-      pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom),
-    );
-    state.markers[state.selectedPoint].setStyle({
-      color: "#ffffff",
-      weight: state.points.length > 10_000 ? 0 : 1,
-    });
+  if (state.selectedPoint >= 0 && map.getSource(POINT_SOURCE)) {
+    map.setFeatureState({ source: POINT_SOURCE, id: state.selectedPoint }, { selected: false });
   }
   state.selectedPoint = -1;
 }
 
 function clearMarkers() {
-  state.markers.forEach((marker) => marker.remove());
-  state.markers = [];
+  pointPopup.remove();
+  if (map.getLayer(POINT_LAYER)) map.removeLayer(POINT_LAYER);
+  if (map.getSource(POINT_SOURCE)) map.removeSource(POINT_SOURCE);
+  state.pointData = null;
+  element.plotLegend.hidden = true;
 }
 
 function decodeWkbPoint(value) {
@@ -978,8 +1226,14 @@ function disableDatasetNavigation(disabled) {
   element.fixtureSelect.disabled = disabled;
   element.datasetUrl.disabled = disabled;
   element.loadDataset.disabled = disabled;
-  if (disabled) element.plotField.disabled = true;
-  else if (state.dataset) element.plotField.disabled = element.plotField.options.length <= 1;
+  if (disabled) {
+    element.plotField.disabled = true;
+    element.plotMode.disabled = true;
+  }
+  else if (state.dataset) {
+    element.plotField.disabled = element.plotField.options.length <= 1;
+    element.plotMode.disabled = !state.plotField;
+  }
 }
 
 function setLoading(loading) {

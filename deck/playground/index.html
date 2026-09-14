@@ -6,8 +6,13 @@
   <meta name="author" content="Sammy Carlos Romualdo">
   <meta name="description" content="Browse TACO samples by their spatial centroid.">
   <title>TACO viewer</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="styles.css?v=17">
+  <script>
+    if (window.location.protocol === "file:") {
+      window.location.replace(`http://127.0.0.1:8765/deck/playground/${window.location.search}${window.location.hash}`);
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="styles.css?v=23">
   <script type="importmap">
     {
       "imports": {
@@ -16,7 +21,6 @@
       }
     }
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
   <header class="topbar">
@@ -35,6 +39,11 @@
       <select id="plotField" class="plot-field" aria-label="Color points by metadata field" disabled>
         <option value="">Color by metadata</option>
       </select>
+      <select id="plotMode" class="plot-mode" aria-label="Interpret selected field as" disabled>
+        <option value="auto">Auto</option>
+        <option value="continuous">Continuous</option>
+        <option value="categorical">Categorical</option>
+      </select>
       <button id="loadDataset" class="dataset-button primary" type="button">Load</button>
     </div>
 
@@ -45,6 +54,7 @@
     <div id="map" aria-label="Map of TACO sample centroids"></div>
 
     <div id="message" class="message" role="status" hidden></div>
+    <aside id="plotLegend" class="plot-legend" aria-live="polite" hidden></aside>
 
     <aside id="metadataPanel" class="metadata-panel" aria-labelledby="pointTitle" aria-hidden="true">
       <header>
@@ -77,6 +87,6 @@
     </a>
   </main>
 
-  <script type="module" src="app.js?v=17"></script>
+  <script type="module" src="app.js?v=30"></script>
 </body>
 </html>
