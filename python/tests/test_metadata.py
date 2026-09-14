@@ -305,6 +305,35 @@ def test_geoenrich_batches_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
 
+def test_geoenrich_replaces_missing_admin_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = SimpleNamespace(
+        Feature=lambda geometry, values: {"index": values["taco_index"]},
+        Geometry=SimpleNamespace(Point=lambda lon, lat: (lon, lat)),
+        FeatureCollection=lambda values: values,
+        Image=FakeImage,
+        ImageCollection=FakeImage,
+        Reducer=SimpleNamespace(mean=lambda: "mean", mode=lambda: "mode"),
+    )
+    monkeypatch.setitem(sys.modules, "ee", fake)
+    monkeypatch.setattr(taco.metadata.derived, "_admin_names", lambda level: {0: "Afghanistan", 53343: None})
+
+    def reduce_regions(self, *, collection, reducer, scale):
+        return SimpleNamespace(
+            getInfo=lambda: {
+                "features": [
+                    {"properties": {"taco_index": feature["index"], "mode": 53343}}
+                    for feature in collection
+                ]
+            }
+        )
+
+    monkeypatch.setattr(FakeImage, "reduceRegions", reduce_regions)
+    extension = taco.metadata.sample.GeoEnrich(["admin_districts"])
+    result = extension.compute({"stac:centroid": [point(63.794370059438705, 36.06268468013294)]})
+
+    assert result == {"admin_districts": ["Unknown"]}
+
+
 def test_geoenrich_configuration() -> None:
     assert taco.metadata.sample.GeoEnrich.__taco_complete_level__
     assert not taco.metadata.sample.MajorTOM.__taco_complete_level__
