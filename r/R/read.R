@@ -125,10 +125,12 @@ read <- function(source, layout = c("wide", "long"), idx = NULL,
 #' @export
 read.character <- function(source, layout = c("wide", "long"), idx = NULL,
                            level = NULL, files = NULL, location = TRUE) {
-  if (length(source) > 1L) {
-    source <- open_dataset(source)[["sources"]]
+  resolution <- .resolve_versioned(source)
+  sources <- resolution$sources
+  if (length(sources) > 1L) {
+    sources <- open_dataset(sources)[["sources"]]
   }
-  .read_sources(source, layout, idx, level, files, location)
+  .read_sources(sources, layout, idx, level, files, location)
 }
 
 

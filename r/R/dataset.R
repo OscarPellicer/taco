@@ -122,19 +122,28 @@
 #' Open a TACO dataset
 #'
 #' @param source One or more dataset paths or URLs.
-#' @return A `taco_dataset` with `sources`, `collection` and `contract`.
+#' @return A `taco_dataset` with its resolved sources, collection and contract.
 #' @export
 open_dataset <- function(source) {
-  sources <- .check_source(source)
-  collections <- .open_reader() |>
-    .collection_documents(sources) |>
-    lapply(.parse_collection)
-  collection <- .merge_collections(collections, sources)
+  resolution <- .resolve_versioned(source)
+  sources <- resolution$sources
+  collection <- resolution$collection
+  if (is.null(collection)) {
+    collections <- .open_reader() |>
+      .collection_documents(sources) |>
+      lapply(.parse_collection)
+    collection <- .merge_collections(collections, sources)
+  }
+  version <- resolution$version
+  if (is.null(version)) version <- collection[["dataset_version"]]
   base::structure(
     list(
       sources = sources,
       collection = collection,
-      contract = .collection_contract(collection)
+      contract = .collection_contract(collection),
+      version = version,
+      versions = resolution$versions,
+      manifest = resolution$manifest
     ),
     class = c("taco_dataset", "list")
   )
