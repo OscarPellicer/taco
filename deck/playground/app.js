@@ -5,16 +5,19 @@ const MANIFEST_URL = `${FIXTURE_ROOT}/manifest.json`;
 const CENTROID_PROFILES = new Set(["spatial", "ispacial", "ispatial", "stac", "stac-interval", "shared-stac", "istac"]);
 const CENTROID_FIELDS = ["spatial:centroid", "ispatial:centroid", "stac:centroid", "istac:centroid"];
 const COLORS = { train: "#0f766e", validation: "#d97706", test: "#7c3aed" };
+const CLUSTER_PIXELS = 56;
 
 const element = Object.fromEntries(
   [
     "fixtureSelect", "datasetUrl", "loadDataset", "status", "message",
     "metadataPanel", "pointPosition", "pointTitle", "pointCoordinates", "metadataBody", "closeMetadata",
     "metadataPath", "metadataSource", "metadataCount", "loading",
+    "emptyState",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
 const map = L.map("map", { attributionControl: false, zoomControl: false, worldCopyJump: true }).setView([12, 0], 2);
+const markerLayer = L.layerGroup().addTo(map);
 L.control.zoom({ position: "bottomright" }).addTo(map);
 L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
   maxZoom: 16,
@@ -32,7 +35,7 @@ const state = {
   currentUrl: null,
   dataset: null,
   points: [],
-  markers: [],
+  markers: new Map(),
   selectedPoint: -1,
   panelMode: null,
   metadataPages: [],
@@ -61,11 +64,10 @@ async function initialize() {
     populateFixtureSelect();
     const requestedUrl = new URL(window.location.href).searchParams.get("url");
     if (requestedUrl) {
-      await loadDatasetUrl(requestedUrl);
-      return;
+      element.datasetUrl.value = requestedUrl;
+      element.fixtureSelect.value = "custom";
     }
-    const first = state.fixtures.findIndex((item) => state.centroidCases.has(item.case));
-    await loadFixture(first < 0 ? 0 : first);
+    setStatus("idle", "Ready to load");
   } catch (error) {
     fail(error);
   }
@@ -73,21 +75,23 @@ async function initialize() {
 
 function bindEvents() {
   element.fixtureSelect.addEventListener("change", () => {
+    if (element.fixtureSelect.value === "custom") return;
     const requested = Number(element.fixtureSelect.value);
     if (!Number.isInteger(requested)) return;
     const fixture = state.fixtures[requested];
     if (state.centroidCases.has(fixture.case)) {
-      loadFixture(requested);
+      element.datasetUrl.value = fixtureUrl(fixture);
       return;
     }
     const next = findCompatibleFixture(requested, 1, fixture.topology);
     if (next < 0) return fail(new Error("No fixture with a sample-level spatial centroid was found."));
-    showMessage(`${fixture.case} has no sample centroid. Opened ${state.fixtures[next].case}.`);
-    loadFixture(next);
+    element.fixtureSelect.value = String(next);
+    element.datasetUrl.value = fixtureUrl(state.fixtures[next]);
+    showMessage(`${fixture.case} has no sample centroid. Selected ${state.fixtures[next].case}.`);
   });
-  element.loadDataset.addEventListener("click", () => { void loadDatasetUrl(element.datasetUrl.value); });
+  element.loadDataset.addEventListener("click", () => { void loadSelectedDataset(); });
   element.datasetUrl.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") void loadDatasetUrl(element.datasetUrl.value);
+    if (event.key === "Enter") void loadSelectedDataset();
   });
   element.closeMetadata.addEventListener("click", closeMetadata);
   document.addEventListener("keydown", (event) => {
@@ -97,6 +101,12 @@ function bindEvents() {
     if (event.key === "ArrowLeft") navigateMetadata(-1);
     if (event.key === "ArrowRight") navigateMetadata(1);
   });
+}
+
+function loadSelectedDataset() {
+  const index = Number(element.fixtureSelect.value);
+  const fixture = Number.isInteger(index) ? state.fixtures[index] : null;
+  return loadDatasetUrl(element.datasetUrl.value, { fixture, index: fixture ? index : -1 });
 }
 
 function populateFixtureSelect() {
@@ -140,6 +150,7 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   }
   const token = ++state.loadToken;
   setLoading(true);
+  element.emptyState.hidden = true;
   closeMetadata();
   clearMarkers();
   state.points = [];
@@ -195,8 +206,51 @@ function renderDataset(url, index) {
 
 function renderPoints() {
   clearMarkers();
-  const bounds = [];
+  const bounds = state.points.map((point) => [point.latitude, point.longitude]);
+  if (bounds.length === 1) map.setView(bounds[0], 7);
+  else map.fitBounds(bounds, { padding: [70, 70], maxZoom: 5 });
+  renderVisibleClusters();
+}
+
+function renderVisibleClusters() {
+  markerLayer.clearLayers();
+  state.markers.clear();
+  if (!state.points.length) return;
+  const visible = map.getBounds().pad(.2);
+  const zoom = map.getZoom();
+  const groups = new Map();
   state.points.forEach((point, index) => {
+    if (!visible.contains([point.latitude, point.longitude])) return;
+    const pixel = map.project([point.latitude, point.longitude], zoom);
+    const key = `${Math.floor(pixel.x / CLUSTER_PIXELS)}:${Math.floor(pixel.y / CLUSTER_PIXELS)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(index);
+  });
+  groups.forEach((indexes) => {
+    if (indexes.length > 1) {
+      const points = indexes.map((index) => state.points[index]);
+      const latitude = points.reduce((sum, point) => sum + point.latitude, 0) / points.length;
+      const longitude = points.reduce((sum, point) => sum + point.longitude, 0) / points.length;
+      const diameter = Math.min(50, 28 + Math.log10(indexes.length) * 6);
+      const marker = L.marker([latitude, longitude], {
+        icon: L.divIcon({
+          className: "sample-cluster",
+          html: `<span>${indexes.length.toLocaleString()}</span>`,
+          iconSize: [diameter, diameter],
+          iconAnchor: [diameter / 2, diameter / 2],
+        }),
+      });
+      marker.bindTooltip(`${indexes.length.toLocaleString()} samples`, { direction: "top" });
+      marker.on("click", () => {
+        const clusterBounds = L.latLngBounds(points.map((point) => [point.latitude, point.longitude]));
+        if (zoom >= 15) map.setZoomAround([latitude, longitude], zoom + 1);
+        else map.fitBounds(clusterBounds, { padding: [50, 50], maxZoom: zoom + 3 });
+      });
+      marker.addTo(markerLayer);
+      return;
+    }
+    const index = indexes[0];
+    const point = state.points[index];
     const split = String(point.row["ml:split"] || "train");
     const color = COLORS[split] || COLORS.train;
     const marker = L.circleMarker([point.latitude, point.longitude], {
@@ -208,13 +262,12 @@ function renderPoints() {
     });
     marker.bindTooltip(pointName(point), { direction: "top", offset: [0, -6] });
     marker.on("click", () => { void selectPoint(index); });
-    marker.addTo(map);
-    state.markers.push(marker);
-    bounds.push([point.latitude, point.longitude]);
+    marker.addTo(markerLayer);
+    state.markers.set(index, marker);
   });
-  if (bounds.length === 1) map.setView(bounds[0], 7);
-  else map.fitBounds(bounds, { padding: [70, 70], maxZoom: 5 });
 }
+
+map.on("moveend", renderVisibleClusters);
 
 async function selectPoint(index) {
   if (!state.points.length) return;
@@ -620,15 +673,15 @@ function closeMetadata() {
 }
 
 function clearSelectedPoint() {
-  if (state.selectedPoint >= 0 && state.markers[state.selectedPoint]) {
-    state.markers[state.selectedPoint].setStyle({ radius: 7, color: "#ffffff", weight: 2 });
+  if (state.selectedPoint >= 0 && state.markers.has(state.selectedPoint)) {
+    state.markers.get(state.selectedPoint).setStyle({ radius: 7, color: "#ffffff", weight: 2 });
   }
   state.selectedPoint = -1;
 }
 
 function clearMarkers() {
-  state.markers.forEach((marker) => marker.remove());
-  state.markers = [];
+  markerLayer.clearLayers();
+  state.markers.clear();
 }
 
 function decodeWkbPoint(value) {
