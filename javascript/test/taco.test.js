@@ -45,6 +45,17 @@ test("raw level reads delegate projection and filters to Parquet", async () => {
   assert.deepEqual(rows, [{ "internal:current_id": 2n, "ml:split": "test" }]);
 });
 
+test("caches compressed metadata before projected queries", async () => {
+  const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
+  await dataset.cacheLevel("sample");
+  const rows = await dataset.readLevel("sample", {
+    columns: ["internal:current_id", "ml:split"],
+    filter: { "ml:split": { $eq: "test" } },
+  });
+  assert.deepEqual(rows, [{ "internal:current_id": 2n, "ml:split": "test" }]);
+  await assert.rejects(() => dataset.cacheLevel("missing"), /unknown metadata level/);
+});
+
 test("reads wide and long views with calculated TACO locations", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
   const wide = await dataset.read({ idx: 0 });

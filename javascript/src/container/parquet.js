@@ -14,6 +14,20 @@ export class TacoParquet {
     this.file = file;
     this.level = level;
     this.metadataPromise = this.readMetadata();
+    this.cachePromise = null;
+  }
+
+  /** Keep the complete compressed Parquet in memory without decoding its rows. */
+  async cache() {
+    if (!this.cachePromise) {
+      this.cachePromise = this.file.slice(0, this.file.byteLength).then((buffer) => {
+        this.file = {
+          byteLength: buffer.byteLength,
+          slice: async (start, end = buffer.byteLength) => buffer.slice(start, end),
+        };
+      });
+    }
+    await this.cachePromise;
   }
 
   async readMetadata() {

@@ -82,6 +82,14 @@ export class Dataset {
     return (await this.#levelReader(level)).read(options);
   }
 
+  /** Cache one complete compressed metadata Parquet without decoding its rows. */
+  async cacheLevel(level) {
+    if (typeof level !== "string" || !this.levels.includes(level)) {
+      fail("UNKNOWN_LEVEL", `unknown metadata level ${JSON.stringify(level)}`);
+    }
+    await (await this.#levelReader(level)).cache();
+  }
+
   /**
    * Read the dataset as one row per sample (wide) or one row per file (long).
    *

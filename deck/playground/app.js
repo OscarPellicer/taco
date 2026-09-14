@@ -32,8 +32,9 @@ const state = {
   fixtureIndex: -1,
   currentUrl: null,
   dataset: null,
-  levelRows: new Map(),
   points: [],
+  colorIndexes: new Uint8Array(),
+  plotToken: 0,
   markers: [],
   pointBaseZoom: 2,
   plotField: null,
@@ -41,6 +42,7 @@ const state = {
   panelMode: null,
   metadataPages: [],
   metadataPageIndex: -1,
+  parquetCachePromise: null,
   metadataToken: 0,
   messageTimer: null,
   loadToken: 0,
@@ -89,10 +91,7 @@ function bindEvents() {
     loadFixture(next);
   });
   element.loadDataset.addEventListener("click", () => { void loadDatasetUrl(element.datasetUrl.value); });
-  element.plotField.addEventListener("change", () => {
-    state.plotField = element.plotField.value || null;
-    recolorPoints();
-  });
+  element.plotField.addEventListener("change", () => { void loadPlotField(element.plotField.value || null); });
   element.datasetUrl.addEventListener("keydown", (event) => {
     if (event.key === "Enter") void loadDatasetUrl(element.datasetUrl.value);
   });
@@ -150,7 +149,8 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   closeMetadata();
   clearMarkers();
   state.points = [];
-  state.levelRows.clear();
+  state.colorIndexes = new Uint8Array();
+  state.parquetCachePromise = null;
   setStatus("loading", "Reading TACO");
   disableDatasetNavigation(true);
   element.fixtureSelect.value = String(index);
@@ -169,12 +169,17 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
       throw new Error("This dataset has no sample-level spatial centroid.");
     }
 
-    const sampleRows = await dataset.readLevel("sample");
-    const levelRows = new Map([["sample", sampleRows]]);
+    const identityColumns = ["internal:current_id", centroidField];
+    if (dataset.container === "tacocat") identityColumns.push("internal:source_file");
+    await dataset.cacheLevel("sample");
+    const sampleRows = await dataset.readLevel("sample", { columns: identityColumns });
     const rows = sampleRows.map(sampleRowFromMetadata);
     const points = rows.flatMap((row) => {
       const centroid = decodeWkbPoint(row[centroidField]);
-      return centroid ? [{ row, centroidField, longitude: centroid[0], latitude: centroid[1] }] : [];
+      if (!centroid) return [];
+      const identity = { sample_id: row.sample_id };
+      if (row.source_file !== undefined) identity.source_file = row.source_file;
+      return [{ row: identity, centroidField, longitude: centroid[0], latitude: centroid[1] }];
     });
     if (!points.length) throw new Error(`The ${centroidField} column contains no readable points.`);
     if (token !== state.loadToken) return;
@@ -182,12 +187,13 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
     state.fixtureIndex = index;
     state.currentUrl = url;
     state.dataset = dataset;
-    state.levelRows = levelRows;
     state.points = points;
+    state.colorIndexes = new Uint8Array(points.length);
     populatePlotFields(sampleFields);
     renderDataset(url, index);
     renderPoints();
     setStatus("ready", `${points.length} points`);
+    state.parquetCachePromise = cacheRemainingParquets(dataset, token);
   } catch (error) {
     if (token === state.loadToken) fail(error);
   } finally {
@@ -198,11 +204,19 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   }
 }
 
+async function cacheRemainingParquets(dataset, token) {
+  try {
+    await Promise.all(dataset.levels.slice(1).map((level) => dataset.cacheLevel(level)));
+  } catch (error) {
+    if (token === state.loadToken && dataset === state.dataset) showMessage(messageOf(error));
+  }
+}
+
 function sampleRowFromMetadata(row) {
   const sample = { sample_id: Number(row["internal:current_id"]) };
   if (row["internal:source_file"] !== undefined) sample.source_file = row["internal:source_file"];
   for (const [name, value] of Object.entries(row)) {
-    if (!name.startsWith("internal:")) sample[name] = value;
+    if (CENTROID_FIELDS.includes(name)) sample[name] = value;
   }
   return sample;
 }
@@ -218,7 +232,7 @@ function renderPoints() {
   clearMarkers();
   const bounds = [];
   state.points.forEach((point, index) => {
-    const color = pointColor(point);
+    const color = pointColor(index);
     const marker = L.circleMarker([point.latitude, point.longitude], {
       renderer: pointRenderer,
       radius: pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom),
@@ -252,23 +266,47 @@ function populatePlotFields(sampleFields) {
     option.textContent = name;
     element.plotField.append(option);
   });
-  state.plotField = fields.includes("geoenrich:admin_states") ? "geoenrich:admin_states" : null;
-  element.plotField.value = state.plotField || "";
+  state.plotField = null;
+  element.plotField.value = "";
   element.plotField.disabled = fields.length === 0;
 }
 
-function pointColor(point) {
-  if (!state.plotField) return PLOT_COLORS[0];
-  const value = point.row[state.plotField];
-  if (value === null || value === undefined || value === "") return "#94a3b8";
+function colorIndex(value) {
+  if (value === null || value === undefined || value === "") return 255;
   const text = String(value);
   let hash = 0;
   for (let index = 0; index < text.length; index += 1) hash = ((hash << 5) - hash + text.charCodeAt(index)) | 0;
-  return PLOT_COLORS[Math.abs(hash) % PLOT_COLORS.length];
+  return Math.abs(hash) % PLOT_COLORS.length;
 }
 
-function recolorPoints() {
-  state.markers.forEach((marker, index) => marker.setStyle({ fillColor: pointColor(state.points[index]) }));
+function pointColor(index) {
+  const value = state.colorIndexes[index];
+  return value === 255 ? "#94a3b8" : PLOT_COLORS[value];
+}
+
+async function loadPlotField(field) {
+  const token = ++state.plotToken;
+  state.plotField = field;
+  element.plotField.disabled = true;
+  try {
+    if (!field) {
+      state.colorIndexes = new Uint8Array(state.points.length);
+    } else {
+      const columns = ["internal:current_id", field];
+      if (state.dataset.container === "tacocat") columns.push("internal:source_file");
+      const rows = await state.dataset.readLevel("sample", { columns });
+      if (token !== state.plotToken) return;
+      const colors = new Uint8Array(rows.length);
+      rows.forEach((row, index) => { colors[index] = colorIndex(row[field]); });
+      state.colorIndexes = colors;
+    }
+    if (token !== state.plotToken) return;
+    state.markers.forEach((marker, index) => marker.setStyle({ fillColor: pointColor(index) }));
+  } catch (error) {
+    if (token === state.plotToken) showMessage(messageOf(error));
+  } finally {
+    if (token === state.plotToken) element.plotField.disabled = false;
+  }
 }
 
 function pointRadius(count, zoom, baseZoom) {
@@ -351,15 +389,16 @@ function appendFileMetadataButton(point, token, selectedIndex) {
 }
 
 async function metadataPagesForPoint(point) {
+  await state.parquetCachePromise;
   const sourceFile = point.row.source_file;
   const sampleId = Number(point.row.sample_id);
   const locations = new Map();
   const pages = [];
 
   const selectedRows = new Map();
-  const samples = (state.levelRows.get("sample") || []).filter((row) =>
-    Number(row["internal:current_id"]) === sampleId && sameSource(row["internal:source_file"], sourceFile),
-  );
+  const samples = await state.dataset.readLevel("sample", {
+    filter: metadataSampleFilter(sampleId, sourceFile),
+  });
   selectedRows.set("sample", samples);
   pages.push(parquetPage("sample", samples, locations));
 
@@ -380,6 +419,13 @@ async function metadataPagesForPoint(point) {
     pages.push(parquetPage(level, rows, locations));
   }
   return pages;
+}
+
+function metadataSampleFilter(sampleId, sourceFile) {
+  const identity = { "internal:current_id": { $eq: BigInt(sampleId) } };
+  return sourceFile === undefined
+    ? identity
+    : { $and: [identity, { "internal:source_file": { $eq: sourceFile } }] };
 }
 
 function metadataParentFilter(parents, sourceFile) {
