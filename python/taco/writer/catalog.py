@@ -12,13 +12,13 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ._parquet import parquet_writer_options
-from ._publish import publish_many
-from ._view import DatasetView, open_view
-from .contract.collection import Extent
-from .contract.naming import COLLECTION_FILENAME, SOURCE_FILE, TACOCAT_DIR, level_to_filename, validate_component
-from .errors import ConsolidationError, ContractError
-from .writer.metadata_tables import table_schema
+from ..container.parquet import parquet_writer_options
+from ..container.publish import publish_many
+from ..container.view import DatasetView, open_view
+from ..contract.collection import Extent
+from ..contract.naming import COLLECTION_FILENAME, SOURCE_FILE, TACOCAT_DIR, level_to_filename, validate_component
+from ..errors import ConsolidationError, ContractError
+from .metadata import table_schema
 
 __all__ = ["consolidate"]
 

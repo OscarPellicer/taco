@@ -15,7 +15,7 @@ _lock = threading.Lock()
 _state = threading.local()
 
 
-def connect() -> duckdb.DuckDBPyConnection:
+def open_reader() -> duckdb.DuckDBPyConnection:
     """Return one cached connection per thread."""
     connection = cast("duckdb.DuckDBPyConnection | None", getattr(_state, "connection", None))
     if connection is not None:
@@ -56,8 +56,8 @@ def connect() -> duckdb.DuckDBPyConnection:
         return connection
 
 
-def reset() -> None:
-    """Drop the cached connection. Only tests need this."""
+def close_reader() -> None:
+    """Close the cached reader connection for the current thread."""
     with _lock:
         connection = cast("duckdb.DuckDBPyConnection | None", getattr(_state, "connection", None))
         if connection is not None:
@@ -65,3 +65,6 @@ def reset() -> None:
                 connection.close()
             finally:
                 del _state.connection
+
+
+__all__ = ["EXTENSION_ENV", "close_reader", "open_reader"]

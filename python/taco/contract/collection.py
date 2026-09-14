@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..errors import CollectionError
-from ..schema import CollectionMetadata
 from .contract import Contract
+from .schema import CollectionMetadata
 
 TACO_VERSION = "3.0.0"
 SEMVER = re.compile(

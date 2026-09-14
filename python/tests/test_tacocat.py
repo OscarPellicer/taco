@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import taco
-from taco._view import open_view
+from taco.container.view import open_view
 from taco.errors import ConsolidationError, ContainerError
 
 

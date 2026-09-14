@@ -11,9 +11,9 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 import pyarrow as pa
 from pydantic import BaseModel
 
-from .contract.naming import validate_field_name
-from .errors import ContractError, SampleError
-from .metadata._base import CollectionSummary, DerivedMetadata, Extension
+from ..errors import ContractError, SampleError
+from ..metadata._base import CollectionSummary, DerivedMetadata, Extension
+from .naming import validate_field_name
 
 _NAMESPACE = re.compile(r"^[a-z][a-z0-9_]*$")
 _RESERVED_NAMESPACES = frozenset({"cozip", "internal", "taco"})

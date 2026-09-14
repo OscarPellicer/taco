@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import taco
-from taco._view import open_view
+from taco.container.view import open_view
 
 
 def collection(contract: taco.Contract) -> taco.Collection:

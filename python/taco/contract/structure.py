@@ -6,9 +6,9 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from ..errors import ContractError
-from ..schema import Metadata
 from .naming import normalize_relative_path, validate_component, variable_sequences_overlap
 from .sample import Asset
+from .schema import Metadata
 
 _VARIABLE_LEAF = re.compile(
     r"^(?P<prefix>[^*\[\]]+)\*\[(?P<minimum>\d+)\s*,\s*(?P<maximum>\d+)\](?P<suffix>[^*\[\]]*)$"

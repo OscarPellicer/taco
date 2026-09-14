@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import TypeAlias, cast
 
 from ..errors import SampleError
-from ..schema import Metadata
 from .naming import normalize_relative_path
+from .schema import Metadata
 
 SourceLike: TypeAlias = str | PathLike[str] | bytes | bytearray | memoryview
 

@@ -12,7 +12,8 @@ import pyarrow as pa
 import pytest
 
 import taco
-import taco.reader as reader
+import taco.reader.api as reader_api
+import taco.reader.dataset as dataset_module
 from taco.errors import ContainerError
 
 
@@ -41,7 +42,7 @@ def test_open_local_root_uses_default_and_embedded_collection(
 ) -> None:
     root = tmp_path / "dataset"
     write_manifest(root, manifest(collection))
-    monkeypatch.setattr(reader, "_collections", lambda paths: pytest.fail("COLLECTION.json was read"))
+    monkeypatch.setattr(dataset_module, "merge_collections", lambda paths: pytest.fail("COLLECTION.json was read"))
 
     dataset = taco.open_dataset(root)
 
@@ -57,7 +58,7 @@ def test_open_explicit_local_version_is_an_ordinary_dataset(
 ) -> None:
     version = tmp_path / "dataset/1.0.0"
     version.mkdir(parents=True)
-    monkeypatch.setattr(reader, "_collections", lambda paths: [collection.to_dict()])
+    monkeypatch.setattr(dataset_module, "merge_collections", lambda paths: collection)
 
     dataset = taco.open_dataset(version)
 
@@ -132,7 +133,7 @@ def test_open_http_version_url_falls_back_to_direct_dataset(
     monkeypatch: pytest.MonkeyPatch, collection: taco.Collection, tmp_path: Path
 ) -> None:
     (tmp_path / "dataset/1.0.0").mkdir(parents=True)
-    monkeypatch.setattr(reader, "_collections", lambda paths: [collection.to_dict()])
+    monkeypatch.setattr(dataset_module, "merge_collections", lambda paths: collection)
 
     with server(tmp_path) as base:
         dataset = taco.open_dataset(f"{base}/dataset/1.0.0/")
@@ -146,7 +147,7 @@ def test_open_http_version_url_falls_back_to_direct_dataset(
 def test_explicit_remote_containers_skip_discovery(
     name: str, monkeypatch: pytest.MonkeyPatch, collection: taco.Collection, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(reader, "_collections", lambda paths: [collection.to_dict()])
+    monkeypatch.setattr(dataset_module, "merge_collections", lambda paths: collection)
 
     with server(tmp_path) as base:
         dataset = taco.open_dataset(f"{base}/{name}")
@@ -166,7 +167,7 @@ def test_read_resolves_versioned_root(
         captured.append((source, options))
         return pa.table({"value": [1]})
 
-    monkeypatch.setattr(reader, "read", fake_read)
+    monkeypatch.setattr(reader_api, "read_table", fake_read)
 
     result = taco.read(root, idx=3)
 

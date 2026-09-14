@@ -7,15 +7,15 @@ from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .._publish import publish_many
+from ..container.publish import publish_many
 from ..contract.collection import Collection
 from ..contract.naming import COLLECTION_FILENAME, DATA_DIR, METADATA_DIR
 from ..errors import WriterError
-from .core import BuildResult, Writer
-from .metadata_tables import MetadataTableWriter
+from .base import BuildResult, Writer
+from .metadata import MetadataTableWriter
 
 if TYPE_CHECKING:
-    from .._view import DatasetView
+    from ..container.view import DatasetView
 
 
 def _looks_like_taco_folder(path: Path) -> bool:
@@ -59,7 +59,7 @@ class FolderWriter(Writer):
         self.link = link
 
     def _dataset_to_append(self) -> DatasetView | None:
-        from .._view import open_view
+        from ..container.view import open_view
 
         directory = self.directory
         if self.append:

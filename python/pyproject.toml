@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "taco-eo"
-version = "0.6.3"
+version = "0.7.0"
 description = "Read and write TACO datasets in Python."
 readme = "README.md"
 license = "MIT"
@@ -86,7 +86,7 @@ files = ["taco"]
 strict = true
 
 [[tool.mypy.overrides]]
-module = "taco.cozip"
+module = "taco.container.cozip"
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
@@ -94,7 +94,7 @@ module = ["pyarrow", "pyarrow.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["taco._view", "taco.tacocat", "taco.metadata.derived", "taco.writer.metadata_tables"]
+module = ["taco.container.view", "taco.metadata.derived", "taco.writer.catalog", "taco.writer.metadata"]
 disable_error_code = ["no-untyped-call"]
 
 [tool.coverage.run]

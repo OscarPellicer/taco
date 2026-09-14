@@ -8,13 +8,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import urlopen
 
-from .._source import Location, Source, normalize
 from ..contract.collection import SEMVER
 from ..errors import ContainerError
+from .source import Location, Source, normalize_sources
 
 
 @dataclass(frozen=True)
-class Resolution:
+class DatasetResolution:
     sources: tuple[Location, ...]
     collection: dict[str, Any] | None = None
     version: str | None = None
@@ -26,7 +26,7 @@ def _direct(name: str) -> bool:
     return name == ".tacocat" or name.lower().endswith(".zip") or SEMVER.fullmatch(name) is not None
 
 
-def _candidate(source: Location) -> Location | None:
+def manifest_candidate(source: Location) -> Location | None:
     if isinstance(source, Path):
         if source.name == "taco.json":
             return source
@@ -44,10 +44,10 @@ def _candidate(source: Location) -> Location | None:
     return urljoin(source.rstrip("/") + "/", "taco.json")
 
 
-def _read(candidate: Location, *, required: bool) -> bytes | None:
+def read_manifest(candidate: Location, *, required: bool = True) -> dict[str, Any] | None:
     if isinstance(candidate, Path):
         try:
-            return candidate.read_bytes()
+            payload = candidate.read_bytes()
         except FileNotFoundError as error:
             if not required:
                 return None
@@ -55,15 +55,18 @@ def _read(candidate: Location, *, required: bool) -> bytes | None:
         except OSError as error:
             raise ContainerError(f"could not read versioned manifest {candidate}: {error}") from error
 
-    try:
-        with urlopen(candidate) as response:
-            return cast(bytes, response.read())
-    except HTTPError as error:
-        if error.code == 404 and not required:
-            return None
-        raise ContainerError(f"could not read versioned manifest {candidate}: HTTP {error.code}") from error
-    except URLError as error:
-        raise ContainerError(f"could not read versioned manifest {candidate}: {error.reason}") from error
+    else:
+        try:
+            with urlopen(candidate) as response:
+                payload = cast(bytes, response.read())
+        except HTTPError as error:
+            if error.code == 404 and not required:
+                return None
+            raise ContainerError(f"could not read versioned manifest {candidate}: HTTP {error.code}") from error
+        except URLError as error:
+            raise ContainerError(f"could not read versioned manifest {candidate}: {error.reason}") from error
+
+    return _parse_manifest(payload, candidate)
 
 
 def _object(value: object, *, context: str) -> dict[str, Any]:
@@ -72,7 +75,7 @@ def _object(value: object, *, context: str) -> dict[str, Any]:
     return value
 
 
-def _parse(payload: bytes, candidate: Location) -> dict[str, Any]:
+def _parse_manifest(payload: bytes, candidate: Location) -> dict[str, Any]:
     try:
         value = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -83,7 +86,7 @@ def _parse(payload: bytes, candidate: Location) -> dict[str, Any]:
     return manifest
 
 
-def _join(candidate: Location, href: str) -> Location:
+def join_manifest_href(candidate: Location, href: str) -> Location:
     if "://" in href:
         return href
     if isinstance(candidate, Path):
@@ -91,23 +94,22 @@ def _join(candidate: Location, href: str) -> Location:
     return urljoin(candidate, href)
 
 
-def resolve(source: Source) -> Resolution:
-    paths = normalize(source)
+def resolve_dataset(source: Source) -> DatasetResolution:
+    paths = normalize_sources(source)
     if len(paths) != 1:
-        return Resolution(paths)
+        return DatasetResolution(paths)
 
     original = paths[0]
     explicit_manifest = (isinstance(original, Path) and original.name == "taco.json") or (
         isinstance(original, str) and PurePosixPath(urlsplit(original).path).name == "taco.json"
     )
-    candidate = _candidate(original)
+    candidate = manifest_candidate(original)
     if candidate is None:
-        return Resolution(paths)
+        return DatasetResolution(paths)
 
-    payload = _read(candidate, required=explicit_manifest)
-    if payload is None:
-        return Resolution(paths)
-    manifest = _parse(payload, candidate)
+    manifest = read_manifest(candidate, required=explicit_manifest)
+    if manifest is None:
+        return DatasetResolution(paths)
     versions = _object(manifest.get("taco:versions"), context="taco:versions")
     if not versions:
         raise ContainerError("taco:versions must contain at least one version")
@@ -134,8 +136,8 @@ def resolve(source: Source) -> Resolution:
 
     href, collection = entries[selected]
 
-    return Resolution(
-        (_join(candidate, href),),
+    return DatasetResolution(
+        (join_manifest_href(candidate, href),),
         collection=collection,
         version=selected,
         versions=tuple(versions),
@@ -143,4 +145,10 @@ def resolve(source: Source) -> Resolution:
     )
 
 
-__all__ = ["Resolution", "resolve"]
+__all__ = [
+    "DatasetResolution",
+    "join_manifest_href",
+    "manifest_candidate",
+    "read_manifest",
+    "resolve_dataset",
+]

@@ -11,7 +11,8 @@ from typing import Any, BinaryIO, Literal, cast
 
 import pyarrow as pa
 
-from ._view import DatasetView, open_view
+from .container.cozip import INDEX_NAME
+from .container.view import DatasetView, open_view
 from .contract.collection import KNOWN_TASKS
 from .contract.contract import CHILDREN_LEVEL, SAMPLE_LEVEL, Contract
 from .contract.naming import (
@@ -28,9 +29,8 @@ from .contract.naming import (
     level_to_filename,
 )
 from .contract.types import type_name
-from .cozip import INDEX_NAME
 from .errors import TacoError, ValidationFailed
-from .writer.metadata_tables import table_schema
+from .writer.metadata import table_schema
 
 __all__ = ["Issue", "ValidationReport", "validate"]
 
@@ -379,7 +379,7 @@ def _local_data_offsets(zf: zipfile.ZipFile, stream: BinaryIO) -> Iterator[tuple
 
 
 def _check_zip(dataset: DatasetView, collector: _Collector, *, check_data: bool) -> None:
-    from .reader import levels
+    from .reader.inspect import levels
 
     try:
         indexed_levels = levels(dataset.path)

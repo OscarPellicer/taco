@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 from ._graph import structure_graph
 
 if TYPE_CHECKING:
-    from .dataset import Dataset
-    from .schema import Field
+    from .contract.schema import Field
+    from .reader.dataset import Dataset
 
 _counter = itertools.count()
 

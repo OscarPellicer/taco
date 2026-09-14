@@ -10,9 +10,9 @@ import pyarrow as pa
 
 from ..errors import ContractError, SampleError
 from ..metadata._base import ExtensionContext
-from ..schema import Field, Group, Metadata, MetadataSchema, validate_qualified_field
 from .naming import level_folder
 from .sample import Asset, Folder, Sample, _PreparedAsset, _PreparedNode, _PreparedSample
+from .schema import Field, Group, Metadata, MetadataSchema, validate_qualified_field
 from .structure import Leaf, Node, build_tree, parse_leaf
 from .types import coerce_value, parse_type, type_name
 

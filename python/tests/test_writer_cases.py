@@ -7,7 +7,7 @@ import pyarrow as pa
 import pytest
 
 import taco
-from taco._view import DatasetView, open_view
+from taco.container.view import DatasetView, open_view
 from taco.contract.naming import CURRENT_ID
 
 from .datasets import CASES, DatasetCase, case_id, get_case
@@ -102,10 +102,10 @@ def test_writer_cases_match_across_containers(case: DatasetCase, tmp_path: Path)
         assert row.size > 0
         assert raw[row.offset : row.offset + row.size] == (folder_path / "DATA" / row.relative_path).read_bytes()
 
-    assert taco.reader.read(folder_path).num_rows == len(case.samples)
-    assert taco.reader.read(zip_path).num_rows == len(case.samples)
-    assert taco.reader.read(folder_path, pivoted=False).num_rows == len(case.data_paths)
-    assert taco.reader.read(zip_path, pivoted=False).num_rows == len(case.data_paths)
+    assert taco.read(folder_path).num_rows == len(case.samples)
+    assert taco.read(zip_path).num_rows == len(case.samples)
+    assert taco.read(folder_path, layout="long").num_rows == len(case.data_paths)
+    assert taco.read(zip_path, layout="long").num_rows == len(case.data_paths)
 
 
 @pytest.mark.parametrize("case", CASES, ids=case_id)
@@ -148,8 +148,8 @@ def test_partitioned_writer_cases(case: DatasetCase, tmp_path: Path) -> None:
     assert dataset.levels == case.levels
     for level, row_count in zip(case.levels, case.row_counts, strict=True):
         assert dataset.level(level).num_rows == row_count
-    assert taco.reader.read(result.path).num_rows == len(case.samples)
-    assert taco.reader.read(result.path, pivoted=False).num_rows == len(case.data_paths)
+    assert taco.read(result.path).num_rows == len(case.samples)
+    assert taco.read(result.path, layout="long").num_rows == len(case.data_paths)
 
 
 def test_derived_metadata_is_batch_invariant(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from taco._parquet import DEFAULT_PARQUET_OPTIONS, parquet_writer_options
+from taco.container.parquet import DEFAULT_PARQUET_OPTIONS, parquet_writer_options
 
 
 def test_parquet_options_override_defaults_without_mutating_them() -> None:

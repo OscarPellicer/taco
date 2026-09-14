@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from taco import _publish
+from taco.container import publish as _publish
 
 
 def test_publish_many_restores_existing_outputs_on_failure(tmp_path: Path, monkeypatch) -> None:

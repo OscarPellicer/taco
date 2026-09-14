@@ -12,9 +12,9 @@ from typing import Any, Literal
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .contract.collection import Collection
-from .contract.contract import SAMPLE_LEVEL, Contract
-from .contract.naming import (
+from ..contract.collection import Collection
+from ..contract.contract import SAMPLE_LEVEL, Contract
+from ..contract.naming import (
     COLLECTION_FILENAME,
     DATA_DIR,
     METADATA_DIR,
@@ -24,7 +24,7 @@ from .contract.naming import (
     SOURCE_FILE,
     level_folder,
 )
-from .errors import CollectionError, ContainerError, ContractError
+from ..errors import CollectionError, ContainerError, ContractError
 
 Container = Literal["zip", "folder", "tacocat"]
 

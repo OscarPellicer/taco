@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import logging
 import os
 import tempfile
 from collections.abc import Callable, Iterator, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from .._publish import publish_file, publish_many
+from ..container.cozip import cozip_plan, cozip_write
+from ..container.publish import publish_file
 from ..contract.collection import Collection
 from ..contract.contract import SAMPLE_LEVEL
 from ..contract.naming import (
@@ -17,16 +16,11 @@ from ..contract.naming import (
     METADATA_DIR,
     level_to_filename,
     parse_size,
-    sanitize_filename,
 )
 from ..contract.sample import _PreparedSample
-from ..cozip import cozip_plan, cozip_write
 from ..errors import WriterError
-from .core import BuildResult, Writer
-from .metadata_tables import MetadataTableWriter
-from .staging import StagedSamples
-
-logger = logging.getLogger("taco")
+from .base import BuildResult, Writer
+from .metadata import MetadataTableWriter
 
 # The Python API requires .zip for a predictable output mode. Readers still
 # identify TACO archives from the cozip profile byte, not from this suffix.
@@ -101,7 +95,9 @@ class ArchiveWriter(Writer):
     def _build(self) -> BuildResult:
         if self.partition_size is None and self.partition_by is None:
             return self._write_single_archive()
-        return self._write_partitioned_archives()
+        from .partition import write_partitioned
+
+        return write_partitioned(self)
 
     def _validate_output(self, output: Path) -> None:
         if output.exists():
@@ -117,175 +113,6 @@ class ArchiveWriter(Writer):
             lambda: ((index, sample) for index, sample, _ in self._staged_samples()),
             self.sample_count,
         )
-
-    def _stage_partitions(self) -> list[tuple[str, StagedSamples[tuple[_PreparedSample, int]]]]:
-        directory = self._stage / "partitions"
-        directory.mkdir()
-        partitions: list[tuple[str, StagedSamples[tuple[_PreparedSample, int]]]] = []
-        labels: dict[str, Any] = {}
-
-        try:
-            if self.partition_by is not None:
-                streams: dict[str, StagedSamples[tuple[_PreparedSample, int]]] = {}
-                for sample, size in self._samples_with_partition_metadata():
-                    value = sample.metadata[self.partition_by]
-                    label = sanitize_filename(str(value))
-
-                    # Sanitizing can map distinct values to the same filename.
-                    # Failing here is better than silently mixing both groups.
-                    if label in labels and labels[label] != value:
-                        raise WriterError(
-                            f"partition values {labels[label]!r} and {value!r} collide on file name {label!r}"
-                        )
-                    labels[label] = value
-                    if label not in streams:
-                        stream: StagedSamples[tuple[_PreparedSample, int]] = StagedSamples(
-                            directory / f"{len(streams)}.stage"
-                        )
-                        streams[label] = stream
-                        partitions.append((label, stream))
-                    streams[label].append((sample, size))
-            else:
-                assert self.partition_size is not None
-                current: StagedSamples[tuple[_PreparedSample, int]] | None = None
-                current_size = 0
-                for _, sample, size in self._staged_samples():
-                    # A sample is never split. A sample larger than the target
-                    # size simply becomes a one-sample partition.
-                    if current is None or (current.count and current_size + size > self.partition_size):
-                        current = StagedSamples(directory / f"{len(partitions)}.stage")
-                        partitions.append((f"part{len(partitions) + 1:04d}", current))
-                        current_size = 0
-                    current.append((sample, size))
-                    current_size += size
-        except BaseException:
-            for _, stream in partitions:
-                stream.close()
-            raise
-
-        for _, stream in partitions:
-            stream.close()
-        return partitions
-
-    def _samples_with_partition_metadata(self) -> Iterator[tuple[_PreparedSample, int]]:
-        assert self.partition_by is not None
-        derived = any(
-            self.partition_by in descriptor["produces"]
-            for descriptor in self.contract.extensions.get(SAMPLE_LEVEL, {}).values()
-        )
-        if not derived:
-            for _, sample, size in self._staged_samples():
-                yield sample, size
-            return
-
-        # Extension outputs normally appear while writing Parquet. A partition
-        # key is needed earlier, so compute just enough metadata to group the
-        # sample before each part is built.
-        batch: list[tuple[_PreparedSample, int]] = []
-        for _, sample, size in self._staged_samples():
-            batch.append((sample, size))
-            if len(batch) == self.batch_size:
-                yield from self._apply_partition_metadata(batch)
-                batch = []
-        yield from self._apply_partition_metadata(batch)
-
-    def _apply_partition_metadata(
-        self, batch: list[tuple[_PreparedSample, int]]
-    ) -> Iterator[tuple[_PreparedSample, int]]:
-        rows = [dict(sample.metadata) for sample, _ in batch]
-        assets = []
-        for sample, _ in batch:
-            source = sample.assets[0].source if self.contract.is_null else None
-            assert source is None or isinstance(source, Path)
-            assets.append(source)
-        self.contract.apply_extensions(SAMPLE_LEVEL, rows, assets=assets)
-        for (sample, size), metadata in zip(batch, rows, strict=True):
-            yield sample.replace_metadata(metadata), size
-
-    def _write_partitioned_archives(self) -> BuildResult:
-        from ..tacocat import consolidate
-
-        partitions = self._stage_partitions()
-        if len(partitions) == 1:
-            # Avoid producing a one-part TACOCAT. The requested output path is
-            # clearer and has exactly the same contents.
-            return self._write_single_archive()
-
-        stem = self.output.stem
-        parent = self.output.parent
-        suffix = self.output.suffix or _ARCHIVE_SUFFIX
-        outputs = [parent / f"{stem}_{label}{suffix}" for label, _ in partitions]
-        for output in outputs:
-            self._validate_output(output)
-        tacocat_dir = parent / ".tacocat"
-        if tacocat_dir.exists() and not self.overwrite:
-            raise FileExistsError(f"{tacocat_dir} already exists (set overwrite=True)")
-        if tacocat_dir.exists() and not tacocat_dir.is_dir():
-            raise WriterError(f"TACOCAT output exists and is not a directory: {tacocat_dir}")
-
-        parent.mkdir(parents=True, exist_ok=True)
-
-        # Parts and the TACOCAT index stay hidden in this release directory
-        # until every build succeeds. publish_many then exposes them together.
-        with tempfile.TemporaryDirectory(prefix=f".{stem}.release-", dir=parent) as name:
-            release = Path(name)
-            jobs = list(zip(outputs, partitions, strict=True))
-            if self.workers == 1:
-                results = [
-                    self._write_partition(release, output, label, stream, True) for output, (label, stream) in jobs
-                ]
-            else:
-                results = []
-
-                # Worker threads do not own progress bars; the main thread
-                # reports each completed partition using its sample count.
-                with (
-                    self._show_progress(self.sample_count, f"building {self.output.name}") as progress,
-                    ThreadPoolExecutor(max_workers=min(self.workers, len(jobs))) as executor,
-                ):
-                    futures = [
-                        executor.submit(self._write_partition, release, output, label, stream, False)
-                        for output, (label, stream) in jobs
-                    ]
-                    for future in futures:
-                        result = future.result()
-                        results.append(result)
-                        progress.update(result.samples)
-
-            # The consolidated metadata is built from the finished parts, so
-            # it cannot point at an archive that failed halfway through.
-            tacocat = consolidate(
-                [item.path for item in results],
-                release,
-                row_group_size=self.row_group_size,
-                parquet_options=self.parquet_options,
-            )
-            replacements = [(result.path, output) for result, output in zip(results, outputs, strict=True)]
-            replacements.append((tacocat, tacocat_dir))
-            publish_many(replacements, overwrite=self.overwrite)
-        return BuildResult(
-            path=tacocat_dir,
-            samples=sum(item.samples for item in results),
-            data_files=sum(item.data_files for item in results),
-            metadata_files=len(self.contract.levels),
-            size=sum(item.size for item in results),
-            parts=tuple(outputs),
-        )
-
-    def _write_partition(
-        self,
-        release: Path,
-        output: Path,
-        label: str,
-        samples: StagedSamples[tuple[_PreparedSample, int]],
-        show_progress: bool,
-    ) -> BuildResult:
-        def records() -> Iterator[tuple[int, _PreparedSample]]:
-            for index, (sample, _) in enumerate(samples):
-                yield index, sample
-
-        logger.info("building partition %s with %d samples -> %s", label, samples.count, output)
-        return self._write_archive(release / output.name, records, samples.count, show_progress=show_progress)
 
     def _write_archive(
         self,

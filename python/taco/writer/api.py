@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from os import PathLike
+from pathlib import Path
+from typing import Any
+
+from ..contract.collection import Collection
+from .archive import ArchiveWriter
+from .base import Writer
+from .folder import FolderWriter
+
+
+def open_writer(
+    collection: Collection,
+    output: str | PathLike[str],
+    *,
+    append: bool = False,
+    overwrite: bool = False,
+    link: bool = False,
+    row_group_size: int = 65_536,
+    batch_size: int = 10_000,
+    parquet_options: Mapping[str, Any] | None = None,
+    partition_size: int | str | None = None,
+    partition_by: str | None = None,
+    progress: bool = False,
+    workers: int = 1,
+) -> Writer:
+    """Create the writer selected by the output path.
+
+    A ``.zip`` path creates an immutable archive writer.  A path without a
+    suffix creates a folder writer, which also supports append and hard links.
+    """
+    if collection.sources is not None:
+        raise ValueError("taco:sources is reserved for TACOCAT")
+    path = Path(output).expanduser()
+    if path.suffix == ".zip":
+        if append:
+            raise ValueError("ZIP datasets are immutable")
+        if link:
+            raise ValueError("link is only valid for FOLDER datasets")
+        return ArchiveWriter(
+            collection,
+            path,
+            overwrite=overwrite,
+            row_group_size=row_group_size,
+            batch_size=batch_size,
+            parquet_options=parquet_options,
+            partition_size=partition_size,
+            partition_by=partition_by,
+            progress=progress,
+            workers=workers,
+        )
+    if path.suffix:
+        raise ValueError("output must end in .zip or have no suffix")
+    if partition_size is not None or partition_by is not None:
+        raise ValueError("partitioning is only valid for ZIP datasets")
+    if workers != 1:
+        raise ValueError("workers is only valid for partitioned ZIP datasets")
+    return FolderWriter(
+        collection,
+        path,
+        append=append,
+        overwrite=overwrite,
+        link=link,
+        row_group_size=row_group_size,
+        batch_size=batch_size,
+        parquet_options=parquet_options,
+        progress=progress,
+    )
+
+
+__all__ = ["open_writer"]

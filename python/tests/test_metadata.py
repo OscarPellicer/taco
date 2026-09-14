@@ -437,7 +437,7 @@ def test_custom_derived_group(tmp_path) -> None:
     with taco.open_writer(collection, tmp_path / "derived") as writer:
         writer.add(taco.Sample(assets=b"x", metadata=taco.Metadata(base=Base(value=2))))
         writer.run()
-    from taco._view import open_view
+    from taco.container.view import open_view
 
     dataset = open_view(tmp_path / "derived")
     assert dataset.level("sample").column("next:value").to_pylist() == [3]

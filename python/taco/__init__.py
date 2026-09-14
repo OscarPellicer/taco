@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-from . import extensions, metadata, reader
+from . import extensions, metadata
 from .contract import Asset, Collection, Contract, Folder, Sample
-from .dataset import Dataset, open_dataset, read
+from .contract.schema import CollectionMetadata, DerivedMetadata, Extension, Level, Metadata, MetadataSchema
 from .errors import TacoError
 from .metadata._base import ExtensionContext
-from .schema import CollectionMetadata, DerivedMetadata, Extension, Level, Metadata, MetadataSchema
-from .tacocat import consolidate
+from .reader import Dataset, open_dataset, read
 from .validate import validate
 from .writer import open_writer
+from .writer.catalog import consolidate
 
 try:
     __version__ = version("taco-eo")
@@ -39,6 +39,5 @@ __all__ = [
     "open_dataset",
     "open_writer",
     "read",
-    "reader",
     "validate",
 ]

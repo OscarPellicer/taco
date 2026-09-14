@@ -8,7 +8,7 @@ import pytest
 from shapely.geometry import Polygon
 
 import taco
-from taco._view import open_view
+from taco.container.view import open_view
 
 
 def point(longitude: float, latitude: float) -> bytes:

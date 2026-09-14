@@ -9,7 +9,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .._parquet import parquet_writer_options
+from ..container.parquet import parquet_writer_options
 from ..contract.contract import SAMPLE_LEVEL, Contract
 from ..contract.naming import (
     CURRENT_ID,

@@ -14,7 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 import taco
-from taco._view import open_view
+from taco.container.view import open_view
 from taco.errors import SampleError, WriterError
 
 
