@@ -169,9 +169,9 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
       throw new Error("This dataset has no sample-level spatial centroid.");
     }
 
-    const tables = await Promise.all(dataset.levels.map((level) => dataset.readLevel(level)));
-    const levelRows = new Map(dataset.levels.map((level, position) => [level, tables[position]]));
-    const rows = (levelRows.get("sample") || []).map(sampleRowFromMetadata);
+    const sampleRows = await dataset.readLevel("sample");
+    const levelRows = new Map([["sample", sampleRows]]);
+    const rows = sampleRows.map(sampleRowFromMetadata);
     const points = rows.flatMap((row) => {
       const centroid = decodeWkbPoint(row[centroidField]);
       return centroid ? [{ row, centroidField, longitude: centroid[0], latitude: centroid[1] }] : [];
@@ -366,10 +366,11 @@ async function metadataPagesForPoint(point) {
   for (let index = 1; index < state.dataset.levels.length; index += 1) {
     const level = state.dataset.levels[index];
     const parents = selectedRows.get(parentMetadataLevel(level)) ?? [];
-    const parentIds = new Set(parents.map(rowIdentity));
-    const rows = (state.levelRows.get(level) || []).filter((row) =>
-      parentIds.has(parentIdentity(row)) && sameSource(row["internal:source_file"], sourceFile),
-    );
+    const rows = parents.length
+      ? await state.dataset.readLevel(level, {
+          filter: metadataParentFilter(parents, sourceFile),
+        })
+      : [];
     rows.forEach((row) => {
       const path = contractPath(row["internal:relative_path"]);
       const location = metadataLocation(row);
@@ -379,6 +380,14 @@ async function metadataPagesForPoint(point) {
     pages.push(parquetPage(level, rows, locations));
   }
   return pages;
+}
+
+function metadataParentFilter(parents, sourceFile) {
+  const parentIds = [...new Set(parents.map((row) => row["internal:current_id"]))];
+  const identity = { "internal:parent_id": { $in: parentIds } };
+  return sourceFile === undefined
+    ? identity
+    : { $and: [identity, { "internal:source_file": { $eq: sourceFile } }] };
 }
 
 function metadataLocation(row) {
