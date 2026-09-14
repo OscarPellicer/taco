@@ -1,7 +1,6 @@
 using DataFrames: DataFrame, rename!, select!
 import DBInterface
 import DuckDB
-import JSON3
 
 
 const _DATABASE = Ref{Union{Nothing,DuckDB.DB}}(nothing)
@@ -90,32 +89,6 @@ function _check_platform()
 end
 
 
-function _check_path(source)
-    source isa AbstractString ||
-        throw(ArgumentError("taco: source paths must be strings"))
-    path = String(source)
-    isempty(path) && throw(ArgumentError("taco: source paths must be non-empty"))
-    occursin('\0', path) && throw(ArgumentError("taco: a source path contains a NUL byte"))
-    return path
-end
-
-
-_sources(source::AbstractString) = [_check_path(source)]
-
-
-function _sources(source::AbstractVector)
-    isempty(source) &&
-        throw(ArgumentError("taco: `source` must contain one or more paths"))
-    paths = [_check_path(path) for path in source]
-    length(unique(paths)) == length(paths) ||
-        throw(ArgumentError("taco: source paths must be unique"))
-    return paths
-end
-
-
-_sources(source) = throw(ArgumentError("taco: `source` must be a path or a vector of paths"))
-
-
 function _check_idx(idx)
     idx === nothing && return nothing
     values = idx isa Tuple || idx isa AbstractVector ? collect(idx) : Any[idx]
@@ -174,20 +147,20 @@ struct Dataset
     sources::Vector{String}
     collection::Dict{String,Any}
     contract::Contract
+    version::String
+    versions::Vector{String}
+    manifest::Union{Nothing,String}
 end
 
 
-function _plain(value::JSON3.Object)
-    result = Dict{String,Any}()
-    for (key, item) in pairs(value)
-        result[String(key)] = _plain(item)
-    end
-    return result
-end
-
-
-_plain(value::JSON3.Array) = Any[_plain(item) for item in value]
-_plain(value) = value
+Dataset(sources, collection, contract) = Dataset(
+    sources,
+    collection,
+    contract,
+    String(collection["dataset_version"]),
+    String[],
+    nothing,
+)
 
 
 function _collection_documents(con, sources)
@@ -293,14 +266,30 @@ end
 
 """Open a TACO dataset and load its collection and contract."""
 function open_dataset(source)
-    sources = _sources(source)
-    return _with_reader() do con
-        parsed = _parse_collection.(_collection_documents(con, sources))
-        collections = first.(parsed)
-        levels = last.(parsed)
-        collection = _merge_collections(collections, levels, sources)
-        Dataset(sources, collection, _collection_contract(collection, first(levels)))
+    resolution = _resolve_versioned(source)
+    sources = resolution.sources
+    collection = resolution.collection
+    levels = String[]
+    if collection === nothing
+        collection, levels = _with_reader() do con
+            parsed = _parse_collection.(_collection_documents(con, sources))
+            collections = first.(parsed)
+            parsed_levels = last.(parsed)
+            merged = _merge_collections(collections, parsed_levels, sources)
+            merged, first(parsed_levels)
+        end
+    else
+        levels = resolution.levels
     end
+    version = something(resolution.version, String(collection["dataset_version"]))
+    return Dataset(
+        sources,
+        collection,
+        _collection_contract(collection, levels),
+        version,
+        resolution.versions,
+        resolution.manifest,
+    )
 end
 
 
@@ -367,7 +356,7 @@ Read a path, a vector of compatible partitions or an open `Dataset`.
 `taco:location` column in a long read. Raw level reads never synthesize one.
 """
 function read(source; kwargs...)
-    sources = _sources(source)
+    sources = _resolve_versioned(source).sources
     length(sources) > 1 && return read(open_dataset(sources); kwargs...)
     return _read_sources(sources; kwargs...)
 end

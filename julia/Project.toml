@@ -7,6 +7,7 @@ description = "Read TACO datasets in Julia."
 [deps]
 DBInterface = "a10d1c49-ce27-4219-8d33-6db1a4562965"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 

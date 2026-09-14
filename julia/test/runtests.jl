@@ -1,5 +1,6 @@
 using Test
 using DataFrames
+import JSON3
 using Taco
 
 
@@ -35,6 +36,9 @@ const FIXTURE = joinpath(@__DIR__, "data", "taco.zip")
         @test dataset.contract.structure == ["image.bin", "mask.bin"]
         @test dataset.contract.levels == ["sample", "children"]
         @test isempty(dataset.contract.derived)
+        @test dataset.version == "1.0.0"
+        @test isempty(dataset.versions)
+        @test dataset.manifest === nothing
         @test size(Taco.read(dataset), 1) == 3
         @test occursin("Taco.Dataset", sprint(show, dataset))
 
@@ -122,3 +126,6 @@ const FIXTURE = joinpath(@__DIR__, "data", "taco.zip")
         )
     end
 end
+
+
+include("versioned.jl")
