@@ -19,6 +19,20 @@ function versioned_manifest()
 end
 
 
+@testset "shared reader resolution conformance" begin
+    path = joinpath(@__DIR__, "..", "..", "r", "inst", "conformance", "reader-resolution.json")
+    cases = JSON3.read(Base.read(path, String))
+    for case in cases["manifest_candidates"]
+        expected = case["expected"] === nothing ? nothing : String(case["expected"])
+        @test Taco._manifest_candidate(String(case["source"])) == expected
+    end
+    for case in cases["manifest_hrefs"]
+        @test Taco._join_manifest_href(String(case["candidate"]), String(case["href"])) ==
+              String(case["expected"])
+    end
+end
+
+
 function write_manifest(root, manifest=versioned_manifest())
     mkpath(root)
     path = joinpath(root, "taco.json")
