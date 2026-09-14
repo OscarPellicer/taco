@@ -2,7 +2,7 @@ import { matchLeaf } from "../contract/structure.js";
 import { fail } from "../errors.js";
 import { matchesFilter } from "./filter.js";
 import { TacoAsset } from "../container/asset.js";
-import { TacoParquet, PROTECTED_LOCATION_COLUMNS } from "../container/parquet.js";
+import { TacoParquet, PROTECTED_LOCATION_COLUMNS } from "../container/parquet.js?v=15";
 import { basename, contractPath, parentLevel } from "../container/paths.js";
 import { safeInteger } from "./source.js";
 

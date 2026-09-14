@@ -1,4 +1,4 @@
-import { openDataset } from "../../javascript/src/index.js";
+import { openDataset } from "../../javascript/src/index.js?v=15";
 
 const FIXTURE_ROOT = "https://huggingface.co/datasets/asterisk-labs/taco-api-fixtures/resolve/main";
 const MANIFEST_URL = `${FIXTURE_ROOT}/manifest.json`;
@@ -171,7 +171,7 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
 
     const identityColumns = ["internal:current_id", centroidField];
     if (dataset.container === "tacocat") identityColumns.push("internal:source_file");
-    await dataset.cacheLevel("sample");
+    if (typeof dataset.cacheLevel === "function") await dataset.cacheLevel("sample");
     const sampleRows = await dataset.readLevel("sample", { columns: identityColumns });
     const rows = sampleRows.map(sampleRowFromMetadata);
     const points = rows.flatMap((row) => {
@@ -205,6 +205,7 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
 }
 
 async function cacheRemainingParquets(dataset, token) {
+  if (typeof dataset.cacheLevel !== "function") return;
   try {
     await Promise.all(dataset.levels.slice(1).map((level) => dataset.cacheLevel(level)));
   } catch (error) {

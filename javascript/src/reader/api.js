@@ -1,4 +1,4 @@
-import { Dataset } from "./dataset.js";
+import { Dataset } from "./dataset.js?v=15";
 import { HttpClient } from "../container/http.js";
 import { resolveDataset } from "./manifest.js";
 import { openSource } from "./source.js";
@@ -63,4 +63,4 @@ export async function read(source, options = {}) {
   });
 }
 
-export { Dataset } from "./dataset.js";
+export { Dataset } from "./dataset.js?v=15";
