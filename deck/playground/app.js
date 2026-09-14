@@ -15,6 +15,7 @@ const element = Object.fromEntries(
 );
 
 const map = L.map("map", { attributionControl: false, zoomControl: false, worldCopyJump: true }).setView([12, 0], 2);
+const pointRenderer = L.canvas({ padding: .5 });
 L.control.zoom({ position: "bottomright" }).addTo(map);
 L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
   maxZoom: 16,
@@ -33,6 +34,7 @@ const state = {
   dataset: null,
   points: [],
   markers: [],
+  pointBaseZoom: 2,
   selectedPoint: -1,
   panelMode: null,
   metadataPages: [],
@@ -199,11 +201,12 @@ function renderPoints() {
     const split = String(point.row["ml:split"] || "train");
     const color = COLORS[split] || COLORS.train;
     const marker = L.circleMarker([point.latitude, point.longitude], {
-      radius: 7,
+      renderer: pointRenderer,
+      radius: pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom),
       color: "#ffffff",
-      weight: 2,
+      weight: state.points.length > 10_000 ? 0 : 1,
       fillColor: color,
-      fillOpacity: .94,
+      fillOpacity: state.points.length > 5_000 ? .5 : .82,
     });
     marker.bindTooltip(pointName(point), { direction: "top", offset: [0, -6] });
     marker.on("click", () => { void selectPoint(index); });
@@ -213,17 +216,35 @@ function renderPoints() {
   });
   if (bounds.length === 1) map.setView(bounds[0], 7);
   else map.fitBounds(bounds, { padding: [70, 70], maxZoom: 5 });
+  state.pointBaseZoom = map.getZoom();
+  resizePoints();
 }
+
+function pointRadius(count, zoom, baseZoom) {
+  const base = count > 50_000 ? .35 : count > 10_000 ? .6 : count > 5_000 ? 1 : count > 1_000 ? 2 : 6;
+  return Math.min(7, base * (1.6 ** Math.max(0, zoom - baseZoom)));
+}
+
+function resizePoints() {
+  if (!state.markers.length) return;
+  const radius = pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom);
+  state.markers.forEach((marker) => marker.setRadius(radius));
+}
+
+map.on("zoomend", resizePoints);
 
 async function selectPoint(index) {
   if (!state.points.length) return;
   const normalized = (index + state.points.length) % state.points.length;
   const token = ++state.metadataToken;
   state.selectedPoint = normalized;
+  const normalRadius = pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom);
   state.markers.forEach((marker, markerIndex) => {
-    marker.setStyle(markerIndex === normalized
-      ? { radius: 9, color: "#20251f", weight: 3 }
-      : { radius: 7, color: "#ffffff", weight: 2 });
+    const selected = markerIndex === normalized;
+    marker.setRadius(selected ? Math.max(6, normalRadius + 2) : normalRadius);
+    marker.setStyle(selected
+      ? { color: "#20251f", weight: 2 }
+      : { color: "#ffffff", weight: state.points.length > 10_000 ? 0 : 1 });
   });
   const point = state.points[normalized];
   map.panTo([point.latitude, point.longitude]);
@@ -620,7 +641,13 @@ function closeMetadata() {
 
 function clearSelectedPoint() {
   if (state.selectedPoint >= 0 && state.markers[state.selectedPoint]) {
-    state.markers[state.selectedPoint].setStyle({ radius: 7, color: "#ffffff", weight: 2 });
+    state.markers[state.selectedPoint].setRadius(
+      pointRadius(state.points.length, map.getZoom(), state.pointBaseZoom),
+    );
+    state.markers[state.selectedPoint].setStyle({
+      color: "#ffffff",
+      weight: state.points.length > 10_000 ? 0 : 1,
+    });
   }
   state.selectedPoint = -1;
 }
