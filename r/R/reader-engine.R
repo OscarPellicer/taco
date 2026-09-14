@@ -3,18 +3,6 @@
 }
 
 
-.check_source <- function(source) {
-  if (!is.character(source) || !length(source) || anyNA(source) ||
-      any(!nzchar(source))) {
-    .taco_stop("`source` must contain one or more non-empty strings")
-  }
-  if (anyDuplicated(source)) {
-    .taco_stop("`source` paths must be unique")
-  }
-  invisible(source)
-}
-
-
 .reader <- new.env(parent = emptyenv())
 .reader$con <- NULL
 

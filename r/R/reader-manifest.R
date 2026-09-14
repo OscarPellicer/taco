@@ -169,8 +169,8 @@
 }
 
 
-.resolve_versioned <- function(source) {
-  sources <- .check_source(source)
+.resolve_dataset <- function(source) {
+  sources <- .normalize_sources(source)
   direct <- list(
     sources = sources,
     collection = NULL,

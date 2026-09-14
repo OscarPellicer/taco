@@ -90,60 +90,8 @@
 }
 
 
-.source_labels <- function(sources) {
-  labels <- basename(sub("/+$", "", sources))
-  if (all(nzchar(labels)) && !anyDuplicated(labels)) labels else sources
-}
-
-
-#' Read a TACO dataset
-#'
-#' `source` is one or more `.zip` archives, a FOLDER directory or a
-#' `.tacocat` catalog, local or remote. Multiple sources must share a contract.
-#'
-#' @param source A dataset, or local paths or http(s)/s3/gcs/azure/hf URLs.
-#' @param layout `"wide"` gives one row per sample with a column per
-#'   structure leaf; `"long"` gives one row per file.
-#' @param idx One sample number, or a two-element half-open range.
-#'   `NULL` reads every sample.
-#' @param level Return one contract level raw, with its internal columns,
-#'   instead of the joined view.
-#' @param files Restrict which structure leaves are read. `NULL` reads all.
-#' @param location Fill structure columns in a wide read, or include the
-#'   calculated `taco:location` column in a long read. Raw level reads never
-#'   synthesize a location column.
-#'
-#' @return A tibble.
-#' @export
-read <- function(source, layout = c("wide", "long"), idx = NULL,
-                 level = NULL, files = NULL, location = TRUE) {
-  UseMethod("read")
-}
-
-
-#' @rdname read
-#' @export
-read.character <- function(source, layout = c("wide", "long"), idx = NULL,
-                           level = NULL, files = NULL, location = TRUE) {
-  resolution <- .resolve_versioned(source)
-  sources <- resolution$sources
-  if (length(sources) > 1L) {
-    sources <- open_dataset(sources)[["sources"]]
-  }
-  .read_sources(sources, layout, idx, level, files, location)
-}
-
-
-#' @rdname read
-#' @export
-read.taco_dataset <- function(source, layout = c("wide", "long"), idx = NULL,
-                              level = NULL, files = NULL, location = TRUE) {
-  .read_sources(source[["sources"]], layout, idx, level, files, location)
-}
-
-
-.read_sources <- function(source, layout, idx, level, files, location) {
-  .check_source(source)
+.read_table <- function(source, layout, idx, level, files, location) {
+  .normalize_sources(source)
   layout <- match.arg(layout, c("wide", "long"))
   .check_idx(idx)
   .check_names(level, "level")

@@ -5,7 +5,7 @@ import JSON3
 const _SEMVER = r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 
 
-struct Resolution
+struct DatasetResolution
     sources::Vector{String}
     collection::Union{Nothing,Dict{String,Any}}
     version::Union{Nothing,String}
@@ -15,33 +15,7 @@ struct Resolution
 end
 
 
-Resolution(sources) = Resolution(sources, nothing, nothing, String[], nothing, String[])
-
-
-function _check_path(source)
-    source isa AbstractString ||
-        throw(ArgumentError("taco: source paths must be strings"))
-    path = String(source)
-    isempty(path) && throw(ArgumentError("taco: source paths must be non-empty"))
-    occursin('\0', path) && throw(ArgumentError("taco: a source path contains a NUL byte"))
-    return path
-end
-
-
-_sources(source::AbstractString) = [_check_path(source)]
-
-
-function _sources(source::AbstractVector)
-    isempty(source) &&
-        throw(ArgumentError("taco: `source` must contain one or more paths"))
-    paths = [_check_path(path) for path in source]
-    length(unique(paths)) == length(paths) ||
-        throw(ArgumentError("taco: source paths must be unique"))
-    return paths
-end
-
-
-_sources(source) = throw(ArgumentError("taco: `source` must be a path or a vector of paths"))
+DatasetResolution(sources) = DatasetResolution(sources, nothing, nothing, String[], nothing, String[])
 
 
 function _plain(value::JSON3.Object)
@@ -196,16 +170,16 @@ function _validate_embedded_collection(collection, version)
 end
 
 
-function _resolve_versioned(source)
-    sources = _sources(source)
-    length(sources) == 1 || return Resolution(sources)
+function _resolve_dataset(source)
+    sources = _normalize_sources(source)
+    length(sources) == 1 || return DatasetResolution(sources)
 
     original = only(sources)
     explicit = _source_name(original) == "taco.json"
     candidate = _manifest_candidate(original)
-    candidate === nothing && return Resolution(sources)
+    candidate === nothing && return DatasetResolution(sources)
     payload = _read_manifest(candidate, explicit)
-    payload === nothing && return Resolution(sources)
+    payload === nothing && return DatasetResolution(sources)
 
     manifest = _parse_manifest(payload, candidate)
     raw_versions = get(manifest, "taco:versions", nothing)
@@ -248,7 +222,7 @@ function _resolve_versioned(source)
 
     href, collection, levels = entries[selected]
     _validate_embedded_collection(collection, selected)
-    return Resolution(
+    return DatasetResolution(
         [_join_manifest_href(candidate, href)],
         collection,
         selected,

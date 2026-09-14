@@ -1,7 +1,7 @@
 Package: taco
 Type: Package
 Title: Read TACO Datasets
-Version: 0.5.0
+Version: 0.7.0
 Authors@R: person("Cesar", "Aybar", email = "cesar@asterisk.coop",
     role = c("aut", "cre"))
 Description: Read TACO v3 datasets through the DuckDB 'cozip' extension.
