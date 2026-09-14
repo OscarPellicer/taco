@@ -12,7 +12,7 @@
     }
   </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=23">
+  <link rel="stylesheet" href="styles.css?v=34">
   <script type="importmap">
     {
       "imports": {
@@ -53,6 +53,21 @@
   <main>
     <div id="map" aria-label="Map of TACO sample centroids"></div>
 
+    <aside id="sampleDisplay" class="sample-display" aria-live="polite" hidden>
+      <div class="sample-display-heading">
+        <div>
+          <strong id="sampleDisplayPercent">—</strong>
+          <span id="sampleDisplayCount">—</span>
+        </div>
+        <div class="sample-display-actions">
+          <button id="decreasePoints" type="button" aria-label="Show fewer points">←</button>
+          <button id="increasePoints" type="button" aria-label="Show more points">→</button>
+        </div>
+      </div>
+      <progress id="sampleDisplayProgress" max="1" value="0"></progress>
+      <small id="sampleDisplayHint">Random sample of the dataset</small>
+    </aside>
+
     <div id="message" class="message" role="status" hidden></div>
     <aside id="plotLegend" class="plot-legend" aria-live="polite" hidden></aside>
 
@@ -75,7 +90,12 @@
         <div class="loader-center"><span class="loader-taco">🌮</span><span class="loader-earth">🌍</span></div>
         <div class="loader-orbit"><span class="loader-satellite">🛰️</span></div>
       </div>
-      <span>Reading TACO</span>
+      <span id="loadingLabel">Reading TACO</span>
+      <div id="downloadProgress" class="download-progress" hidden>
+        <div><span>sample.parquet</span><strong id="downloadPercent">0%</strong></div>
+        <progress id="downloadBar" max="1" value="0"></progress>
+        <small id="downloadBytes">0 B</small>
+      </div>
     </div>
 
     <a class="credit" href="https://asterisk.coop" target="_blank" rel="noopener">
@@ -87,6 +107,6 @@
     </a>
   </main>
 
-  <script type="module" src="app.js?v=32"></script>
+  <script type="module" src="app.js?v=48"></script>
 </body>
 </html>

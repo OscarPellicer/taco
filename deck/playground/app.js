@@ -1,5 +1,6 @@
 import { openDataset } from "../../javascript/src/index.js?v=16";
 import * as maplibregl from "https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.mjs";
+import { extendRandomRowIndexes, randomRowIndexes } from "./sampling.js?v=2";
 
 const FIXTURE_ROOT = "https://huggingface.co/datasets/asterisk-labs/taco-api-fixtures/resolve/main";
 const MANIFEST_URL = `${FIXTURE_ROOT}/manifest.json`;
@@ -7,28 +8,100 @@ const CENTROID_PROFILES = new Set(["spatial", "ispacial", "ispatial", "stac", "s
 const CENTROID_FIELDS = ["spatial:centroid", "ispatial:centroid", "stac:centroid", "istac:centroid"];
 const PLOT_COLORS = ["#0f766e", "#2563eb", "#7c3aed", "#d97706", "#dc2626", "#0891b2", "#65a30d", "#c026d3"];
 const DESKTOP_POINT_LIMIT = 100_000;
+const DESKTOP_POINT_STEP = 50_000;
 const MOBILE_POINT_LIMIT = 25_000;
-const DISPLAY_WINDOWS = 8;
+const MOBILE_POINT_STEP = 25_000;
 const requestedUrl = new URL(window.location.href).searchParams.get("url");
 
 const element = Object.fromEntries(
   [
     "fixtureSelect", "datasetUrl", "plotField", "plotMode", "plotLegend", "loadDataset", "status", "message",
     "metadataPanel", "pointPosition", "pointTitle", "pointCoordinates", "metadataBody", "closeMetadata",
-    "metadataPath", "metadataSource", "metadataCount", "loading",
+    "metadataPath", "metadataSource", "metadataCount", "loading", "loadingLabel",
+    "downloadProgress", "downloadBar", "downloadPercent", "downloadBytes",
+    "sampleDisplay", "sampleDisplayPercent", "sampleDisplayCount", "sampleDisplayProgress",
+    "sampleDisplayHint", "decreasePoints", "increasePoints",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
 const POINT_SOURCE = "taco-samples";
 const POINT_LAYER = "taco-points";
+
+function projectionControl() {
+  let container;
+  let activeProjection = "globe";
+  let transitionToken = 0;
+
+  return {
+    onAdd(mapInstance) {
+      container = document.createElement("div");
+      container.className = "maplibregl-ctrl map-mode-control";
+      container.setAttribute("role", "group");
+      container.setAttribute("aria-label", "Map projection");
+
+      for (const [label, projection] of [["3D", "globe"], ["2D", "mercator"]]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.dataset.projection = projection;
+        button.setAttribute("aria-pressed", String(projection === "globe"));
+        button.classList.toggle("active", projection === "globe");
+        button.addEventListener("click", async () => {
+          if (projection === activeProjection) return;
+          const token = ++transitionToken;
+          const mapContainer = mapInstance.getContainer();
+          const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          mapInstance.stop();
+
+          for (const sibling of container.querySelectorAll("button")) {
+            const active = sibling === button;
+            sibling.classList.toggle("active", active);
+            sibling.setAttribute("aria-pressed", String(active));
+            sibling.disabled = true;
+          }
+
+          if (!reducedMotion) {
+            mapContainer.classList.remove("projection-entering");
+            mapContainer.classList.add("projection-leaving");
+            await new Promise((resolve) => setTimeout(resolve, 140));
+          }
+
+          if (token !== transitionToken) return;
+          mapInstance.setProjection({ type: projection });
+          activeProjection = projection;
+          mapInstance.triggerRepaint();
+          mapContainer.classList.remove("projection-leaving");
+
+          if (!reducedMotion) {
+            mapContainer.classList.add("projection-entering");
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          }
+
+          if (token !== transitionToken) return;
+          mapContainer.classList.remove("projection-entering");
+          for (const sibling of container.querySelectorAll("button")) sibling.disabled = false;
+        });
+        container.append(button);
+      }
+
+      return container;
+    },
+    onRemove() {
+      transitionToken += 1;
+      container?.remove();
+    },
+  };
+}
+
 const map = new maplibregl.Map({
   container: "map",
   center: [0, 12],
-  zoom: 2,
+  zoom: 2.25,
   attributionControl: false,
   maxZoom: 16,
   style: {
     version: 8,
+    projection: { type: "globe" },
     sources: {
       basemap: {
         type: "raster",
@@ -47,33 +120,48 @@ const map = new maplibregl.Map({
       { id: "basemap", type: "raster", source: "basemap" },
       { id: "labels", type: "raster", source: "labels" },
     ],
+    sky: {
+      "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 5, 1, 7, 0],
+    },
   },
 });
-map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+map.addControl(projectionControl(), "top-left");
+map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), "bottom-right");
 const mapReady = new Promise((resolve) => map.on("load", resolve));
-const pointPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
 
 map.on("click", (event) => {
   if (!map.getLayer(POINT_LAYER)) return;
-  const feature = map.queryRenderedFeatures(event.point, { layers: [POINT_LAYER] })[0];
+  const feature = nearestPointFeature(event.point);
   if (feature?.id !== undefined) void selectPoint(Number(feature.id));
 });
 map.on("mousemove", (event) => {
   if (!map.getLayer(POINT_LAYER)) return;
-  const feature = map.queryRenderedFeatures(event.point, { layers: [POINT_LAYER] })[0];
+  const feature = nearestPointFeature(event.point);
   map.getCanvas().style.cursor = feature ? "pointer" : "";
-  if (!feature?.geometry || feature.id === undefined) {
-    pointPopup.remove();
-    return;
-  }
-  const point = state.points[Number(feature.id)];
-  if (!point) return;
-  pointPopup.setLngLat(feature.geometry.coordinates).setText(pointName(point)).addTo(map);
 });
 map.on("mouseout", () => {
   map.getCanvas().style.cursor = "";
-  pointPopup.remove();
 });
+
+function nearestPointFeature(cursor) {
+  const tolerance = 8;
+  const features = map.queryRenderedFeatures(
+    [[cursor.x - tolerance, cursor.y - tolerance], [cursor.x + tolerance, cursor.y + tolerance]],
+    { layers: [POINT_LAYER] },
+  );
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const feature of features) {
+    if (feature.id === undefined || feature.geometry?.type !== "Point") continue;
+    const screenPoint = map.project(feature.geometry.coordinates);
+    const distance = ((screenPoint.x - cursor.x) ** 2) + ((screenPoint.y - cursor.y) ** 2);
+    if (distance < nearestDistance) {
+      nearest = feature;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
 
 const state = {
   manifest: null,
@@ -83,7 +171,11 @@ const state = {
   currentUrl: null,
   dataset: null,
   points: [],
-  displayRanges: [],
+  sampledIndexes: null,
+  sampleIndexes: null,
+  sampleRows: 0,
+  centroidField: null,
+  identityColumns: [],
   colorIndexes: new Uint8Array(),
   plotToken: 0,
   pointData: null,
@@ -99,6 +191,7 @@ const state = {
   metadataToken: 0,
   messageTimer: null,
   loadToken: 0,
+  changingPointCount: false,
 };
 
 prefillRequestedUrl();
@@ -150,6 +243,8 @@ function bindEvents() {
     loadFixture(next);
   });
   element.loadDataset.addEventListener("click", () => { void loadDatasetUrl(element.datasetUrl.value); });
+  element.increasePoints.addEventListener("click", () => { void increaseDisplayedPoints(); });
+  element.decreasePoints.addEventListener("click", () => { void decreaseDisplayedPoints(); });
   element.plotField.addEventListener("change", () => {
     state.plotMode = "auto";
     element.plotMode.value = "auto";
@@ -216,9 +311,15 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   closeMetadata();
   clearMarkers();
   state.points = [];
-  state.displayRanges = [];
+  state.sampledIndexes = null;
+  state.sampleIndexes = null;
+  state.sampleRows = 0;
+  state.centroidField = null;
+  state.identityColumns = [];
   state.colorIndexes = new Uint8Array();
   state.parquetCachePromise = null;
+  state.changingPointCount = false;
+  element.sampleDisplay.hidden = true;
   setStatus("loading", "Reading TACO");
   disableDatasetNavigation(true);
   element.fixtureSelect.value = String(index);
@@ -240,18 +341,18 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
     const identityColumns = ["internal:current_id", centroidField];
     if (dataset.container === "tacocat") identityColumns.push("internal:source_file");
     const sampleRows = await dataset.levelRowCount("sample");
-    const displayRanges = displayRowRanges(sampleRows, pointDisplayLimit());
-    const displayedRows = await readLevelRanges(dataset, "sample", {
+    setStatus("loading", "Downloading sample.parquet");
+    setLoadingLabel("Downloading sample.parquet");
+    await dataset.cacheLevel("sample", { onProgress: updateDownloadProgress });
+    finishDownloadProgress();
+    setStatus("loading", "Sampling points");
+    setLoadingLabel("Sampling points");
+    const sampleIndexes = randomRowIndexes(sampleRows, pointDisplayLimit());
+    const displayedRows = await dataset.readLevel("sample", {
       columns: identityColumns,
-    }, displayRanges);
-    const rows = displayedRows.map(sampleRowFromMetadata);
-    const points = rows.flatMap((row) => {
-      const centroid = decodeWkbPoint(row[centroidField]);
-      if (!centroid) return [];
-      const identity = { sample_id: row.sample_id };
-      if (row.source_file !== undefined) identity.source_file = row.source_file;
-      return [{ row: identity, centroidField, longitude: centroid[0], latitude: centroid[1] }];
+      ...(sampleIndexes ? { rowIndexes: sampleIndexes } : {}),
     });
+    const points = pointsFromMetadata(displayedRows, centroidField, sampleIndexes);
     if (!points.length) throw new Error(`The ${centroidField} column contains no readable points.`);
     if (token !== state.loadToken) return;
 
@@ -259,13 +360,19 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
     state.currentUrl = url;
     state.dataset = dataset;
     state.points = points;
-    state.displayRanges = displayRanges;
+    state.sampledIndexes = sampleIndexes;
+    state.sampleIndexes = sampleIndexes === null && points.length === sampleRows
+      ? null
+      : points.map((point) => point.physicalIndex);
+    state.sampleRows = sampleRows;
+    state.centroidField = centroidField;
+    state.identityColumns = identityColumns;
     state.colorIndexes = new Uint8Array(points.length);
     populatePlotFields(sampleFields);
     renderDataset(url, index);
     await renderPoints();
-    setStatus("ready", `${displayCountLabel(points.length, sampleRows)} · caching metadata`);
-    state.parquetCachePromise = cacheParquets(dataset, token, points.length, sampleRows);
+    setPointCountStatus(points.length, sampleRows, " · caching metadata");
+    state.parquetCachePromise = cacheParquets(dataset, token, sampleRows);
   } catch (error) {
     if (token === state.loadToken) fail(error);
   } finally {
@@ -276,12 +383,12 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   }
 }
 
-async function cacheParquets(dataset, token, pointCount, sampleRows) {
+async function cacheParquets(dataset, token, sampleRows) {
   if (typeof dataset.cacheLevel !== "function") return;
   try {
     await Promise.all(dataset.levels.map((level) => dataset.cacheLevel(level)));
-    if (token === state.loadToken && dataset === state.dataset) {
-      setStatus("ready", displayCountLabel(pointCount, sampleRows));
+    if (token === state.loadToken && dataset === state.dataset && !state.changingPointCount) {
+      setPointCountStatus(state.points.length, sampleRows);
     }
   } catch (error) {
     if (token === state.loadToken && dataset === state.dataset) showMessage(messageOf(error));
@@ -289,49 +396,152 @@ async function cacheParquets(dataset, token, pointCount, sampleRows) {
 }
 
 function pointDisplayLimit() {
+  return pointDisplayConfig().initial;
+}
+
+function pointDisplayConfig() {
   return window.matchMedia("(max-width: 760px)").matches
-    ? MOBILE_POINT_LIMIT
-    : DESKTOP_POINT_LIMIT;
-}
-
-function displayRowRanges(totalRows, limit) {
-  if (!Number.isSafeInteger(totalRows) || totalRows < 0) {
-    throw new RangeError("The sample row count is invalid.");
-  }
-  if (totalRows === 0) return [];
-  const displayedRows = Math.min(totalRows, limit);
-  if (displayedRows === totalRows) return [{ start: 0, end: totalRows }];
-
-  const windowCount = Math.min(DISPLAY_WINDOWS, displayedRows);
-  const rowsPerWindow = Math.floor(displayedRows / windowCount);
-  const remainder = displayedRows % windowCount;
-  const ranges = [];
-  for (let index = 0; index < windowCount; index += 1) {
-    const segmentStart = Math.floor((index * totalRows) / windowCount);
-    const segmentEnd = Math.floor(((index + 1) * totalRows) / windowCount);
-    const size = rowsPerWindow + (index < remainder ? 1 : 0);
-    const start = segmentStart + Math.floor((segmentEnd - segmentStart - size) / 2);
-    ranges.push({ start, end: start + size });
-  }
-  return ranges;
-}
-
-async function readLevelRanges(dataset, level, options, ranges) {
-  if (!ranges.length) return [];
-  const pages = await Promise.all(
-    ranges.map((range) => dataset.readLevel(level, {
-      ...options,
-      rowStart: range.start,
-      rowEnd: range.end,
-    })),
-  );
-  return pages.flat();
+    ? { initial: MOBILE_POINT_LIMIT, step: MOBILE_POINT_STEP }
+    : { initial: DESKTOP_POINT_LIMIT, step: DESKTOP_POINT_STEP };
 }
 
 function displayCountLabel(displayedRows, totalRows) {
   const displayed = displayedRows.toLocaleString();
   if (displayedRows < totalRows) return `${displayed} of ${totalRows.toLocaleString()} points`;
   return `${displayed} points`;
+}
+
+function setPointCountStatus(displayedRows, totalRows, suffix = "") {
+  setStatus("ready", `${displayedRows.toLocaleString()} points${suffix}`);
+  const { step, initial } = pointDisplayConfig();
+  element.sampleDisplay.hidden = totalRows <= initial;
+  if (element.sampleDisplay.hidden) return;
+
+  const percentage = (displayedRows / totalRows) * 100;
+  const currentSampleSize = state.sampledIndexes?.length ?? totalRows;
+  const previousSize = previousPointCount(currentSampleSize, initial, step);
+  const nextSize = Math.min(currentSampleSize + step, totalRows);
+  const canDecrease = previousSize < currentSampleSize;
+  const canIncrease = nextSize > currentSampleSize;
+
+  element.sampleDisplayPercent.textContent = `${formatPercentage(percentage)} displayed`;
+  element.sampleDisplayCount.textContent = displayCountLabel(displayedRows, totalRows);
+  element.sampleDisplayProgress.max = totalRows;
+  element.sampleDisplayProgress.value = displayedRows;
+  element.decreasePoints.disabled = !canDecrease || state.changingPointCount;
+  element.increasePoints.disabled = !canIncrease || state.changingPointCount;
+  element.sampleDisplayHint.textContent = !canIncrease
+    ? "All readable points are displayed"
+    : nextSize > initial * 2
+      ? "Higher point counts use more memory"
+      : "Random sample of the complete dataset";
+}
+
+function previousPointCount(current, initial, step) {
+  if (current <= initial) return initial;
+  return initial + Math.floor((current - initial - 1) / step) * step;
+}
+
+function formatPercentage(value) {
+  if (value >= 10) return `${Math.round(value)}%`;
+  return `${value.toFixed(1)}%`;
+}
+
+function compactCount(value) {
+  if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(1))}M`;
+  if (value >= 1_000) return `${Number((value / 1_000).toFixed(0))}k`;
+  return String(value);
+}
+
+async function increaseDisplayedPoints() {
+  if (!state.dataset || state.sampledIndexes === null || state.changingPointCount) return;
+  const { step } = pointDisplayConfig();
+  const targetSize = Math.min(state.sampledIndexes.length + step, state.sampleRows);
+  await changeDisplayedPointCount(targetSize);
+}
+
+async function decreaseDisplayedPoints() {
+  if (!state.dataset || state.sampledIndexes === null || state.changingPointCount) return;
+  const { initial, step } = pointDisplayConfig();
+  const targetSize = previousPointCount(state.sampledIndexes.length, initial, step);
+  await changeDisplayedPointCount(targetSize);
+}
+
+async function changeDisplayedPointCount(targetSize) {
+  const currentSize = state.sampledIndexes.length;
+  if (targetSize === currentSize) return;
+
+  const token = state.loadToken;
+  const increasing = targetSize > currentSize;
+  state.changingPointCount = true;
+  element.decreasePoints.disabled = true;
+  element.increasePoints.disabled = true;
+  element.sampleDisplayHint.textContent = increasing
+    ? "Reading additional points from cached metadata"
+    : "Releasing points from the displayed view";
+  setStatus("loading", `${increasing ? "Adding" : "Removing"} ${compactCount(Math.abs(targetSize - currentSize))} points`);
+
+  try {
+    if (increasing) {
+      const extendedIndexes = extendRandomRowIndexes(state.sampleRows, state.sampledIndexes, targetSize);
+      const addedIndexes = extendedIndexes.slice(currentSize);
+      const rows = await state.dataset.readLevel("sample", {
+        columns: state.identityColumns,
+        rowIndexes: addedIndexes,
+      });
+      if (token !== state.loadToken) return;
+
+      const newPoints = pointsFromMetadata(rows, state.centroidField, addedIndexes);
+      state.sampledIndexes = extendedIndexes;
+      state.points.push(...newPoints);
+      state.sampleIndexes.push(...newPoints.map((point) => point.physicalIndex));
+      const colors = new Uint8Array(state.points.length);
+      colors.set(state.colorIndexes);
+      state.colorIndexes = colors;
+    } else {
+      const retainedIndexes = state.sampledIndexes.slice(0, targetSize);
+      const retained = new Set(retainedIndexes);
+      const points = [];
+      const colors = [];
+      state.points.forEach((point, index) => {
+        if (!retained.has(point.physicalIndex)) return;
+        points.push(point);
+        colors.push(state.colorIndexes[index]);
+      });
+      if (state.selectedPoint >= points.length) closeMetadata();
+      state.sampledIndexes = retainedIndexes;
+      state.points = points;
+      state.sampleIndexes = points.map((point) => point.physicalIndex);
+      state.colorIndexes = Uint8Array.from(colors);
+    }
+
+    await updateRenderedPoints();
+    if (state.plotField) await loadPlotField(state.plotField);
+  } catch (error) {
+    if (token === state.loadToken) showMessage(messageOf(error));
+  } finally {
+    if (token === state.loadToken) {
+      state.changingPointCount = false;
+      setPointCountStatus(state.points.length, state.sampleRows);
+    }
+  }
+}
+
+function pointsFromMetadata(rows, centroidField, rowIndexes = null) {
+  return rows.flatMap((metadata, position) => {
+    const row = sampleRowFromMetadata(metadata);
+    const centroid = decodeWkbPoint(row[centroidField]);
+    if (!centroid) return [];
+    const identity = { sample_id: row.sample_id };
+    if (row.source_file !== undefined) identity.source_file = row.source_file;
+    return [{
+      row: identity,
+      centroidField,
+      physicalIndex: rowIndexes?.[position] ?? position,
+      longitude: centroid[0],
+      latitude: centroid[1],
+    }];
+  });
 }
 
 function sampleRowFromMetadata(row) {
@@ -353,15 +563,7 @@ function renderDataset(url, index) {
 async function renderPoints() {
   clearMarkers();
   await mapReady;
-  state.pointData = {
-    type: "FeatureCollection",
-    features: state.points.map((point, index) => ({
-      type: "Feature",
-      id: index,
-      properties: { sample_index: index, color_index: state.colorIndexes[index] },
-      geometry: { type: "Point", coordinates: [point.longitude, point.latitude] },
-    })),
-  };
+  state.pointData = pointFeatureCollection();
   map.addSource(POINT_SOURCE, {
     type: "geojson",
     data: state.pointData,
@@ -385,6 +587,36 @@ async function renderPoints() {
       "circle-stroke-width": ["case", ["boolean", ["feature-state", "selected"], false], 2, state.points.length > 10_000 ? 0 : 1],
     },
   });
+}
+
+async function updateRenderedPoints() {
+  await mapReady;
+  const source = map.getSource(POINT_SOURCE);
+  if (!source) {
+    await renderPoints();
+    return;
+  }
+  state.pointData = pointFeatureCollection();
+  await source.setData(state.pointData);
+  map.setPaintProperty(POINT_LAYER, "circle-radius", pointRadiusExpression(state.points.length, state.pointBaseZoom));
+  map.setPaintProperty(POINT_LAYER, "circle-opacity", state.points.length > 5_000 ? .6 : .84);
+  map.setPaintProperty(
+    POINT_LAYER,
+    "circle-stroke-width",
+    ["case", ["boolean", ["feature-state", "selected"], false], 2, state.points.length > 10_000 ? 0 : 1],
+  );
+}
+
+function pointFeatureCollection() {
+  return {
+    type: "FeatureCollection",
+    features: state.points.map((point, index) => ({
+      type: "Feature",
+      id: index,
+      properties: { sample_index: index, color_index: state.colorIndexes[index] },
+      geometry: { type: "Point", coordinates: [point.longitude, point.latitude] },
+    })),
+  };
 }
 
 function populatePlotFields(sampleFields) {
@@ -441,7 +673,6 @@ async function loadPlotField(field) {
   element.plotField.disabled = true;
   element.plotMode.disabled = true;
   try {
-    await state.parquetCachePromise;
     let analysis = null;
     if (!field) {
       state.colorIndexes = new Uint8Array(state.points.length);
@@ -449,7 +680,10 @@ async function loadPlotField(field) {
     } else {
       const columns = ["internal:current_id", field];
       if (state.dataset.container === "tacocat") columns.push("internal:source_file");
-      const rows = await readLevelRanges(state.dataset, "sample", { columns }, state.displayRanges);
+      const rows = await state.dataset.readLevel("sample", {
+        columns,
+        ...(state.sampleIndexes ? { rowIndexes: state.sampleIndexes } : {}),
+      });
       if (token !== state.plotToken) return;
       analysis = analyzePlotValues(rows, field, state.sampleFields[field], state.plotMode);
       state.colorIndexes = analysis.colors;
@@ -641,25 +875,31 @@ function selectPoint(index) {
   if (!state.points.length) return;
   const normalized = (index + state.points.length) % state.points.length;
   const token = ++state.metadataToken;
+  const firstOpen = !element.metadataPanel.classList.contains("open");
   if (state.selectedPoint >= 0 && map.getSource(POINT_SOURCE)) {
     map.setFeatureState({ source: POINT_SOURCE, id: state.selectedPoint }, { selected: false });
   }
   state.selectedPoint = normalized;
   map.setFeatureState({ source: POINT_SOURCE, id: normalized }, { selected: true });
   const point = state.points[normalized];
-  map.easeTo({ center: [point.longitude, point.latitude], duration: 280 });
   state.panelMode = "point";
   element.metadataPanel.classList.remove("dataset-mode");
   element.pointPosition.textContent = `Point ${normalized + 1} of ${state.points.length}`;
   element.pointTitle.textContent = pointName(point);
   element.pointCoordinates.textContent = `${formatLatitude(point.latitude)}, ${formatLongitude(point.longitude)}`;
-  element.metadataPanel.classList.add("open");
   element.metadataPanel.setAttribute("aria-hidden", "false");
   state.metadataPages = [samplePageFromMemory(point)];
   state.metadataPageIndex = 0;
   renderMetadataNavigation();
   appendFileMetadataButton(point, token, normalized);
   renderMetadataPage();
+  if (firstOpen) {
+    requestAnimationFrame(() => {
+      if (token === state.metadataToken && state.panelMode === "point") element.metadataPanel.classList.add("open");
+    });
+  } else {
+    element.metadataPanel.classList.add("open");
+  }
   void hydrateSampleMetadata(point, token, normalized);
 }
 
@@ -1107,7 +1347,6 @@ function clearSelectedPoint() {
 }
 
 function clearMarkers() {
-  pointPopup.remove();
   if (map.getLayer(POINT_LAYER)) map.removeLayer(POINT_LAYER);
   if (map.getSource(POINT_SOURCE)) map.removeSource(POINT_SOURCE);
   state.pointData = null;
@@ -1296,6 +1535,33 @@ function disableDatasetNavigation(disabled) {
 
 function setLoading(loading) {
   element.loading.hidden = !loading;
+  if (loading) {
+    setLoadingLabel("Reading TACO");
+    element.downloadProgress.hidden = true;
+    element.downloadBar.max = 1;
+    element.downloadBar.value = 0;
+    element.downloadPercent.textContent = "0%";
+    element.downloadBytes.textContent = "0 B";
+  }
+}
+
+function setLoadingLabel(text) {
+  element.loadingLabel.textContent = text;
+}
+
+function updateDownloadProgress({ loaded, total }) {
+  element.downloadProgress.hidden = false;
+  element.downloadBar.max = Math.max(total, 1);
+  element.downloadBar.value = loaded;
+  element.downloadPercent.textContent = total > 0 ? `${Math.min(100, Math.round((loaded / total) * 100))}%` : "…";
+  element.downloadBytes.textContent = total > 0
+    ? `${formatBytes(loaded)} / ${formatBytes(total)}`
+    : formatBytes(loaded);
+}
+
+function finishDownloadProgress() {
+  const total = Number(element.downloadBar.max);
+  if (total > 0) updateDownloadProgress({ loaded: total, total });
 }
 
 function setStatus(kind, text) {
