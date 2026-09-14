@@ -37,6 +37,9 @@ export function directoryUrl(value) {
  * @returns {ArrayBuffer}
  */
 export function arrayBuffer(bytes) {
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return /** @type {ArrayBuffer} */ (bytes.buffer);
+  }
   return /** @type {ArrayBuffer} */ (
     bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
   );

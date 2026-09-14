@@ -21,13 +21,24 @@ export class TacoParquet {
   async cache() {
     if (!this.cachePromise) {
       this.cachePromise = this.file.slice(0, this.file.byteLength).then((buffer) => {
-        this.file = {
+        /** @type {{byteLength: number, slice(start: number, end?: number): Promise<ArrayBuffer>}} */
+        const cachedFile = {
           byteLength: buffer.byteLength,
           slice: async (start, end = buffer.byteLength) => buffer.slice(start, end),
         };
+        this.file = cachedFile;
       });
     }
     await this.cachePromise;
+  }
+
+  /** Return the number of rows without decoding the Parquet body. */
+  async rowCount() {
+    const rows = (await this.metadataPromise).num_rows;
+    if (rows < 0n || rows > BigInt(Number.MAX_SAFE_INTEGER)) {
+      fail("UNSAFE_INTEGER", `${this.level} row count exceeds JavaScript's safe integer range`);
+    }
+    return Number(rows);
   }
 
   async readMetadata() {

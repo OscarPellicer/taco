@@ -1,6 +1,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { openDataset, read, SUPPORTED_TACO_VERSION, TacoError } from "../src/index.js";
+import { arrayBuffer } from "../src/container/http.js";
 import { fixtureServer } from "./server.js";
 
 let fixture;
@@ -54,6 +55,22 @@ test("caches compressed metadata before projected queries", async () => {
   });
   assert.deepEqual(rows, [{ "internal:current_id": 2n, "ml:split": "test" }]);
   await assert.rejects(() => dataset.cacheLevel("missing"), /unknown metadata level/);
+});
+
+test("reads a metadata row count without decoding its rows", async () => {
+  const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
+  assert.equal(await dataset.levelRowCount("sample"), 3);
+  assert.equal(await dataset.levelRowCount("children"), 6);
+  await assert.rejects(() => dataset.levelRowCount("missing"), /unknown metadata level/);
+});
+
+test("reuses complete response buffers and copies partial views", () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  assert.equal(arrayBuffer(bytes), bytes.buffer);
+  const partial = bytes.subarray(1, 3);
+  const copied = arrayBuffer(partial);
+  assert.notEqual(copied, bytes.buffer);
+  assert.deepEqual([...new Uint8Array(copied)], [2, 3]);
 });
 
 test("reads wide and long views with calculated TACO locations", async () => {

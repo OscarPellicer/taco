@@ -1,4 +1,4 @@
-import { openDataset } from "../../javascript/src/index.js?v=15";
+import { openDataset } from "../../javascript/src/index.js?v=16";
 import * as maplibregl from "https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.mjs";
 
 const FIXTURE_ROOT = "https://huggingface.co/datasets/asterisk-labs/taco-api-fixtures/resolve/main";
@@ -6,6 +6,9 @@ const MANIFEST_URL = `${FIXTURE_ROOT}/manifest.json`;
 const CENTROID_PROFILES = new Set(["spatial", "ispacial", "ispatial", "stac", "stac-interval", "shared-stac", "istac"]);
 const CENTROID_FIELDS = ["spatial:centroid", "ispatial:centroid", "stac:centroid", "istac:centroid"];
 const PLOT_COLORS = ["#0f766e", "#2563eb", "#7c3aed", "#d97706", "#dc2626", "#0891b2", "#65a30d", "#c026d3"];
+const DESKTOP_POINT_LIMIT = 100_000;
+const MOBILE_POINT_LIMIT = 25_000;
+const DISPLAY_WINDOWS = 8;
 const requestedUrl = new URL(window.location.href).searchParams.get("url");
 
 const element = Object.fromEntries(
@@ -80,6 +83,7 @@ const state = {
   currentUrl: null,
   dataset: null,
   points: [],
+  displayRanges: [],
   colorIndexes: new Uint8Array(),
   plotToken: 0,
   pointData: null,
@@ -212,6 +216,7 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   closeMetadata();
   clearMarkers();
   state.points = [];
+  state.displayRanges = [];
   state.colorIndexes = new Uint8Array();
   state.parquetCachePromise = null;
   setStatus("loading", "Reading TACO");
@@ -234,8 +239,12 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
 
     const identityColumns = ["internal:current_id", centroidField];
     if (dataset.container === "tacocat") identityColumns.push("internal:source_file");
-    const sampleRows = await dataset.readLevel("sample", { columns: identityColumns });
-    const rows = sampleRows.map(sampleRowFromMetadata);
+    const sampleRows = await dataset.levelRowCount("sample");
+    const displayRanges = displayRowRanges(sampleRows, pointDisplayLimit());
+    const displayedRows = await readLevelRanges(dataset, "sample", {
+      columns: identityColumns,
+    }, displayRanges);
+    const rows = displayedRows.map(sampleRowFromMetadata);
     const points = rows.flatMap((row) => {
       const centroid = decodeWkbPoint(row[centroidField]);
       if (!centroid) return [];
@@ -250,12 +259,13 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
     state.currentUrl = url;
     state.dataset = dataset;
     state.points = points;
+    state.displayRanges = displayRanges;
     state.colorIndexes = new Uint8Array(points.length);
     populatePlotFields(sampleFields);
     renderDataset(url, index);
     await renderPoints();
-    setStatus("ready", `${points.length} points · caching metadata`);
-    state.parquetCachePromise = cacheParquets(dataset, token, points.length);
+    setStatus("ready", `${displayCountLabel(points.length, sampleRows)} · caching metadata`);
+    state.parquetCachePromise = cacheParquets(dataset, token, points.length, sampleRows);
   } catch (error) {
     if (token === state.loadToken) fail(error);
   } finally {
@@ -266,14 +276,62 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   }
 }
 
-async function cacheParquets(dataset, token, pointCount) {
+async function cacheParquets(dataset, token, pointCount, sampleRows) {
   if (typeof dataset.cacheLevel !== "function") return;
   try {
     await Promise.all(dataset.levels.map((level) => dataset.cacheLevel(level)));
-    if (token === state.loadToken && dataset === state.dataset) setStatus("ready", `${pointCount} points`);
+    if (token === state.loadToken && dataset === state.dataset) {
+      setStatus("ready", displayCountLabel(pointCount, sampleRows));
+    }
   } catch (error) {
     if (token === state.loadToken && dataset === state.dataset) showMessage(messageOf(error));
   }
+}
+
+function pointDisplayLimit() {
+  return window.matchMedia("(max-width: 760px)").matches
+    ? MOBILE_POINT_LIMIT
+    : DESKTOP_POINT_LIMIT;
+}
+
+function displayRowRanges(totalRows, limit) {
+  if (!Number.isSafeInteger(totalRows) || totalRows < 0) {
+    throw new RangeError("The sample row count is invalid.");
+  }
+  if (totalRows === 0) return [];
+  const displayedRows = Math.min(totalRows, limit);
+  if (displayedRows === totalRows) return [{ start: 0, end: totalRows }];
+
+  const windowCount = Math.min(DISPLAY_WINDOWS, displayedRows);
+  const rowsPerWindow = Math.floor(displayedRows / windowCount);
+  const remainder = displayedRows % windowCount;
+  const ranges = [];
+  for (let index = 0; index < windowCount; index += 1) {
+    const segmentStart = Math.floor((index * totalRows) / windowCount);
+    const segmentEnd = Math.floor(((index + 1) * totalRows) / windowCount);
+    const size = rowsPerWindow + (index < remainder ? 1 : 0);
+    const start = segmentStart + Math.floor((segmentEnd - segmentStart - size) / 2);
+    ranges.push({ start, end: start + size });
+  }
+  return ranges;
+}
+
+async function readLevelRanges(dataset, level, options, ranges) {
+  if (!ranges.length) return [];
+  const pages = await Promise.all(
+    ranges.map((range) => dataset.readLevel(level, {
+      ...options,
+      rowStart: range.start,
+      rowEnd: range.end,
+    })),
+  );
+  return pages.flat();
+}
+
+function displayCountLabel(displayedRows, totalRows) {
+  const displayed = displayedRows.toLocaleString();
+  if (displayedRows < totalRows) return `${displayed} of ${totalRows.toLocaleString()} points`;
+  return `${displayed} points`;
 }
 
 function sampleRowFromMetadata(row) {
@@ -391,7 +449,7 @@ async function loadPlotField(field) {
     } else {
       const columns = ["internal:current_id", field];
       if (state.dataset.container === "tacocat") columns.push("internal:source_file");
-      const rows = await state.dataset.readLevel("sample", { columns });
+      const rows = await readLevelRanges(state.dataset, "sample", { columns }, state.displayRanges);
       if (token !== state.plotToken) return;
       analysis = analyzePlotValues(rows, field, state.sampleFields[field], state.plotMode);
       state.colorIndexes = analysis.colors;

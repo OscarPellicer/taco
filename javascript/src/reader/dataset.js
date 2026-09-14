@@ -2,7 +2,7 @@ import { matchLeaf } from "../contract/structure.js";
 import { fail } from "../errors.js";
 import { matchesFilter } from "./filter.js";
 import { TacoAsset } from "../container/asset.js";
-import { TacoParquet, PROTECTED_LOCATION_COLUMNS } from "../container/parquet.js?v=15";
+import { TacoParquet, PROTECTED_LOCATION_COLUMNS } from "../container/parquet.js";
 import { basename, contractPath, parentLevel } from "../container/paths.js";
 import { safeInteger } from "./source.js";
 
@@ -82,12 +82,20 @@ export class Dataset {
     return (await this.#levelReader(level)).read(options);
   }
 
-  /** Cache one complete compressed metadata Parquet without decoding its rows. */
+  /** @param {string} level Cache one complete compressed metadata Parquet without decoding its rows. */
   async cacheLevel(level) {
     if (typeof level !== "string" || !this.levels.includes(level)) {
       fail("UNKNOWN_LEVEL", `unknown metadata level ${JSON.stringify(level)}`);
     }
     await (await this.#levelReader(level)).cache();
+  }
+
+  /** @param {string} level Return the number of rows in one metadata level without decoding it. */
+  async levelRowCount(level) {
+    if (typeof level !== "string" || !this.levels.includes(level)) {
+      fail("UNKNOWN_LEVEL", `unknown metadata level ${JSON.stringify(level)}`);
+    }
+    return (await this.#levelReader(level)).rowCount();
   }
 
   /**
