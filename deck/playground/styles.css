@@ -60,8 +60,6 @@ main { position: relative; height: calc(100% - 66px); }
 .leaflet-control-zoom a { color: var(--ink) !important; background: rgba(255, 255, 255, .96) !important; }
 .leaflet-tooltip { border: 1px solid var(--line-strong); border-radius: 2px; padding: 6px 8px; box-shadow: var(--shadow); color: var(--ink); background: #fff; font-size: 11px; }
 .leaflet-tooltip::before { display: none; }
-.sample-cluster { display: grid; place-items: center; border: 2px solid #fff; border-radius: 50%; color: #fff; background: rgba(15, 118, 110, .9); box-shadow: 0 2px 7px rgba(31, 39, 27, .2); }
-.sample-cluster span { font: 700 8px/1 var(--mono); letter-spacing: -.03em; }
 
 .legend { position: absolute; z-index: 600; left: 16px; bottom: 24px; display: flex; gap: 11px; border: 1px solid var(--line); border-radius: 2px; padding: 8px 10px; color: var(--muted); background: rgba(255, 255, 255, .94); box-shadow: 0 3px 10px rgba(31, 39, 27, .06); font: 10px/1 var(--mono); }
 .legend span { display: flex; align-items: center; gap: 5px; }
