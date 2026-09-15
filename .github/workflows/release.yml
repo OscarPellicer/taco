@@ -147,7 +147,7 @@ jobs:
       - name: Install container build tools
         if: runner.os == 'Linux'
         run: |
-          dnf install -y zip unzip
+          dnf install -y kernel-headers perl-IPC-Cmd zip unzip
           git config --global --add safe.directory "$PWD"
 
       - name: Set release paths (Unix)

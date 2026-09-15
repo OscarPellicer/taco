@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <memory>
 #include <regex>
 #include <set>
 
@@ -15,8 +16,17 @@ bool is_separator(char c) noexcept {
 }
 
 std::string environment(const char* name) {
+#if defined(_WIN32)
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0)
+        return {};
+    const std::unique_ptr<char, decltype(&std::free)> owned(value, &std::free);
+    return owned ? std::string(owned.get()) : std::string();
+#else
     const char* value = std::getenv(name);
     return value ? std::string(value) : std::string();
+#endif
 }
 
 std::string replace_all(std::string_view text, std::string_view from, std::string_view to) {
