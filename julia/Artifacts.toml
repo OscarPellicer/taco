@@ -1,1 +1,52 @@
-# Filled with checksums for the current release by .github/workflows/release.yml.
+[[taco]]
+arch = "aarch64"
+os = "linux"
+libc = "glibc"
+git-tree-sha1 = "c54a98853196bef8b2bb24da19d45b47fc42deaa"
+lazy = true
+
+    [[taco.download]]
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.7.0/libtaco-0.7.0-linux-aarch64.tar.gz"
+    sha256 = "6dde82d765f159ccc6f6b66818869c403a9ab59fd4dfdcab851d10372ce229eb"
+
+[[taco]]
+arch = "x86_64"
+os = "linux"
+libc = "glibc"
+git-tree-sha1 = "9c2e379b72633c64a626c08b80d60b92641c5843"
+lazy = true
+
+    [[taco.download]]
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.7.0/libtaco-0.7.0-linux-x86_64.tar.gz"
+    sha256 = "1842d8f6be52bedbb913079e73e551d5c21218caf132542a48177b7a515df349"
+
+[[taco]]
+arch = "aarch64"
+os = "macos"
+git-tree-sha1 = "06522b2b8e98ec84133d61a1b5a6f614f1173296"
+lazy = true
+
+    [[taco.download]]
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.7.0/libtaco-0.7.0-macos-aarch64.tar.gz"
+    sha256 = "8f167cb2c606608fcbb6102c0a877b8af8253b94912009a4d7496654d26b9512"
+
+[[taco]]
+arch = "x86_64"
+os = "macos"
+git-tree-sha1 = "9e164590c40ae9d8aa2b77ead9922f13865a7576"
+lazy = true
+
+    [[taco.download]]
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.7.0/libtaco-0.7.0-macos-x86_64.tar.gz"
+    sha256 = "33303c23feeae74c1647bc329fb6ac5c55020d87237f79bcdb58bb02145806dc"
+
+[[taco]]
+arch = "x86_64"
+os = "windows"
+git-tree-sha1 = "400f6f9d1fb76e15df8107ca53066331e82256d0"
+lazy = true
+
+    [[taco.download]]
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.7.0/libtaco-0.7.0-windows-x86_64.tar.gz"
+    sha256 = "6532b8c1dd9cb8adcdf64cf70b6e76f67ecd638af4812fbfb72f1b6eb5886b1d"
+
