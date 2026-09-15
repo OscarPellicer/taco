@@ -1,8 +1,9 @@
-#include <taco/taco.h>
-
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/Rdynload.h>
+
+#ifndef __EMSCRIPTEN__
+#include <taco/taco.h>
 
 static void core_error(void) {
     Rf_error("%s", taco_last_error());
@@ -141,6 +142,57 @@ SEXP taco_r_resolve(SEXP source) {
         core_error();
     return take_string(resolution);
 }
+#else
+static SEXP wasm_unavailable(void) {
+    Rf_error("the native TACO core is not available on WebAssembly");
+    return R_NilValue;
+}
+
+SEXP taco_r_shutdown(void) {
+    return R_NilValue;
+}
+
+SEXP taco_r_open(SEXP source) {
+    (void)source;
+    return wasm_unavailable();
+}
+
+SEXP taco_r_dataset(SEXP pointer) {
+    (void)pointer;
+    return wasm_unavailable();
+}
+
+SEXP taco_r_sql(SEXP datasets, SEXP idx, SEXP level, SEXP pivoted, SEXP files, SEXP location) {
+    (void)datasets;
+    (void)idx;
+    (void)level;
+    (void)pivoted;
+    (void)files;
+    (void)location;
+    return wasm_unavailable();
+}
+
+SEXP taco_r_profile(SEXP source) {
+    (void)source;
+    return wasm_unavailable();
+}
+
+SEXP taco_r_manifest_candidate(SEXP source) {
+    (void)source;
+    return wasm_unavailable();
+}
+
+SEXP taco_r_join_manifest_href(SEXP candidate, SEXP href) {
+    (void)candidate;
+    (void)href;
+    return wasm_unavailable();
+}
+
+SEXP taco_r_resolve(SEXP source) {
+    (void)source;
+    return wasm_unavailable();
+}
+#endif
 
 static const R_CallMethodDef methods[] = {
     {"taco_r_shutdown", (DL_FUNC)&taco_r_shutdown, 0},
@@ -154,8 +206,10 @@ static const R_CallMethodDef methods[] = {
     {NULL, NULL, 0}};
 
 void R_init_taco(DllInfo* dll) {
+#ifndef __EMSCRIPTEN__
     if (taco_api_version() != TACO_API_VERSION)
         Rf_error("libtaco has C API %d, this package needs %d", taco_api_version(), TACO_API_VERSION);
+#endif
     R_registerRoutines(dll, NULL, methods, NULL, NULL);
     R_useDynamicSymbols(dll, FALSE);
     R_forceSymbols(dll, TRUE);

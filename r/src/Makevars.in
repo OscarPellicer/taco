@@ -1,7 +1,6 @@
 OBJECTS = taco.o @NATIVE_OBJECTS@
 
-PKG_CFLAGS = @TACO_THREAD_FLAGS@
-PKG_CXXFLAGS = @TACO_CXX23_FLAG@ @TACO_THREAD_FLAGS@
+PKG_CXXFLAGS = @TACO_CXX23_FLAG@
 
 PKG_CPPFLAGS = \
     -include taco_versions.h \
@@ -13,4 +12,4 @@ PKG_CPPFLAGS = \
     -Ivendor/karu/include \
     -Ivendor/karu/src \
     @DEPENDENCY_CPPFLAGS@
-PKG_LIBS = @DEPENDENCY_LIBS@ -pthread
+PKG_LIBS = @DEPENDENCY_LIBS@ @TACO_THREAD_LIBS@
