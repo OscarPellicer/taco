@@ -41,13 +41,9 @@ function _open_dataset(source)
     collection = resolution.collection
     levels = String[]
     if collection === nothing
-        collection, levels = _with_reader() do con
-            parsed = _parse_collection.(_collection_documents(con, sources))
-            collections = first.(parsed)
-            parsed_levels = last.(parsed)
-            merged = _merge_collections(collections, parsed_levels, sources)
-            merged, first(parsed_levels)
-        end
+        parsed = _parse_collection.(_collection_documents(sources))
+        collection = _merge_collections(first.(parsed), last.(parsed), sources)
+        levels = last(first(parsed))
     else
         levels = resolution.levels
     end

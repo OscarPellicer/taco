@@ -1,8 +1,5 @@
-function _collection_documents(con, sources)
-    branches = ["SELECT $index AS position, taco_collection(?) AS document" for index in eachindex(sources)]
-    sql = join(branches, " UNION ALL ") * " ORDER BY position"
-    frame = _dataframe(con, sql, Any[sources...])
-    return String.(frame[!, "document"])
+function _collection_documents(sources)
+    return [_native_collection(_open_native(source)) for source in sources]
 end
 
 

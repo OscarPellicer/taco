@@ -7,6 +7,10 @@ using Pkg
 Pkg.add(url="https://github.com/asterisk-labs/taco", subdir="julia")
 ```
 
+Taco.jl downloads the matching native library from the TACO release on first
+use. A development build can be selected explicitly with the `TACO_LIB`
+environment variable.
+
 ```julia
 using Taco
 

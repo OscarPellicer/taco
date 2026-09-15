@@ -23,12 +23,3 @@ end
 
 _normalize_sources(source) =
     throw(ArgumentError("taco: `source` must be a path or a vector of paths"))
-
-
-function _source_labels(sources)
-    labels = basename.(rstrip.(sources, '/'))
-    if all(!isempty, labels) && length(unique(labels)) == length(labels)
-        return labels
-    end
-    return sources
-end

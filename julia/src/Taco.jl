@@ -1,5 +1,6 @@
 module Taco
 
+include("reader/native.jl")
 include("reader/source.jl")
 include("reader/manifest.jl")
 include("reader/engine.jl")
