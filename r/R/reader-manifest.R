@@ -40,6 +40,6 @@
     collection = resolution$collection,
     version = resolution$version,
     versions = as.character(unlist(resolution$versions)),
-    manifest = resolution$manifest
+    manifest = .local_path(resolution$manifest)
   )
 }

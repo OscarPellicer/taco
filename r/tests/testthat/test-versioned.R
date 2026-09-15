@@ -46,7 +46,7 @@ describe("versioned dataset discovery", {
     expect_identical(dataset$collection$dataset_version, "2.0.0")
     expect_identical(dataset$version, "2.0.0")
     expect_identical(dataset$versions, c("1.0.0", "2.0.0"))
-    expect_identical(dataset$manifest, manifest_path)
+    expect_identical(dataset$manifest, normalizePath(manifest_path, mustWork = FALSE))
   })
 
   it("accepts an explicit taco.json path", {
@@ -57,7 +57,7 @@ describe("versioned dataset discovery", {
     dataset <- taco::open_dataset(path)
 
     expect_identical(dataset$version, "2.0.0")
-    expect_identical(dataset$manifest, path)
+    expect_identical(dataset$manifest, normalizePath(path, mustWork = FALSE))
   })
 
   it("resolves read calls to the default version", {

@@ -11,3 +11,10 @@
 
 # ---- Documentation: website and source material ----
 docs/**                 linguist-documentation
+
+# R's source checks require Unix line endings for portable shell inputs.
+r/configure              text eol=lf
+r/configure.ac           text eol=lf
+r/cleanup                text eol=lf
+r/configure.win          text eol=lf
+r/cleanup.win            text eol=lf
