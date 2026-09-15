@@ -1,3 +1,4 @@
+import os
 import platform
 import shutil
 import subprocess
@@ -65,23 +66,30 @@ def _compile_native(source: Path, destination: Path) -> None:
 
     with tempfile.TemporaryDirectory(prefix="taco-native-") as temporary:
         build = Path(temporary)
+        environment = os.environ.copy()
+        configure = [
+            cmake,
+            "-S",
+            str(source),
+            "-B",
+            str(build),
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DTACO_BUILD_TESTS=OFF",
+        ]
+        if sys.platform == "darwin":
+            deployment_target = environment.setdefault("MACOSX_DEPLOYMENT_TARGET", "11.0")
+            configure.append(f"-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}")
         subprocess.run(
-            [
-                cmake,
-                "-S",
-                str(source),
-                "-B",
-                str(build),
-                "-G",
-                "Ninja",
-                "-DCMAKE_BUILD_TYPE=Release",
-                "-DTACO_BUILD_TESTS=OFF",
-            ],
+            configure,
             check=True,
+            env=environment,
         )
         subprocess.run(
             [cmake, "--build", str(build), "--target", "taco", "--config", "Release"],
             check=True,
+            env=environment,
         )
 
         candidates = list(build.rglob(_library_name()))

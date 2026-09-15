@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
+cmake_policy(SET CMP0091 NEW)
 
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/include/taco/taco.h"
     TACO_API_VERSION_LINE REGEX "^#define TACO_API_VERSION [0-9]+$")
@@ -11,6 +12,9 @@ project(taco
     DESCRIPTION "Native TACO reader shared by the Python, R and Julia packages"
     LANGUAGES   CXX C
 )
+
+# The release DLL and its vcpkg dependencies must use the same dynamic CRT.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
 option(TACO_BUILD_TESTS "Build the core tests" OFF)
 option(TACO_WERROR      "Treat warnings in the core as errors" OFF)
