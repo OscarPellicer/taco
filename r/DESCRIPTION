@@ -4,18 +4,18 @@ Title: Read TACO Datasets
 Version: 0.7.0
 Authors@R: person("Cesar", "Aybar", email = "cesar@asterisk.coop",
     role = c("aut", "cre"))
-Description: Read TACO v3 datasets through the DuckDB 'cozip' extension.
-    The package exposes dataset contracts and reads ZIP, FOLDER, and TACOCAT
-    containers through one API.
+Description: Read TACO v3 datasets through the native TACO core. The core
+    resolves ZIP, FOLDER, and TACOCAT containers, local or remote, and the
+    package reads their metadata with DuckDB through one API.
 License: MIT + file LICENSE
 URL: https://github.com/asterisk-labs/taco
 BugReports: https://github.com/asterisk-labs/taco/issues
 Encoding: UTF-8
 Language: en-US
+SystemRequirements: C++23, libcurl (>= 7.83.0), OpenSSL (>= 3.0)
 Depends:
     R (>= 4.1)
 Imports:
-    curl,
     duckdb (>= 1.5.5),
     DBI,
     jsonlite,

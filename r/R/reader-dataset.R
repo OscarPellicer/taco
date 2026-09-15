@@ -30,9 +30,7 @@ open_dataset <- function(source) {
   sources <- resolution$sources
   collection <- resolution$collection
   if (is.null(collection)) {
-    collections <- .open_reader() |>
-      .collection_documents(sources) |>
-      lapply(.parse_collection)
+    collections <- lapply(.collection_documents(sources), .parse_collection)
     collection <- .merge_collections(collections, sources)
   }
   version <- resolution$version

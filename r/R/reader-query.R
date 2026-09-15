@@ -20,7 +20,7 @@
 
 .idx_text <- function(idx) {
   if (is.null(idx)) {
-    return(NA_character_)
+    return(NULL)
   }
   values <- format(idx, scientific = FALSE, trim = TRUE, digits = 22)
   if (length(values) == 1L) values else sprintf("[%s, %s]", values[1L], values[2L])
@@ -41,55 +41,6 @@
 }
 
 
-.LOCATION_COLUMN <- "taco:location"
-.LEGACY_LOCATION_COLUMN <- "cozip:gdal_vsi"
-
-
-.read_call <- function(location_argument) {
-  paste0(
-    "read_taco(?, idx := ?::VARCHAR, level := ?::VARCHAR, ",
-    "pivoted := ?::BOOLEAN, files := ?::VARCHAR[], ", location_argument,
-    " := ?::BOOLEAN)"
-  )
-}
-
-
-.read_options <- function(idx, level, layout, files, location) {
-  list(
-    .idx_text(idx),
-    if (is.null(level)) NA_character_ else level,
-    layout == "wide",
-    if (is.null(files)) NA_character_ else list(files),
-    location
-  )
-}
-
-
-.legacy_taco_signature <- function(message) {
-  grepl("read_taco", message, fixed = TRUE) &&
-    grepl("gdal_vsi", message, fixed = TRUE) &&
-    grepl("does not support the supplied arguments", message, fixed = TRUE)
-}
-
-
-.normalize_locations <- function(result, location, level, layout, legacy) {
-  preserve_current <- !legacy && location && is.null(level) && layout == "long"
-  drop <- intersect("cozip:location", names(result))
-  if (!preserve_current && .LOCATION_COLUMN %in% names(result)) {
-    drop <- c(drop, .LOCATION_COLUMN)
-  }
-  preserve_legacy <- legacy && location && is.null(level) && layout == "long"
-  if (!preserve_legacy && .LEGACY_LOCATION_COLUMN %in% names(result)) {
-    drop <- c(drop, .LEGACY_LOCATION_COLUMN)
-  }
-  if (length(drop)) result <- result[setdiff(names(result), drop)]
-  if (preserve_legacy && .LEGACY_LOCATION_COLUMN %in% names(result)) {
-    names(result)[names(result) == .LEGACY_LOCATION_COLUMN] <- .LOCATION_COLUMN
-  }
-  tibble::as_tibble(result)
-}
-
-
 .read_table <- function(source, layout, idx, level, files, location) {
   .normalize_sources(source)
   layout <- match.arg(layout, c("wide", "long"))
@@ -103,43 +54,7 @@
     .taco_stop("`location` must be TRUE or FALSE")
   }
 
-  options <- .read_options(idx, level, layout, files, location)
-  con <- .open_reader()
-  build_query <- function(location_argument) {
-    call <- .read_call(location_argument)
-    if (length(source) == 1L) {
-      return(paste("SELECT * FROM", call))
-    }
-    projection <- if (is.null(level)) {
-      "taco.sample_id, ?::VARCHAR AS source_file, taco.* EXCLUDE (sample_id)"
-    } else {
-      "?::VARCHAR AS source_file, taco.*"
-    }
-    branch <- paste("SELECT", projection, "FROM", call, "AS taco")
-    paste(rep(branch, length(source)), collapse = " UNION ALL BY NAME ")
-  }
-  if (length(source) == 1L) {
-    params <- c(list(source), options)
-  } else {
-    params <- unname(
-      unlist(
-        Map(
-          function(label, path) c(list(label, path), options),
-          .source_labels(source),
-          source
-        ),
-        recursive = FALSE
-      )
-    )
-  }
-  legacy <- FALSE
-  result <- tryCatch(
-    DBI::dbGetQuery(con, build_query("location"), params = params),
-    error = function(err) {
-      if (!.legacy_taco_signature(conditionMessage(err))) stop(err)
-      legacy <<- TRUE
-      DBI::dbGetQuery(con, build_query("gdal_vsi"), params = params)
-    }
-  )
-  .normalize_locations(result, location, level, layout, legacy)
+  datasets <- lapply(source, function(path) .Call(taco_r_open, path))
+  sql <- .Call(taco_r_sql, datasets, .idx_text(idx), level, layout == "wide", files, location)
+  tibble::as_tibble(DBI::dbGetQuery(.open_reader(), sql))
 }

@@ -1,0 +1,53 @@
+CXX_STD = CXX23
+
+OBJECTS = \
+    taco.o \
+    vendor/taco/src/capi.o \
+    vendor/taco/src/cozip_index.o \
+    vendor/taco/src/dataset.o \
+    vendor/taco/src/json.o \
+    vendor/taco/src/manifest.o \
+    vendor/taco/src/paths.o \
+    vendor/taco/src/sql.o \
+    vendor/taco/src/transport.o \
+    vendor/karu/src/config.o \
+    vendor/karu/src/credential_cache.o \
+    vendor/karu/src/error.o \
+    vendor/karu/src/karu.o \
+    vendor/karu/src/platform.o \
+    vendor/karu/src/process.o \
+    vendor/karu/src/request_builder.o \
+    vendor/karu/src/uri.o \
+    vendor/karu/src/backends/aws_profile.o \
+    vendor/karu/src/backends/azure.o \
+    vendor/karu/src/backends/azure_credentials.o \
+    vendor/karu/src/backends/credentials.o \
+    vendor/karu/src/backends/crypto.o \
+    vendor/karu/src/backends/gcs.o \
+    vendor/karu/src/backends/gcs_credentials.o \
+    vendor/karu/src/backends/http.o \
+    vendor/karu/src/backends/hugging_face.o \
+    vendor/karu/src/backends/registry.o \
+    vendor/karu/src/backends/s3.o \
+    vendor/karu/src/backends/s3_credentials.o \
+    vendor/karu/src/backends/s3_signing.o \
+    vendor/karu/src/backends/source.o \
+    vendor/karu/src/backends/source_credentials.o \
+    vendor/karu/src/backends/url.o \
+    vendor/karu/src/runtime/batch.o \
+    vendor/karu/src/runtime/engine.o \
+    vendor/karu/src/runtime/http_response.o \
+    vendor/karu/src/runtime/planner.o \
+    vendor/karu/src/runtime/transport.o
+
+PKG_CPPFLAGS = \
+    -include taco_versions.h \
+    -DTACO_BUILD \
+    -DKARU_STATIC \
+    -DWIN32_LEAN_AND_MEAN \
+    -Ivendor/taco/include \
+    -Ivendor/taco/src \
+    -Ivendor/karu/include \
+    -Ivendor/karu/src \
+    @DEPENDENCY_CPPFLAGS@
+PKG_LIBS = @DEPENDENCY_LIBS@ -lws2_32

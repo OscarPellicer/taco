@@ -6,7 +6,7 @@
 \alias{taco-package}
 \title{taco: Read TACO Datasets}
 \description{
-Read TACO v3 datasets through the DuckDB 'cozip' extension. The package exposes dataset contracts and reads ZIP, FOLDER, and TACOCAT containers through one API.
+Read TACO v3 datasets through the native TACO core. The core resolves ZIP, FOLDER, and TACOCAT containers, local or remote, and the package reads their metadata with DuckDB through one API.
 }
 \seealso{
 Useful links:

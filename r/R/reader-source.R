@@ -8,9 +8,3 @@
   }
   source
 }
-
-
-.source_labels <- function(sources) {
-  labels <- basename(sub("/+$", "", sources))
-  if (all(nzchar(labels)) && !anyDuplicated(labels)) labels else sources
-}

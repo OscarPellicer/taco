@@ -1,0 +1,22 @@
+#!/bin/sh
+
+set -eu
+
+if ! command -v pkg-config >/dev/null 2>&1; then
+    echo "configure.win: pkg-config is required to find libcurl and OpenSSL" >&2
+    exit 1
+fi
+if ! pkg-config --exists 'libcurl >= 7.83.0' 'openssl >= 3.0'; then
+    echo "configure.win: libcurl >= 7.83.0 and OpenSSL >= 3.0 are required" >&2
+    exit 1
+fi
+
+dependency_cppflags=$(pkg-config --cflags libcurl openssl)
+dependency_libs=$(pkg-config --libs libcurl openssl)
+escaped_cppflags=$(printf '%s' "$dependency_cppflags" | sed 's/[&|]/\\&/g')
+escaped_libs=$(printf '%s' "$dependency_libs" | sed 's/[&|]/\\&/g')
+
+sed \
+    -e "s|@DEPENDENCY_CPPFLAGS@|$escaped_cppflags|g" \
+    -e "s|@DEPENDENCY_LIBS@|$escaped_libs|g" \
+    src/Makevars.win.in > src/Makevars.win

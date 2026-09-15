@@ -115,7 +115,7 @@ describe("versioned dataset discovery", {
   it("rejects invalid manifests", {
     cases <- list(
       list(change = function(x) { x[["taco:container"]] <- "zip"; x }, message = "taco:container"),
-      list(change = function(x) { x[["taco:versions"]] <- list(); x }, message = "at least one"),
+      list(change = function(x) { x[["taco:versions"]] <- setNames(list(), character()); x }, message = "at least one"),
       list(change = function(x) { x[["taco:default_version"]] <- "3.0.0"; x }, message = "not present"),
       list(change = function(x) {
         x[["taco:versions"]][["latest"]] <- x[["taco:versions"]][["1.0.0"]]

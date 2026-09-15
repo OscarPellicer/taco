@@ -1,10 +1,10 @@
-.collection_documents <- function(con, sources) {
-  branches <- sprintf(
-    "SELECT %d AS position, taco_collection(?) AS document",
-    seq_along(sources)
+.collection_documents <- function(sources) {
+  vapply(
+    sources,
+    function(source) .Call(taco_r_dataset, .Call(taco_r_open, source))[["collection"]],
+    character(1),
+    USE.NAMES = FALSE
   )
-  sql <- paste(paste(branches, collapse = " UNION ALL "), "ORDER BY position")
-  DBI::dbGetQuery(con, sql, params = as.list(sources))[["document"]]
 }
 
 
