@@ -393,7 +393,7 @@ void test_manifest() {
     CHECK(value.find("manifest")->string == (root / "taco.json").generic_string());
     CHECK(value.find("collection")->find("dataset_version")->string == "2.0.0");
     CHECK(taco::json::parse(taco::resolve_dataset((root / "taco.json").string())).find("manifest")->string ==
-          (root / "taco.json").generic_string());
+          (root / "taco.json").string());
 
     const auto direct = taco::json::parse(taco::resolve_dataset(data("taco_flat.zip")));
     CHECK(direct.find("source")->string == data("taco_flat.zip"));
