@@ -5,6 +5,13 @@ All notable changes to `taco` are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- `open_dataset()` and `read()` resolve versioned dataset roots through one
+  `taco.json` read, select the declared default, and use the embedded collection
+  without fetching a second collection document. Immutable versions remain
+  directly addressable through their own URLs.
+
 ## 0.6.3 - 2026-09-13
 
 ### Fixed

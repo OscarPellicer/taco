@@ -4,18 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TACO — Transparent Access to Cloud Optimized Datasets</title>
-  <link rel="stylesheet" href="css/variables.css">
-  <link rel="stylesheet" href="css/animations.css">
-  <link rel="stylesheet" href="css/hero.css">
-  <link rel="stylesheet" href="css/labels.css">
+  <link rel="stylesheet" href="css/variables.css?v=3">
+  <link rel="stylesheet" href="css/animations.css?v=3">
+  <link rel="stylesheet" href="css/hero.css?v=3">
+  <link rel="stylesheet" href="css/labels.css?v=5">
 </head>
 <body>
   <nav class="top-nav" aria-label="TACO resources">
-    <a href="api/">API</a>
-    <a href="spec/">Spec</a>
-    <a href="playground/">Playground</a>
-    <a href="onepager/">One-pager</a>
-    <a href="https://github.com/asterisk-labs/taco">GitHub</a>
+    <a href="api/" aria-label="API" data-label="API">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="5" width="26" height="22" rx="4"/><path d="m9 13 4 3-4 3M16 20h7"/></svg>
+    </a>
+    <a href="spec/" aria-label="Specification" data-label="Spec">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 6.5c6-2 9 .5 11 2.5v18c-2-2-5-4.5-11-2.5zM27 6.5c-6-2-9 .5-11 2.5v18c2-2 5-4.5 11-2.5z"/><path d="M9 11.5h3.5M9 16h3.5M19.5 11.5H23M19.5 16H23"/></svg>
+    </a>
+    <a href="playground/" aria-label="Playground" data-label="Playground">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="12"/><path d="m20.5 11.5-3 6-6 3 3-6z"/><circle cx="16" cy="16" r="1.2" class="icon-fill"/></svg>
+    </a>
+    <a href="onepager/" aria-label="One-pager" data-label="One-pager">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 6h22v20H5zM9 10h14M9 15h6v7H9zM18 15h5M18 19h5M18 23h5"/></svg>
+    </a>
+    <a href="https://github.com/asterisk-labs/taco" aria-label="GitHub" data-label="GitHub">
+      <svg class="github-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3.5A12.8 12.8 0 0 0 12 28.4c.6.1.8-.3.8-.6v-2.5c-3.5.8-4.2-1.5-4.2-1.5-.6-1.4-1.4-1.8-1.4-1.8-1.1-.8.1-.8.1-.8 1.3.1 2 1.3 2 1.3 1.1 2 3 1.4 3.7 1.1.1-.8.4-1.4.8-1.7-2.8-.3-5.7-1.4-5.7-6.3 0-1.4.5-2.5 1.3-3.4-.1-.3-.6-1.6.1-3.4 0 0 1.1-.3 3.5 1.3a12.2 12.2 0 0 1 6.4 0c2.4-1.6 3.5-1.3 3.5-1.3.7 1.8.2 3.1.1 3.4.8.9 1.3 2 1.3 3.4 0 4.9-3 6-5.8 6.3.5.4.9 1.2.9 2.4v3.6c0 .4.2.7.9.6A12.8 12.8 0 0 0 16 3.5z"/></svg>
+    </a>
   </nav>
   <div class="hero" id="hero">
     <canvas id="sky"></canvas>
@@ -23,15 +33,15 @@
     <div class="nebula n2"></div>
     <div class="nebula n3"></div>
 
-    <div class="label top l1">COG<span class="tip">Cloud Optimized GeoTIFF</span></div>
-    <div class="label bot l2">CoZIP<span class="tip">Cloud Optimized ZIP</span></div>
-    <div class="label top l3">Parquet<span class="tip">Columnar metadata storage</span></div>
-    <div class="label bot l4">GDAL<span class="tip">Geospatial Data Abstraction Library</span></div>
-    <div class="label top l5">DuckDB<span class="tip">In-process SQL analytics engine</span></div>
-    <div class="label top l6">STAC<span class="tip">SpatioTemporal Asset Catalog</span></div>
-    <div class="label top l7">Kerchunk<span class="tip">References for cloud-native scientific data</span></div>
-    <div class="label bot l8">Portolan<span class="tip">Geospatial data infrastructure</span></div>
-    <div class="label bot l9">Rumi<span class="tip">Compressed multidimensional arrays</span></div>
+    <a class="label top l1" href="https://cogeo.org/">COG<span class="tip">Cloud Optimized GeoTIFF</span></a>
+    <a class="label bot l2" href="https://asterisk.coop/cozip/">CoZIP<span class="tip">Cloud Optimized ZIP</span></a>
+    <a class="label top l3" href="https://parquet.apache.org/">Parquet<span class="tip">Columnar metadata storage</span></a>
+    <a class="label bot l4" href="https://gdal.org/">GDAL<span class="tip">Geospatial Data Abstraction Library</span></a>
+    <a class="label top l5" href="https://duckdb.org/">DuckDB<span class="tip">In-process SQL analytics engine</span></a>
+    <a class="label top l6" href="https://stacspec.org/">STAC<span class="tip">SpatioTemporal Asset Catalog</span></a>
+    <a class="label top l7" href="https://fsspec.github.io/kerchunk/">Kerchunk<span class="tip">References for cloud-native scientific data</span></a>
+    <a class="label top l8" href="https://www.portolan-sdi.org/">Portolan<span class="tip">Geospatial data infrastructure</span></a>
+    <a class="label top l9" href="https://asterisk.coop/rumi/">Rumi<span class="tip">Compressed multidimensional arrays</span></a>
 
     <div class="content">
       <div class="taco-system">
@@ -50,7 +60,7 @@
           <span class="title-main">TACO</span>
           <span class="title-version">V3</span>
         </div>
-        <div class="subtitle">Transparent Access to<br>Cloud Optimized Datasets</div>
+        <div class="subtitle">AI-ready Earth Observation datasets</div>
       </div>
     </div>
   </div>

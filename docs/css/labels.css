@@ -1,17 +1,26 @@
 /* === FLOATING LABELS === */
 .label {
-  position: absolute; font-size: .76rem; letter-spacing: 1.8px;
+  position: absolute; font-size: .58rem; letter-spacing: 1.35px;
   text-transform: uppercase; color: var(--label-color);
   z-index: 6; font-weight: 700; cursor: pointer; pointer-events: auto;
-  padding: 8px 14px; border-radius: 6px;
-  background: var(--label-bg); border: 1px solid transparent;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-decoration: none;
   transition: all .4s cubic-bezier(.175, .885, .32, 1.275);
 }
 
 .label:hover {
-  background: var(--label-hover-bg);
-  border-color: var(--label-hover-border);
-  text-shadow: 0 0 12px var(--label-glow);
+  animation-play-state: paused;
+  background: transparent;
+  box-shadow: none;
+  color: #fff;
+  opacity: 1 !important;
+  text-shadow:
+    0 0 5px rgb(255 255 255 / 88%),
+    0 0 14px rgb(100 180 255 / 95%),
+    0 0 28px rgb(100 180 255 / 70%) !important;
   transform: scale(1.12) translateY(-3px) !important;
 }
 
@@ -21,12 +30,11 @@
   transform: translate(-50%, 8px);
   width: max-content; max-width: 160px;
   white-space: normal; text-align: center; line-height: 1.5;
-  font-size: .6rem; color: var(--tip-color); letter-spacing: 1px;
+  font-size: .56rem; color: var(--tip-color); letter-spacing: .7px;
   text-transform: none; font-weight: 400;
-  background: var(--tip-bg); padding: 7px 10px; border-radius: 6px;
-  border: 1px solid var(--tip-border);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .15);
-  backdrop-filter: blur(8px);
+  background: transparent; padding: 7px 10px; border-radius: 0;
+  border: 0;
+  box-shadow: none;
   opacity: 0; visibility: hidden;
   transition: all .3s cubic-bezier(.4, 0, .2, 1);
 }
@@ -52,11 +60,11 @@
   animation: fade-in .5s ease forwards, drift 6s ease-in-out infinite, blink 5s infinite;
 }
 
-.l1 { animation-delay: .4s, .4s, 0s;   --dd: 6s;   }
+.l1 { animation-delay: .4s, .4s, 0s; --dd: 6s; }
 .l2 { animation-delay: .55s, .55s, 1.5s; --dd: 7.5s; }
-.l3 { animation-delay: .7s, .7s, .5s;   --dd: 7s;   }
-.l4 { animation-delay: .85s, .85s, 2s;  --dd: 5.5s; }
-.l5 { animation-delay: 1s, 1s, 1s;      --dd: 8s;   }
+.l3 { animation-delay: .7s, .7s, .5s; --dd: 7s; }
+.l4 { animation-delay: .85s, .85s, 2s; --dd: 5.5s; }
+.l5 { animation-delay: 1s, 1s, 1s; --dd: 8s; }
 .l6 { animation-delay: 1.15s, 1.15s, .3s; --dd: 6.5s; }
 .l7 { animation-delay: 1.3s, 1.3s, 1.8s; --dd: 7.2s; }
 .l8 { animation-delay: 1.45s, 1.45s, .8s; --dd: 6.8s; }

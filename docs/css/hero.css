@@ -25,33 +25,80 @@ body {
   width: max-content;
   max-width: calc(100vw - 2rem);
   justify-content: center;
-  gap: clamp(.75rem, 1.8vw, 1.55rem);
-  padding: .72rem 1.15rem;
+  gap: clamp(.9rem, 2.2vw, 1.8rem);
+  padding: 0;
   transform: translateX(-50%);
-  background: linear-gradient(180deg, rgb(34 39 67 / 72%), rgb(10 12 27 / 78%));
-  border: 1px solid rgb(180 215 255 / 18%);
-  border-radius: 999px;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 10%),
-    0 10px 35px rgb(0 0 0 / 35%),
-    0 0 24px rgb(80 150 255 / 7%);
-  backdrop-filter: blur(22px) saturate(135%);
 }
 
 .top-nav a {
+  position: relative;
+  display: grid;
+  width: 3.1rem;
+  height: 3.1rem;
+  place-items: center;
+  border-radius: .65rem;
   color: rgb(245 249 255 / 76%);
-  font-size: .68rem;
-  font-weight: 700;
-  letter-spacing: .08em;
   text-decoration: none;
+  filter: drop-shadow(0 .3rem .8rem rgb(0 0 0 / 40%));
+  transition: color .2s ease, transform .2s ease, filter .2s ease;
+}
+
+.top-nav svg {
+  width: 1.9rem;
+  height: 1.9rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: color .2s ease, filter .2s ease, transform .2s ease;
+}
+
+.top-nav .icon-fill { fill: currentColor; stroke: none; }
+.top-nav .github-mark { fill: currentColor; stroke: none; }
+
+.top-nav a::after {
+  position: absolute;
+  top: calc(100% + .62rem);
+  left: 50%;
+  padding: .34rem 0;
+  transform: translate(-50%, -.2rem);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #fff;
+  content: attr(data-label);
+  font-size: .58rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  opacity: 0;
+  pointer-events: none;
   text-transform: uppercase;
-  transition: color .2s ease, text-shadow .2s ease;
+  transition: opacity .16s ease, transform .16s ease;
+  white-space: nowrap;
 }
 
 .top-nav a:hover,
 .top-nav a:focus-visible {
   color: #fff;
-  text-shadow: 0 0 14px rgb(100 180 255 / 60%);
+  transform: translateY(-2px) scale(1.08);
+}
+
+.top-nav a:hover svg,
+.top-nav a:focus-visible svg {
+  filter:
+    drop-shadow(0 0 .22rem rgb(255 255 255 / 85%))
+    drop-shadow(0 0 .7rem rgb(100 180 255 / 95%));
+  transform: scale(1.08);
+}
+
+.top-nav a:hover::after,
+.top-nav a:focus-visible::after {
+  box-shadow: none;
+  opacity: 1;
+  text-shadow: 0 0 .5rem rgb(100 180 255 / 85%);
+  transform: translate(-50%, 0);
 }
 
 .top-nav a:focus-visible {
@@ -101,19 +148,19 @@ canvas#sky {
 
 /* === TACO SYSTEM === */
 .taco-system {
-  position: relative; width: 320px; height: 320px;
+  position: relative; width: 385px; height: 385px;
   display: flex; justify-content: center; align-items: center;
 }
 
 .taco-glow {
-  position: absolute; width: 150px; height: 150px; border-radius: 50%;
+  position: absolute; width: 182px; height: 182px; border-radius: 50%;
   background: radial-gradient(circle, var(--glow-color) 0%, var(--glow-color2) 50%, transparent 70%);
   animation: pulse 4s ease-in-out infinite; z-index: 0;
 }
 
 /* === MORPH (taco <-> earth) === */
 .morph-center {
-  position: relative; z-index: 1; width: 120px; height: 120px;
+  position: relative; z-index: 1; width: 145px; height: 145px;
   display: flex; justify-content: center; align-items: center;
   animation: float 6s ease-in-out infinite;
   filter: drop-shadow(0 0 30px var(--earth-shadow));
@@ -121,25 +168,25 @@ canvas#sky {
 
 .taco-emoji,
 .earth-emoji {
-  position: absolute; font-size: 6.5rem; line-height: 1;
+  position: absolute; font-size: 7.8rem; line-height: 1;
 }
 .taco-emoji  { animation: morph-taco 8s infinite; }
 .earth-emoji { animation: morph-planet 8s infinite; }
 
 /* === ORBIT === */
 .orbit-ring {
-  position: absolute; width: 270px; height: 270px;
+  position: absolute; width: 325px; height: 325px;
   border: 1px solid var(--orbit-color); border-radius: 50%; z-index: 3;
 }
 
 .sat-orbit {
-  position: absolute; width: 270px; height: 270px;
+  position: absolute; width: 325px; height: 325px;
   animation: spin 12s linear infinite; z-index: 4;
 }
 
 .satellite {
   position: absolute; top: -18px; left: calc(50% - 18px);
-  font-size: 1.8rem; line-height: 1;
+  font-size: 2.15rem; line-height: 1;
   animation: counter-spin 12s linear infinite;
   filter: drop-shadow(0 0 6px var(--sat-glow));
 }
@@ -147,6 +194,7 @@ canvas#sky {
 /* === TITLES === */
 .title-wrap {
   display: flex; flex-direction: column; align-items: center; text-align: center;
+  transform: translateY(-18px);
 }
 
 .title {
@@ -205,12 +253,8 @@ canvas#sky {
     grid-template-rows: repeat(2, 36px);
   }
   .top-nav {
-    justify-content: flex-start;
-    gap: 1.1rem;
-    width: calc(100vw - 1.5rem);
-    max-width: none;
-    overflow-x: auto;
-    scrollbar-width: none;
+    width: max-content;
+    max-width: calc(100vw - 1.5rem);
   }
   .top-nav::-webkit-scrollbar { display: none; }
 }

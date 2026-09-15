@@ -14,6 +14,17 @@ samples = taco.read("dataset.zip")
 parts = taco.read(["part-0.zip", "part-1.zip"])
 ```
 
+Versioned dataset roots select their declared default release without listing
+remote storage. Use a release URL to open an immutable version directly.
+
+```python
+dataset = taco.open_dataset("https://data.source.coop/major-tom/core-dem/")
+print(dataset.version)
+print(dataset.versions)
+
+previous = taco.open_dataset("https://data.source.coop/major-tom/core-dem/1.0.0/")
+```
+
 ## Examples
 
 Every example is self-contained, uses synthetic data, and writes its output in
