@@ -48,7 +48,7 @@ std::filesystem::path local_path(std::string_view utf8) {
 }
 
 std::string utf8_path(const std::filesystem::path& path) {
-    const auto text = path.u8string();
+    const auto text = path.generic_u8string();
     return std::string(text.begin(), text.end());
 }
 
