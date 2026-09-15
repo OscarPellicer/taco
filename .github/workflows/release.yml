@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "libtaco-v*"]
   workflow_dispatch:
 
 permissions:
@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.value }}
+      javascript-version: ${{ steps.version.outputs.javascript }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -34,6 +35,7 @@ jobs:
           python = tomllib.loads((root / "python/pyproject.toml").read_text())["project"]["version"]
           julia = tomllib.loads((root / "julia/Project.toml").read_text())["version"]
           javascript = json.loads((root / "javascript/package.json").read_text())["version"]
+          javascript_lock = json.loads((root / "javascript/package-lock.json").read_text())
           vcpkg = json.loads((root / "core/vcpkg.json").read_text())["version-string"]
           description = (root / "r/DESCRIPTION").read_text()
           r = re.search(r"^Version:\s*(\S+)", description, re.MULTILINE).group(1)
@@ -49,16 +51,34 @@ jobs:
               "R": r,
               "R configure": r_configure,
               "Julia": julia,
-              "JavaScript": javascript,
           }
           if len(set(versions.values())) != 1:
               raise SystemExit(f"package versions disagree: {versions}")
           version = python
+          lock_versions = {
+              javascript_lock["version"],
+              javascript_lock["packages"][""]["version"],
+          }
+          if lock_versions != {javascript}:
+              raise SystemExit(
+                  f"JavaScript package and lock versions disagree: {javascript}, {lock_versions}"
+              )
           tag = os.environ["GITHUB_REF_NAME"]
-          if os.environ["GITHUB_REF_TYPE"] == "tag" and tag != f"v{version}":
-              raise SystemExit(f"tag {tag} does not match version {version}")
+          if os.environ["GITHUB_REF_TYPE"] == "tag":
+              expected = f"libtaco-v{version}" if tag.startswith("libtaco-") else f"v{version}"
+              if tag != expected:
+                  raise SystemExit(f"tag {tag} does not match expected {expected}")
+              if tag == f"v{version}":
+                  artifacts = (root / "julia/Artifacts.toml").read_text()
+                  expected_url = f"releases/download/libtaco-v{version}/"
+                  if artifacts.count("[[taco]]") != 5 or artifacts.count(expected_url) != 5:
+                      raise SystemExit(
+                          "the final package tag requires five Julia artifacts from "
+                          f"libtaco-v{version}"
+                      )
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               print(f"value={version}", file=output)
+              print(f"javascript={javascript}", file=output)
           PY
 
   build-lib:
@@ -95,7 +115,7 @@ jobs:
           - name: windows-x86_64
             runner: windows-2022
             container: ""
-            triplet: x64-windows-static
+            triplet: x64-windows-static-md
             library: taco.dll
             shell: pwsh
     runs-on: ${{ matrix.runner }}
@@ -106,7 +126,8 @@ jobs:
     env:
       VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
       VCPKG_DEFAULT_HOST_TRIPLET: ${{ matrix.triplet }}
-      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+      VCPKG_INSTALLED_DIR: vcpkg_installed
+      MACOSX_DEPLOYMENT_TARGET: ${{ startsWith(matrix.name, 'macos-') && '11.0' || '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -118,7 +139,7 @@ jobs:
         with:
           arch: x64
 
-      - uses: lukka/get-cmake@v4
+      - uses: lukka/get-cmake@v4.4.2
 
       - uses: lukka/run-vcpkg@v11
         with:
@@ -128,7 +149,7 @@ jobs:
           doNotCache: false
 
       - name: Configure
-        run: cmake -S core -B core/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=core/install -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_INSTALLED_DIR=${{ github.workspace }}/vcpkg_installed -DTACO_BUILD_TESTS=ON -DTACO_WERROR=ON
+        run: cmake -S core -B core/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=core/install -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_INSTALLED_DIR=vcpkg_installed -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ env.MACOSX_DEPLOYMENT_TARGET }} -DTACO_BUILD_TESTS=ON -DTACO_WERROR=ON
 
       - run: cmake --build core/build-release --config Release --parallel
       - run: ctest --test-dir core/build-release -C Release --output-on-failure
@@ -151,6 +172,8 @@ jobs:
             echo "libtaco still contains a build-environment library path"
             exit 1
           fi
+          otool -l core/install/lib/libtaco.dylib | grep -A4 LC_BUILD_VERSION
+          otool -l core/install/lib/libtaco.dylib | grep -A4 LC_BUILD_VERSION | grep -q 'minos 11.0'
           codesign --force --sign - core/install/lib/libtaco.dylib
 
       - if: runner.os == 'Windows'
@@ -191,6 +214,7 @@ jobs:
   python-wheel:
     name: Python wheel (${{ matrix.name }})
     needs: build-lib
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
@@ -296,6 +320,7 @@ jobs:
           cp core/tests/data/taco_flat.zip "${RUNNER_TEMP}/taco.zip"
           cd "${RUNNER_TEMP}"
           python -c "import taco; table = taco.read('taco.zip', location=False); assert table.num_rows > 0; print(taco.__version__)"
+          python -c "import taco; sources = ('hf://datasets/asterisk-labs/taco-api-fixtures/data/04-change-detection/single-zip/dataset.zip', 'source://asterisk-labs/taco-api-fixtures/data/04-change-detection/by-split/.tacocat'); assert all(taco.read(source, idx=0, location=False).num_rows > 0 for source in sources)"
 
       - name: Test installed wheel (Windows)
         if: runner.os == 'Windows'
@@ -304,7 +329,10 @@ jobs:
           python -m pip install $wheel
           Copy-Item core\tests\data\taco_flat.zip "$env:RUNNER_TEMP\taco.zip"
           Push-Location $env:RUNNER_TEMP
-          try { python -c "import taco; table = taco.read('taco.zip', location=False); assert table.num_rows > 0; print(taco.__version__)" } finally { Pop-Location }
+          try {
+            python -c "import taco; table = taco.read('taco.zip', location=False); assert table.num_rows > 0; print(taco.__version__)"
+            python -c "import taco; sources = ('hf://datasets/asterisk-labs/taco-api-fixtures/data/04-change-detection/single-zip/dataset.zip', 'source://asterisk-labs/taco-api-fixtures/data/04-change-detection/by-split/.tacocat'); assert all(taco.read(source, idx=0, location=False).num_rows > 0 for source in sources)"
+          } finally { Pop-Location }
 
       - uses: actions/upload-artifact@v7
         with:
@@ -315,6 +343,7 @@ jobs:
   python-sdist:
     name: Python sdist
     needs: validate
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -351,6 +380,7 @@ jobs:
   r-package:
     name: R package (${{ matrix.os }})
     needs: validate
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
@@ -369,7 +399,7 @@ jobs:
       - name: Verify vendored core
         run: |
           python tools/sync_r_core.py
-          git diff --exit-code -- r/src/vendor r/inst/karu-LICENSE
+          python -c "import subprocess; paths = ['r/src/vendor', 'r/src/taco_versions.h', 'r/inst/karu-LICENSE']; status = subprocess.check_output(['git', 'status', '--porcelain', '--', *paths], text=True); assert not status, status"
 
       - uses: r-lib/actions/setup-r@v2
         with:
@@ -403,6 +433,7 @@ jobs:
   julia-package:
     name: Julia package (${{ matrix.name }})
     needs: build-lib
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
       matrix:
@@ -453,6 +484,7 @@ jobs:
   javascript-package:
     name: npm package
     needs: validate
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -477,13 +509,11 @@ jobs:
       - working-directory: javascript
         run: npm pack --dry-run
 
-  github-release:
-    name: GitHub release
-    needs: [validate, build-lib, python-wheel, python-sdist, r-package, julia-package, javascript-package]
-    if: startsWith(github.ref, 'refs/tags/v')
+  release-archives:
+    name: Native release archives
+    needs: [validate, build-lib]
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/libtaco-v')
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -513,17 +543,36 @@ jobs:
             fi
           done
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-archives
+          path: release-files/*
+          if-no-files-found: error
+
+  native-release:
+    name: Native GitHub release
+    needs: [validate, release-archives]
+    if: startsWith(github.ref, 'refs/tags/libtaco-v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-archives
+          path: release-files/
+
       - uses: softprops/action-gh-release@v2
         with:
           files: release-files/*
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.ref, '-') }}
+          prerelease: true
 
   update-julia-artifacts:
     name: Update Julia artifacts
-    needs: [validate, github-release]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [validate, native-release]
+    if: startsWith(github.ref, 'refs/tags/libtaco-v')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -556,9 +605,55 @@ jobs:
           git pull --rebase origin main
           git push origin HEAD:main
 
+  julia-artifact-smoke:
+    name: Julia artifact smoke (${{ matrix.name }})
+    needs: [julia-package]
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - name: macos-aarch64
+            runner: macos-14
+          - name: macos-x86_64
+            runner: macos-15-intel
+          - name: windows-x86_64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+
+      - uses: julia-actions/cache@v2
+
+      - run: julia --project=julia -e 'using Pkg; Pkg.instantiate(); using Taco; @assert size(Taco.read("core/tests/data/taco_flat.zip"), 1) > 0'
+
+  github-release:
+    name: GitHub release
+    needs: [validate, python-wheel, python-sdist, r-package, julia-package, javascript-package, julia-artifact-smoke]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
   publish-pypi:
     name: Publish to PyPI
-    needs: [python-wheel, python-sdist, r-package, julia-package, javascript-package]
+    needs: [python-wheel, python-sdist, r-package, julia-package, javascript-package, github-release]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     environment:
@@ -582,7 +677,7 @@ jobs:
 
   publish-npm:
     name: Publish to npm
-    needs: [python-wheel, python-sdist, r-package, julia-package, javascript-package]
+    needs: [python-wheel, python-sdist, r-package, julia-package, javascript-package, github-release]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     environment: npm

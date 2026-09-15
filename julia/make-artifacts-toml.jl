@@ -4,6 +4,7 @@ using SHA
 
 const REPOSITORY = "asterisk-labs/taco"
 const VERSION = only(ARGS)
+const ARCHIVE_DIRECTORY = get(ENV, "TACO_ARTIFACT_ARCHIVES", "")
 const PLATFORMS = [
     (
         properties = ["arch = \"aarch64\"", "os = \"linux\"", "libc = \"glibc\""],
@@ -29,8 +30,9 @@ const PLATFORMS = [
 
 
 function hashes(asset)
-    url = "https://github.com/$REPOSITORY/releases/download/v$VERSION/$asset"
-    archive = Downloads.download(url)
+    url = "https://github.com/$REPOSITORY/releases/download/libtaco-v$VERSION/$asset"
+    archive = isempty(ARCHIVE_DIRECTORY) ? Downloads.download(url) : joinpath(ARCHIVE_DIRECTORY, asset)
+    isfile(archive) || error("artifact archive does not exist: $archive")
     sha256 = bytes2hex(open(SHA.sha256, archive))
     tree = create_artifact() do directory
         run(`tar -xzf $archive -C $directory`)

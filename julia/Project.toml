@@ -10,7 +10,7 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
-Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+LazyArtifacts = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
 
 [compat]
 julia = "1.10"

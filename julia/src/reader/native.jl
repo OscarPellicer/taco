@@ -1,6 +1,6 @@
 import JSON3
 import Libdl
-import Pkg
+using LazyArtifacts
 
 
 const _LIBRARY_ENV = "TACO_LIB"
@@ -35,8 +35,18 @@ function _library_path()
     checkout = normpath(joinpath(@__DIR__, "..", "..", "..", "core", "build", name))
     isfile(checkout) && return checkout
 
-    artifacts = normpath(joinpath(@__DIR__, "..", "..", "Artifacts.toml"))
-    base = Pkg.Artifacts.ensure_artifact_installed("taco", artifacts)
+    artifacts_toml = normpath(joinpath(@__DIR__, "..", "..", "Artifacts.toml"))
+    base = try
+        hash = artifact_hash("taco", artifacts_toml)
+        hash === nothing && error("Artifacts.toml has no taco entry for this platform")
+        LazyArtifacts.ensure_artifact_installed("taco", artifacts_toml)
+        artifact_path(hash)
+    catch err
+        error(
+            "taco: could not install the native TACO artifact: $(sprint(showerror, err)). " *
+            "Set $_LIBRARY_ENV to an existing libtaco build to override it",
+        )
+    end
     entries = readdir(base)
     if length(entries) == 1 && isdir(joinpath(base, entries[1]))
         base = joinpath(base, entries[1])
