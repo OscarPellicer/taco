@@ -26,4 +26,7 @@ std::vector<std::string> read_ranges(const std::vector<Range>& ranges);
 // A whole object, refusing anything larger than limit bytes.
 std::string read_object(const std::string& uri, std::uint64_t limit, const std::string& what);
 
+// Stops the transport client cached by this thread.
+void shutdown_transport() noexcept;
+
 } // namespace taco

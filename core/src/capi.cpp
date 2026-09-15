@@ -5,6 +5,7 @@
 #include "error.hpp"
 #include "manifest.hpp"
 #include "sql.hpp"
+#include "transport.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -72,6 +73,10 @@ const char* taco_last_error(void) {
 
 void taco_free(char* text) {
     std::free(text);
+}
+
+void taco_shutdown(void) {
+    taco::shutdown_transport();
 }
 
 taco_status taco_open(const char* source, const char* cache_dir, taco_dataset** out) {

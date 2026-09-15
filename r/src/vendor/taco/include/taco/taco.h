@@ -41,6 +41,10 @@ TACO_API const char* taco_last_error(void);
 // Releases a string returned through a char** parameter.
 TACO_API void taco_free(char* text);
 
+// Releases transport resources cached by this thread. Call this before
+// unloading the shared library. It is safe to call more than once.
+TACO_API void taco_shutdown(void);
+
 typedef struct taco_dataset taco_dataset;
 
 // Opens a dataset. Remote metadata, and the metadata inside any ZIP, is

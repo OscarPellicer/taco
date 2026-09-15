@@ -30,6 +30,11 @@ static SEXP take_string(char* text) {
     return result;
 }
 
+SEXP taco_r_shutdown(void) {
+    taco_shutdown();
+    return R_NilValue;
+}
+
 static void close_dataset(SEXP pointer) {
     taco_dataset* dataset = R_ExternalPtrAddr(pointer);
     if (dataset) {
@@ -138,6 +143,7 @@ SEXP taco_r_resolve(SEXP source) {
 }
 
 static const R_CallMethodDef methods[] = {
+    {"taco_r_shutdown", (DL_FUNC)&taco_r_shutdown, 0},
     {"taco_r_open", (DL_FUNC)&taco_r_open, 1},
     {"taco_r_dataset", (DL_FUNC)&taco_r_dataset, 1},
     {"taco_r_sql", (DL_FUNC)&taco_r_sql, 6},

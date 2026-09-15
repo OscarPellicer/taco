@@ -472,6 +472,8 @@ void test_c_api() {
     CHECK(taco_resolve(data("taco_flat.zip").c_str(), &resolved) == TACO_OK);
     CHECK(resolved && contains(resolved, "\"manifest\":null"));
     taco_free(resolved);
+    taco_shutdown();
+    taco_shutdown();
 }
 
 void test_remote() {
@@ -519,6 +521,7 @@ int main() {
     test_c_api();
     if (remote_tests())
         test_remote();
+    taco_shutdown();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

@@ -120,4 +120,8 @@ std::string read_object(const std::string& uri, std::uint64_t limit, const std::
     return std::move(read_ranges({Range{uri, 0, size}}).front());
 }
 
+void shutdown_transport() noexcept {
+    cached_client.reset();
+}
+
 } // namespace taco
