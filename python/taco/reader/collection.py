@@ -2,45 +2,24 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from os import fspath
 
 from ..contract.collection import Collection, Extent
 from ..errors import ContainerError
-from . import engine
+from . import native
 from .source import Location, PathInput
-
-
-def _collection_dict(value: object, path: PathInput | Location) -> dict[str, object]:
-    if not isinstance(value, (str, bytes, bytearray)):
-        raise ContainerError(f"the cozip extension returned invalid COLLECTION.json for {path!r}")
-    data = json.loads(value)
-    if not isinstance(data, dict):
-        raise ContainerError(f"the cozip extension returned a non-object COLLECTION.json for {path!r}")
-    return data
 
 
 def load_collection(path: PathInput | Location) -> dict[str, object]:
     """Read and parse one ``COLLECTION.json`` document."""
-    row = engine.open_reader().execute("SELECT taco_collection(?)", [fspath(path)]).fetchone()
-    if row is None:
-        raise ContainerError(f"the cozip extension returned no collection for {path!r}")
-    return _collection_dict(row[0], path)
+    data = json.loads(native.NativeDataset(path).collection)
+    if not isinstance(data, dict):
+        raise ContainerError(f"COLLECTION.json is not a JSON object: {path}")
+    return data
 
 
 def load_collections(paths: Sequence[Location]) -> list[dict[str, object]]:
     """Read collection documents in the same order as their sources."""
-    rows = (
-        engine.open_reader()
-        .execute(
-            "SELECT taco_collection(path) FROM unnest(?::VARCHAR[]) WITH ORDINALITY AS sources(path, position) "
-            "ORDER BY position",
-            [[fspath(path) for path in paths]],
-        )
-        .fetchall()
-    )
-    if len(rows) != len(paths):
-        raise ContainerError("the cozip extension did not return every COLLECTION.json")
-    return [_collection_dict(row[0], path) for row, path in zip(rows, paths, strict=True)]
+    return [load_collection(path) for path in paths]
 
 
 def merge_collections(paths: tuple[Location, ...]) -> Collection:

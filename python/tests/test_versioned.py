@@ -116,7 +116,8 @@ def test_open_http_root_reads_only_manifest(trailing_slash: bool, collection: ta
 
     assert dataset.sources == (f"{base}/dataset/2.0.0/",)
     assert dataset.collection.dataset_version == "2.0.0"
-    assert Handler.requests == ["/dataset/taco.json"]
+    # karu sizes an object with a one-byte request before reading it.
+    assert set(Handler.requests) == {"/dataset/taco.json"}
 
 
 def test_open_http_root_with_dotted_name_is_discovered(collection: taco.Collection, tmp_path: Path) -> None:
@@ -126,7 +127,7 @@ def test_open_http_root_with_dotted_name_is_discovered(collection: taco.Collecti
         dataset = taco.open_dataset(f"{base}/dataset.v3/")
 
     assert dataset.version == "2.0.0"
-    assert Handler.requests == ["/dataset.v3/taco.json"]
+    assert set(Handler.requests) == {"/dataset.v3/taco.json"}
 
 
 def test_open_http_version_url_falls_back_to_direct_dataset(

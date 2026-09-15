@@ -7,6 +7,10 @@ pip install taco-eo
 python examples/minimal.py
 ```
 
+Published wheels include the native TACO reader. Building from the source
+distribution requires a C++23 compiler, CMake, Ninja, pkg-config, libcurl
+7.83 or newer, and OpenSSL 3 or newer.
+
 ```python
 import taco
 

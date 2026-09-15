@@ -344,9 +344,7 @@ class GeoEnrich(DerivedMetadata):
                         if name.startswith("admin_"):
                             level = {"admin_countries": 0, "admin_states": 1, "admin_districts": 2}[name]
                             result[name][index] = (
-                                "Ocean/Sea/Lakes"
-                                if value is None
-                                else _admin_names(level).get(int(value)) or "Unknown"
+                                "Ocean/Sea/Lakes" if value is None else _admin_names(level).get(int(value)) or "Unknown"
                             )
                         else:
                             result[name][index] = float(np.float32(0 if value is None else value))

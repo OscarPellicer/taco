@@ -4,7 +4,6 @@ from collections.abc import Sequence
 from os import PathLike, fspath
 from pathlib import Path
 from typing import TypeAlias
-from urllib.parse import urlsplit
 
 Location: TypeAlias = str | Path
 PathInput: TypeAlias = str | PathLike[str]
@@ -36,17 +35,4 @@ def normalize_sources(source: Source) -> tuple[Location, ...]:
     return tuple(paths)
 
 
-def source_labels(paths: tuple[Location, ...]) -> tuple[str, ...]:
-    names = tuple(_name(path) for path in paths)
-    if len(names) == len(set(names)) and all(names):
-        return names
-    return tuple(str(path) for path in paths)
-
-
-def _name(path: Location) -> str:
-    if isinstance(path, Path):
-        return path.name
-    return urlsplit(path).path.rstrip("/").rsplit("/", 1)[-1]
-
-
-__all__ = ["Location", "PathInput", "Source", "normalize_sources", "source_labels"]
+__all__ = ["Location", "PathInput", "Source", "normalize_sources"]

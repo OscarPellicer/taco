@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import json
-import sys
+import shutil
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
-import pyarrow as pa
 import pytest
 
 import taco
@@ -14,171 +11,90 @@ import taco.reader as reader
 import taco.reader.dataset as dataset_module
 import taco.reader.engine as engine
 import taco.reader.inspect as inspect_module
+import taco.reader.native as native
 import taco.reader.query as query_module
 from taco.errors import ContainerError
 
-
-class Result:
-    def __init__(self, value=None, table: pa.Table | None = None) -> None:
-        self.value = value
-        self.table = table or pa.table({"value": [1]})
-
-    def fetchone(self):
-        return None if self.value is ... else (self.value,)
-
-    def to_arrow_table(self) -> pa.Table:
-        return self.table
+from .datasets import get_case
 
 
-class Connection:
-    def __init__(self) -> None:
-        self.calls = []
-        self.installed = []
-        self.loaded = []
-        self.closed = False
-
-    def execute(self, query, arguments=None) -> Result:
-        self.calls.append((query, arguments))
-        if "duckdb_functions" in query:
-            return Result(1)
-        if "taco_structure" in query:
-            return Result(["a.bin"])
-        if "taco_levels" in query:
-            return Result(["sample", "children"])
-        if "taco_derived" in query:
-            return Result(['{"sample":{"grid":{}}}'])
-        if "taco_collection" in query:
-            return Result(json.dumps({"id": "x"}))
-        if "cozip_profile" in query:
-            return Result("taco")
-        if "taco_sql" in query:
-            return Result("SELECT 1")
-        return Result()
-
-    def install_extension(self, name, repository=None) -> None:
-        self.installed.append((name, repository))
-
-    def load_extension(self, name) -> None:
-        self.loaded.append(name)
-
-    def close(self) -> None:
-        self.closed = True
-
-
-def test_reader_wrappers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_reader_inspects_an_archive(archive: Path) -> None:
     assert taco.reader is reader
-    connection = Connection()
-    monkeypatch.setattr(engine, "open_reader", lambda: connection)
-    path = tmp_path / "data.zip"
-    assert reader.read(path, idx=(1, 4), files=["a.bin"]).num_rows == 1
-    assert inspect_module.contract(path).num_rows == 1
-    assert inspect_module.structure(path) == ["a.bin"]
-    assert inspect_module.levels(path) == ["sample", "children"]
-    assert inspect_module.derived(path) == {"sample": {"grid": {}}}
-    assert inspect_module.collection(path) == {"id": "x"}
-    assert inspect_module.profile(path) == "taco"
-    assert inspect_module.sql(path, idx=1) == "SELECT 1"
-    assert "[1, 4]" in str(connection.calls[0][1])
+    contract = inspect_module.contract(archive)
+    assert contract.column("kind").to_pylist() == ["structure"] * 5 + ["level"] * 4
+    assert inspect_module.structure(archive) == [
+        "before/B02.tif",
+        "before/B03.tif",
+        "after/B02.tif",
+        "mask.tif",
+        "extra*[0,3].png",
+    ]
+    assert inspect_module.levels(archive) == ["sample", "children", "children/after", "children/before"]
+    assert inspect_module.derived(archive) == {}
+    assert inspect_module.collection(archive)["id"] == "tiny-change"
+    assert inspect_module.profile(archive) == "taco"
+    assert "read_parquet(" in inspect_module.sql(archive, idx=1)
+    with pytest.raises(ValueError, match="layout"):
+        inspect_module.sql(archive, layout="flat")
 
 
-def test_dataset_api(monkeypatch: pytest.MonkeyPatch, collection: taco.Collection, tmp_path: Path) -> None:
-    connection = Connection()
-    monkeypatch.setattr(engine, "open_reader", lambda: connection)
-    monkeypatch.setattr(dataset_module, "merge_collections", lambda paths: collection)
-    path = tmp_path / "data.zip"
-
-    dataset = taco.open_dataset(path)
+def test_dataset_api(archive: Path) -> None:
+    dataset = taco.open_dataset(archive)
 
     assert isinstance(dataset, taco.Dataset)
-    assert dataset.sources == (path.resolve(),)
-    assert dataset.collection.to_dict() == collection.to_dict()
-    assert dataset.contract == collection.contract
-    assert taco.read(dataset).num_rows == 1
-    assert taco.read(path).num_rows == 1
-    assert taco.read(dataset, layout="long", idx=3, level="children", files=["mask.tif"], location=False).num_rows == 1
-    assert "pivoted := ?" in connection.calls[-1][0]
-    assert connection.calls[-1][1] == [str(path.resolve()), "3", "children", False, ["mask.tif"], False]
+    assert dataset.sources == (archive.resolve(),)
+    assert dataset.collection.id == "tiny-change"
+    assert taco.read(dataset).num_rows == 4
+    assert taco.read(archive).num_rows == 4
     assert repr(dataset).startswith("Dataset(")
 
+    long = taco.read(dataset, layout="long", idx=3, files=["mask.tif"])
+    assert long.column("path").to_pylist() == ["mask.tif"]
+    assert long.column("sample_id").to_pylist() == [3]
+    assert long.column("taco:location")[0].as_py().startswith("/vsisubfile/")
+    assert "taco:location" not in taco.read(dataset, layout="long", location=False).column_names
 
-def test_reader_uses_location_and_normalizes_legacy_extension(monkeypatch: pytest.MonkeyPatch) -> None:
-    class LegacyConnection(Connection):
-        def execute(self, query, arguments=None) -> Result:
-            if "location := ?" in query:
-                raise RuntimeError("read_taco location does not support the supplied arguments; candidate has gdal_vsi")
-            self.calls.append((query, arguments))
-            return Result(
-                table=pa.table(
-                    {
-                        "path": ["scene.rumi"],
-                        "cozip:location": ["stored-flat"],
-                        "taco:location": ["stored-taco"],
-                        "cozip:gdal_vsi": ["/vsisubfile/1_2,/vsicurl/data.zip"],
-                    }
-                )
-            )
-
-    connection = LegacyConnection()
-    monkeypatch.setattr(engine, "open_reader", lambda: connection)
-
-    table = reader.read("data.zip", layout="long")
-
-    assert table.column_names == ["path", "taco:location"]
-    assert table["taco:location"].to_pylist() == ["/vsisubfile/1_2,/vsicurl/data.zip"]
-    assert "gdal_vsi := ?" in connection.calls[-1][0]
+    level = taco.read(dataset, level="children/before")
+    assert level.num_rows == 8
+    assert "internal:current_id" in level.column_names
+    assert "taco:location" not in level.column_names
 
 
-def test_reader_removes_locations_from_raw_and_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    connection = Connection()
-    connection.execute = lambda query, arguments=None: Result(  # type: ignore[method-assign]
-        table=pa.table(
-            {
-                "value": [1],
-                "cozip:location": ["stored-flat"],
-                "taco:location": ["generated-or-stored"],
-                "cozip:gdal_vsi": ["legacy"],
-            }
-        )
-    )
-    monkeypatch.setattr(engine, "open_reader", lambda: connection)
+def test_reader_combines_partitions(archive: Path, tmp_path: Path) -> None:
+    copy = tmp_path / "copy" / "part.zip"
+    copy.parent.mkdir()
+    shutil.copy(archive, copy)
 
-    assert reader.read("data.zip", level="children").column_names == ["value"]
-    assert reader.read("data.zip", layout="long", location=False).column_names == ["value"]
-
-
-def test_dataset_multiple_sources(monkeypatch: pytest.MonkeyPatch, collection: taco.Collection, tmp_path: Path) -> None:
-    connection = Connection()
-    monkeypatch.setattr(engine, "open_reader", lambda: connection)
-    monkeypatch.setattr(dataset_module, "merge_collections", lambda paths: collection)
-    paths = [tmp_path / "a.zip", tmp_path / "b.zip"]
-
-    dataset = taco.open_dataset(paths)
-    assert dataset.sources == tuple(path.resolve() for path in paths)
+    dataset = taco.open_dataset([archive, copy])
     assert "sources=2" in repr(dataset)
     assert "2 sources" in dataset._repr_html_()
+    wide = taco.read(dataset)
+    assert wide.num_rows == 8
+    assert set(wide.column("source_file").to_pylist()) == {"dataset.zip", "part.zip"}
+    assert taco.read([archive, copy], idx=(2, 4)).num_rows == 4
+    assert set(taco.read(dataset, level="sample").column("source_file").to_pylist()) == {"dataset.zip", "part.zip"}
 
-    taco.read(dataset, layout="long", idx=(2, 4))
 
-    query, arguments = connection.calls[-1]
-    assert query.count("read_taco") == 2
-    assert "UNION ALL BY NAME" in query
-    assert arguments == [
-        "a.zip",
-        str(paths[0].resolve()),
-        "[2, 4]",
-        None,
-        False,
-        None,
-        True,
-        "b.zip",
-        str(paths[1].resolve()),
-        "[2, 4]",
-        None,
-        False,
-        None,
-        True,
-    ]
-    assert taco.read(paths).num_rows == 1
+def test_reader_keeps_the_location_of_single_file_samples(tmp_path: Path) -> None:
+    case = get_case("single_file")
+    path = tmp_path / "single.zip"
+    with taco.open_writer(case.collection, path) as writer:
+        writer.extend(case.samples)
+        writer.run()
+
+    assert all(value.startswith("/vsisubfile/") for value in taco.read(path).column("taco:location").to_pylist())
+    assert "taco:location" not in taco.read(path, location=False).column_names
+
+
+def test_reader_reports_core_errors(archive: Path, tmp_path: Path) -> None:
+    with pytest.raises(ContainerError, match="has no level 'nope'"):
+        taco.read(archive, level="nope")
+    with pytest.raises(ContainerError, match=r"unknown structure leaf: nope\.tif"):
+        taco.read(archive, files=["nope.tif"])
+    with pytest.raises(ContainerError, match="could not open"):
+        taco.read(tmp_path / "missing.zip")
+    with pytest.raises(TypeError, match="location"):
+        taco.read(archive, location="yes")  # type: ignore[arg-type]
 
 
 def test_dataset_rejects_unknown_layout(monkeypatch: pytest.MonkeyPatch, collection: taco.Collection) -> None:
@@ -246,71 +162,24 @@ def test_invalid_indexes(value) -> None:
         query_module.normalize_index(value)
 
 
-def test_reader_rejects_bad_extension_results(monkeypatch: pytest.MonkeyPatch) -> None:
-    connection = Connection()
-    monkeypatch.setattr(engine, "open_reader", lambda: connection)
-    monkeypatch.setattr(connection, "execute", lambda *args: Result(3))
-    with pytest.raises(ContainerError, match="string list"):
-        inspect_module.structure("x")
-    with pytest.raises(ContainerError, match="COLLECTION"):
-        inspect_module.collection("x")
-    with pytest.raises(ContainerError, match="invalid string"):
-        inspect_module.profile("x")
-    with pytest.raises(ContainerError, match="invalid SQL"):
-        inspect_module.sql("x")
-
-    monkeypatch.setattr(connection, "execute", lambda *args: Result("[]"))
-    with pytest.raises(ContainerError, match="non-object"):
-        inspect_module.collection("x")
-
-    for value in (["{}", "{}"], ["[1]"], ["{"]):
-        monkeypatch.setattr(connection, "execute", lambda *args, value=value: Result(value))
-        with pytest.raises(ContainerError, match="taco:derived"):
-            inspect_module.derived("x")
-
-    monkeypatch.setattr(connection, "execute", lambda *args: Result(...))
-    with pytest.raises(ContainerError, match="no row"):
-        inspect_module.structure("x")
-
-
-def test_engine_loads_and_caches_extension(monkeypatch: pytest.MonkeyPatch) -> None:
-    connection = Connection()
-    fake_duckdb = SimpleNamespace(connect=lambda config: connection)
-    monkeypatch.setitem(sys.modules, "duckdb", fake_duckdb)
-    monkeypatch.setattr(engine, "_state", threading.local())
-    monkeypatch.delenv(engine.EXTENSION_ENV, raising=False)
-    assert engine.open_reader() is connection
-    assert engine.open_reader() is connection
-    assert connection.installed == [("cozip", "community")]
-    assert connection.loaded == ["cozip"]
+def test_engine_keeps_one_connection_per_thread() -> None:
     engine.close_reader()
-    assert connection.closed
-
-
-def test_engine_loads_local_extension(monkeypatch: pytest.MonkeyPatch) -> None:
-    connection = Connection()
-    monkeypatch.setitem(sys.modules, "duckdb", SimpleNamespace(connect=lambda config: connection))
-    monkeypatch.setattr(engine, "_state", threading.local())
-    monkeypatch.setenv(engine.EXTENSION_ENV, "/tmp/cozip.duckdb_extension")
+    connection = engine.open_reader()
     assert engine.open_reader() is connection
-    assert connection.installed == []
-    assert connection.loaded == ["/tmp/cozip.duckdb_extension"]
+    assert connection.execute("SELECT current_setting('TimeZone')").fetchone() == ("UTC",)
+
+    others: list[object] = []
+    thread = threading.Thread(target=lambda: others.append(engine.open_reader()))
+    thread.start()
+    thread.join()
+    assert others[0] is not connection
+
     engine.close_reader()
+    assert engine.open_reader() is not connection
 
 
-def test_engine_reports_missing_reader(monkeypatch: pytest.MonkeyPatch) -> None:
-    connection = Connection()
-    native_execute = connection.execute
-
-    def execute(query, arguments=None):
-        if "duckdb_functions" in query:
-            return Result(0)
-        return native_execute(query, arguments)
-
-    connection.execute = execute
-    monkeypatch.setitem(sys.modules, "duckdb", SimpleNamespace(connect=lambda config: connection))
-    monkeypatch.setattr(engine, "_state", threading.local())
-    monkeypatch.delenv(engine.EXTENSION_ENV, raising=False)
-    with pytest.raises(ContainerError, match="does not include"):
-        engine.open_reader()
-    assert connection.closed
+def test_native_reports_a_missing_library(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(native, "_library", None)
+    monkeypatch.setenv(native.LIBRARY_ENV, str(tmp_path / "missing-libtaco"))
+    with pytest.raises(ContainerError, match="could not load the TACO core"):
+        native.profile("dataset.zip")

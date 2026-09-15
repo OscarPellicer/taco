@@ -320,10 +320,7 @@ def test_geoenrich_replaces_missing_admin_name(monkeypatch: pytest.MonkeyPatch) 
     def reduce_regions(self, *, collection, reducer, scale):
         return SimpleNamespace(
             getInfo=lambda: {
-                "features": [
-                    {"properties": {"taco_index": feature["index"], "mode": 53343}}
-                    for feature in collection
-                ]
+                "features": [{"properties": {"taco_index": feature["index"], "mode": 53343}} for feature in collection]
             }
         )
 

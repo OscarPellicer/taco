@@ -16,6 +16,20 @@ All notable changes to `taco` are documented here. The format follows
   own id and description, and recomputes its extent. Without a selection it
   converts a FOLDER to ZIP or merges a TACOCAT into one dataset.
 
+### Changed
+
+- Reading no longer loads the `cozip` DuckDB extension. A C++ core shared with
+  the R and Julia packages reads `COLLECTION.json` and the metadata Parquet
+  through Karu, caches them once per dataset version in the user cache
+  directory (`TACO_CACHE_DIR` overrides it), and generates the SQL that the
+  package's own DuckDB runs. Local paths, HTTP, S3, GCS, Azure, Hugging Face,
+  and Source Cooperative share the same API.
+- `read(layout="long", files=...)` keeps only the selected files.
+
+### Removed
+
+- The `COZIP_EXTENSION` environment variable.
+
 ## 0.6.3 - 2026-09-13
 
 ### Fixed

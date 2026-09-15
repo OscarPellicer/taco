@@ -1,5 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = [
+    "cmake>=3.21",
+    "hatchling>=1.27",
+    "ninja>=1.11",
+    "packaging>=24",
+]
 build-backend = "hatchling.build"
 
 [project]
@@ -25,7 +30,9 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "Operating System :: OS Independent",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -36,6 +43,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "cffi>=1.17",
     "cozip>=2026.9.4",
     "duckdb>=1.5.5",
     "numpy>=1.24",
@@ -62,9 +70,24 @@ Issues = "https://github.com/asterisk-labs/taco/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["taco"]
+artifacts = ["taco/_lib/*"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["taco/**", "tests/**", "examples/**", "LICENSE", "README.md", "CHANGELOG.md", "pyproject.toml"]
+include = ["taco/**", "tests/**", "examples/**", "hatch_build.py", "LICENSE", "README.md", "CHANGELOG.md", "pyproject.toml"]
+
+[tool.hatch.build.targets.sdist.force-include]
+"../core/CMakeLists.txt" = "native/core/CMakeLists.txt"
+"../core/include" = "native/core/include"
+"../core/src" = "native/core/src"
+"../extern/karu/CMakeLists.txt" = "native/extern/karu/CMakeLists.txt"
+"../extern/karu/VERSION" = "native/extern/karu/VERSION"
+"../extern/karu/LICENSE" = "native/extern/karu/LICENSE"
+"../extern/karu/cmake" = "native/extern/karu/cmake"
+"../extern/karu/include" = "native/extern/karu/include"
+"../extern/karu/src" = "native/extern/karu/src"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -90,7 +113,7 @@ module = "taco.container.cozip"
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*"]
+module = ["pyarrow", "pyarrow.*", "cffi"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
