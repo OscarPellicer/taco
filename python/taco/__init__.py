@@ -11,6 +11,7 @@ from .reader import Dataset, open_dataset, read
 from .validate import validate
 from .writer import open_writer
 from .writer.catalog import consolidate
+from .writer.export import export
 
 try:
     __version__ = version("taco-eo")
@@ -34,6 +35,7 @@ __all__ = [
     "TacoError",
     "__version__",
     "consolidate",
+    "export",
     "extensions",
     "metadata",
     "open_dataset",

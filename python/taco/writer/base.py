@@ -90,12 +90,15 @@ class Writer:
         self._require_open("add()")
         if not isinstance(sample, Sample):
             raise TypeError("sample must be a taco.Sample")
+        return self._add_prepared(self.contract.prepare_sample(sample))
 
+    def _add_prepared(self, sample: _PreparedSample) -> int:
+        # Export stages rows read from an existing dataset. They already
+        # follow the contract, so they skip the model validation of add().
         sample_id = self.sample_count
-        prepared = self.contract.prepare_sample(sample)
-        prepared = self._materialize_inline_assets(sample_id, prepared)
-        data_size = sum(self._asset_size(asset) for asset in prepared.assets)
-        self._samples.append((prepared, data_size))
+        sample = self._materialize_inline_assets(sample_id, sample)
+        data_size = sum(self._asset_size(asset) for asset in sample.assets)
+        self._samples.append((sample, data_size))
         return sample_id
 
     def extend(self, samples: Iterable[Sample]) -> int:

@@ -681,6 +681,22 @@ Leaving the context manager only removes temporary files. It does not call `run(
 
 FOLDER containers may use `append=True`. ZIP containers may be partitioned. The writer builds every partition and the TACOCAT before publishing them together. If publication fails, it restores the previous files.
 
+#### Export
+
+`taco.export()` writes selected samples of an existing dataset through the same writer. `where` is a SQL condition on the rows returned by `taco.read()`, and `idx` selects sample positions as it does there.
+
+The output keeps the contract, licenses, providers, tasks, and collection metadata of its source. Its samples are numbered from 0 in source order, `extent` is recalculated from the selected rows, and `taco:sources` is removed. A subset MUST declare its own `id` and `description`, so it cannot be merged with the dataset it came from. Without a selection every sample is copied, which converts a FOLDER to ZIP or merges a TACOCAT into one dataset.
+
+```
+taco.export(
+    "cloudsen12.zip",
+    "cloudsen12_test.zip",
+    where="\"ml:split\" = 'test'",
+    id="cloudsen12-test",
+    description="CloudSEN12 test split",
+)
+```
+
 #### Example
 
 ```

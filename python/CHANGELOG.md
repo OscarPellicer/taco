@@ -11,6 +11,10 @@ All notable changes to `taco` are documented here. The format follows
   `taco.json` read, select the declared default, and use the embedded collection
   without fetching a second collection document. Immutable versions remain
   directly addressable through their own URLs.
+- `export()` writes the samples selected with `where` or `idx` from a local ZIP,
+  FOLDER, or TACOCAT as a new dataset. The subset keeps the contract, needs its
+  own id and description, and recomputes its extent. Without a selection it
+  converts a FOLDER to ZIP or merges a TACOCAT into one dataset.
 
 ## 0.6.3 - 2026-09-13
 

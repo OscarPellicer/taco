@@ -25,6 +25,19 @@ print(dataset.versions)
 previous = taco.open_dataset("https://data.source.coop/major-tom/core-dem/1.0.0/")
 ```
 
+`export()` writes a smaller dataset with the same contract. `where` filters the
+rows returned by `read()`, and the subset needs its own id and description.
+
+```python
+taco.export(
+    "dataset.zip",
+    "test.zip",
+    where="\"ml:split\" = 'test'",
+    id="dataset-test",
+    description="Test split of the dataset",
+)
+```
+
 ## Examples
 
 Every example is self-contained, uses synthetic data, and writes its output in

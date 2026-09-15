@@ -39,8 +39,15 @@ contract = taco.Contract(
     writer.run()
 
 assert taco.validate(<span class="str">"land-cover.zip"</span>).ok</code></pre></div></section>
+      <section class="manual-section" id="export"><div class="section-label"><span>05</span><small>Export</small></div><h2>Write a subset</h2><p class="section-intro">A subset keeps the contract and needs its own id and description.</p><div class="code-block"><div class="code-bar"><span>Python</span><button>Copy</button></div><pre><code>taco.export(
+    <span class="str">"land-cover.zip"</span>,
+    <span class="str">"land-cover-sample.zip"</span>,
+    idx=(<span class="num">0</span>, <span class="num">100</span>),
+    id=<span class="str">"land-cover-sample"</span>,
+    description=<span class="str">"First 100 land-cover samples"</span>,
+)</code></pre></div></section>
     </main>
-    <aside class="page-toc"><b>On this page</b><a href="#contract">Contract</a><a href="#collection">Collection</a><a href="#sample">Sample</a><a href="#run">Write and validate</a></aside>
+    <aside class="page-toc"><b>On this page</b><a href="#contract">Contract</a><a href="#collection">Collection</a><a href="#sample">Sample</a><a href="#run">Write and validate</a><a href="#export">Export</a></aside>
   </div>
   <script src="../app.js"></script>
 </body></html>

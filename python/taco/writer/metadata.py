@@ -24,7 +24,16 @@ from ..contract.naming import (
     level_to_filename,
 )
 from ..contract.sample import _PreparedSample
-from ..metadata._base import CollectionSummary
+from ..metadata._base import CollectionSummary, SampleModel
+from ..metadata.spatiotemporal import ISTAC, STAC, ISpatial, Spatial, Temporal
+
+_PROFILES: dict[str, type[SampleModel]] = {
+    "spatial": Spatial,
+    "ispatial": ISpatial,
+    "temporal": Temporal,
+    "stac": STAC,
+    "istac": ISTAC,
+}
 
 
 # Summary reducers refer to fields without a namespace. Keep the namespace
@@ -45,18 +54,33 @@ class _SummaryAccumulator:
         self.reducer.update(columns)
 
 
+def _level_summaries(contract: Contract, level: str) -> list[tuple[str, type[CollectionSummary]]]:
+    groups = contract._groups[level]
+    if groups:
+        return [(group.namespace, summary) for group in groups for summary in group.summaries]
+
+    # A contract read from COLLECTION.json has no models, but a profile keeps
+    # its canonical namespace, which is enough to find its summary.
+    namespaces = {name.partition(":")[0] for name in contract.metadata[level]}
+    return [
+        (namespace, summary)
+        for namespace, model in _PROFILES.items()
+        if namespace in namespaces
+        for summary in model.__taco_summaries__
+    ]
+
+
 def _collection_summaries(contract: Contract) -> list[_SummaryAccumulator]:
     summaries = []
     fields_seen = set()
     for level in contract.levels:
-        for group in contract._groups[level]:
-            for summary in group.summaries:
-                # COLLECTION.json has one value per summary name. If the same
-                # profile appears at several levels, the first level owns it.
-                if summary.field in fields_seen:
-                    continue
-                summaries.append(_SummaryAccumulator(summary.field, level, group.namespace, summary()))
-                fields_seen.add(summary.field)
+        for namespace, summary in _level_summaries(contract, level):
+            # COLLECTION.json has one value per summary name. If the same
+            # profile appears at several levels, the first level owns it.
+            if summary.field in fields_seen:
+                continue
+            summaries.append(_SummaryAccumulator(summary.field, level, namespace, summary()))
+            fields_seen.add(summary.field)
     return summaries
 
 
