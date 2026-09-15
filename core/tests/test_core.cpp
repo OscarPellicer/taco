@@ -184,7 +184,7 @@ void test_cozip_index() {
 }
 
 void test_open_archives() {
-    const std::string cache = scratch("archives").string();
+    const std::string cache = scratch("archives").generic_string();
 
     const auto flat = taco::open_dataset(data("taco_flat.zip"), cache);
     CHECK(flat.container == taco::Container::zip);
@@ -242,7 +242,7 @@ void test_open_archives() {
 }
 
 void test_open_directories() {
-    const std::string cache = scratch("directories").string();
+    const std::string cache = scratch("directories").generic_string();
 
     const auto folder = taco::open_dataset(data("taco_folder"), cache);
     CHECK(folder.container == taco::Container::folder);
@@ -279,7 +279,7 @@ void test_open_directories() {
 }
 
 void test_sql() {
-    const std::string cache = scratch("sql").string();
+    const std::string cache = scratch("sql").generic_string();
     const auto nested = taco::open_dataset(data("taco_nested.zip"), cache);
 
     const auto wide = taco::build_sql(nested, taco::ReadOptions{});
@@ -386,14 +386,14 @@ void test_manifest() {
     write_file(root / "taco.json", manifest_json());
     const auto resolved = taco::resolve_dataset(root.string());
     const auto value = taco::json::parse(resolved);
-    CHECK(value.find("source")->string == (root / "2.0.0").string());
+    CHECK(value.find("source")->string == (root / "2.0.0").generic_string());
     CHECK(value.find("version")->string == "2.0.0");
     CHECK(value.find("versions")->items.size() == 2);
     CHECK(value.find("versions")->items[0].string == "1.0.0");
-    CHECK(value.find("manifest")->string == (root / "taco.json").string());
+    CHECK(value.find("manifest")->string == (root / "taco.json").generic_string());
     CHECK(value.find("collection")->find("dataset_version")->string == "2.0.0");
     CHECK(taco::json::parse(taco::resolve_dataset((root / "taco.json").string())).find("manifest")->string ==
-          (root / "taco.json").string());
+          (root / "taco.json").generic_string());
 
     const auto direct = taco::json::parse(taco::resolve_dataset(data("taco_flat.zip")));
     CHECK(direct.find("source")->string == data("taco_flat.zip"));
@@ -430,7 +430,7 @@ void test_c_api() {
     CHECK(name == nullptr);
     CHECK(contains(taco_last_error(), "must not be NULL"));
 
-    const std::string cache = scratch("capi").string();
+    const std::string cache = scratch("capi").generic_string();
     taco_dataset* dataset = nullptr;
     CHECK(taco_open(data("taco_nested.zip").c_str(), cache.c_str(), &dataset) == TACO_OK);
     CHECK(dataset != nullptr);
@@ -475,7 +475,7 @@ void test_c_api() {
 }
 
 void test_remote() {
-    const std::string cache = scratch("remote").string();
+    const std::string cache = scratch("remote").generic_string();
     const std::string base = "hf://datasets/asterisk-labs/taco-api-fixtures/data/04-change-detection";
 
     const auto archive = taco::open_dataset(base + "/single-zip/dataset.zip", cache);

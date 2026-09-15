@@ -8,6 +8,7 @@
 #include <karu/karu.h>
 
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -37,9 +38,9 @@ std::optional<std::string> read_manifest(const std::string& candidate, bool requ
     }
 }
 
-const json::Value& object(const json::Value* value, const std::string& context) {
+const json::Value& object(const json::Value* value, std::string_view context) {
     if (!value || !value->is_object())
-        fail(context + " must be an object");
+        fail(std::string(context) + " must be an object");
     return *value;
 }
 
