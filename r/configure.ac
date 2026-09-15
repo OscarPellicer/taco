@@ -20,6 +20,11 @@ AS_IF([test -z "$TACO_CXX23_FLAG"], [
 AC_MSG_RESULT([$TACO_CXX23_FLAG])
 AC_LANG_POP([C++])
 
+TACO_THREAD_FLAGS=
+case "$CXX" in
+    *em++*|*emcc*) TACO_THREAD_FLAGS=-pthread ;;
+esac
+
 AC_PATH_TOOL([PKG_CONFIG], [pkg-config], [no])
 AS_IF([test "x$PKG_CONFIG" = xno], [
     AC_MSG_ERROR([pkg-config is required to find libcurl and OpenSSL])
@@ -40,6 +45,7 @@ AC_SUBST([DEPENDENCY_CPPFLAGS])
 AC_SUBST([DEPENDENCY_LIBS])
 AC_SUBST([NATIVE_OBJECTS])
 AC_SUBST([TACO_CXX23_FLAG])
+AC_SUBST([TACO_THREAD_FLAGS])
 
 AC_CONFIG_FILES([src/Makevars])
 AC_OUTPUT
