@@ -19,6 +19,8 @@ bool has_uri_scheme(std::string_view path) noexcept;
 
 // The object path of a URI, without its query or fragment.
 std::string_view without_query(std::string_view uri) noexcept;
+// Safe for diagnostics: hides URI userinfo, queries, and fragments.
+std::string redact_uri(std::string_view uri);
 
 bool is_zip_name(std::string_view path) noexcept;
 bool is_semver(std::string_view text);

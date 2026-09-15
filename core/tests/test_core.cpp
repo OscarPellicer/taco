@@ -123,6 +123,22 @@ void test_paths() {
     CHECK(taco::is_zip_name("a.zip"));
     CHECK(!taco::is_zip_name("https://host/.tacocat"));
     CHECK(!taco::is_zip_name("folder"));
+    CHECK(taco::redact_uri("https://user:password@host/data?token=secret") ==
+          "https://<redacted>@host/data?<redacted>");
+    CHECK(taco::redact_uri("s3://bucket/key#credentials") ==
+          "s3://bucket/key#<redacted>");
+
+    CHECK(taco::is_explicit_remote_directory("s3://bucket"));
+    CHECK(taco::is_explicit_remote_directory("gs://bucket"));
+    CHECK(taco::is_explicit_remote_directory("az://container"));
+    CHECK(taco::is_explicit_remote_directory("abfs://container"));
+    CHECK(taco::is_explicit_remote_directory("source://account/product"));
+    CHECK(taco::is_explicit_remote_directory("hf://datasets/owner/repository"));
+    CHECK(taco::is_explicit_remote_directory("hf://owner/repository"));
+    CHECK(taco::is_explicit_remote_directory("https://example.test"));
+    CHECK(!taco::is_explicit_remote_directory("s3://bucket/object"));
+    CHECK(!taco::is_explicit_remote_directory("source://account/product/object"));
+    CHECK(!taco::is_explicit_remote_directory("hf://datasets/owner/repository/object"));
 
     CHECK(taco::is_semver("1.2.3"));
     CHECK(taco::is_semver("1.2.3-beta.1+build.2"));

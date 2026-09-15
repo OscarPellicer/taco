@@ -62,6 +62,27 @@ std::string_view without_query(std::string_view uri) noexcept {
     return uri.substr(0, uri.find_first_of("?#"));
 }
 
+std::string redact_uri(std::string_view uri) {
+    std::string result(uri);
+    const auto scheme = result.find("://");
+    if (scheme != std::string::npos) {
+        const auto authority = scheme + 3;
+        const auto authority_end = result.find_first_of("/?#", authority);
+        const auto at = result.find('@', authority);
+        if (at != std::string::npos && (authority_end == std::string::npos || at < authority_end))
+            result.replace(authority, at - authority, "<redacted>");
+    }
+    const auto query = result.find('?');
+    const auto fragment = result.find('#');
+    const auto secret = std::min(query, fragment);
+    if (secret != std::string::npos) {
+        const bool had_query = query == secret;
+        result.resize(secret);
+        result += had_query ? "?<redacted>" : "#<redacted>";
+    }
+    return result;
+}
+
 bool is_zip_name(std::string_view path) noexcept {
     const auto object = without_query(path);
     if (object.size() < 4)

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -316,21 +317,6 @@ bool is_remote_cozip(const std::string& source) {
     }
 }
 
-bool is_explicit_remote_directory(std::string_view source) {
-    const auto object = without_query(source);
-    if (object.ends_with('/') || source_name(source) == ".tacocat")
-        return true;
-    if (!object.starts_with("file://"))
-        return false;
-    auto path = object.substr(7);
-#ifdef _WIN32
-    if (path.size() >= 3 && path[0] == '/' && path[2] == ':')
-        path.remove_prefix(1);
-#endif
-    std::error_code error;
-    return fs::is_directory(local_path(path), error);
-}
-
 Contract read_contract(const Dataset& dataset) {
     const std::string& source = dataset.source;
     const json::Value root = parse_collection(dataset.collection, source);
@@ -391,6 +377,55 @@ Contract read_contract(const Dataset& dataset) {
 
 } // namespace
 
+bool is_explicit_remote_directory(std::string_view source) {
+    const auto object = without_query(source);
+    if (object.ends_with('/') || source_name(source) == ".tacocat")
+        return true;
+
+    const auto marker = object.find("://");
+    if (marker == std::string_view::npos)
+        return false;
+    const auto scheme = object.substr(0, marker);
+    auto rest = object.substr(marker + 3);
+    const auto components = [](std::string_view value) {
+        std::size_t count = 0;
+        for (std::size_t start = 0; start < value.size();) {
+            const auto slash = value.find('/', start);
+            const auto end = slash == std::string_view::npos ? value.size() : slash;
+            if (end > start)
+                ++count;
+            if (slash == std::string_view::npos)
+                break;
+            start = slash + 1;
+        }
+        return count;
+    };
+
+    if (scheme == "s3" || scheme == "gs" || scheme == "az" || scheme == "abfs")
+        return components(rest) == 1;
+    if (scheme == "source")
+        return components(rest) == 2;
+    if (scheme == "hf") {
+        if (rest.starts_with("datasets/"))
+            rest.remove_prefix(9);
+        else if (rest.starts_with("spaces/"))
+            rest.remove_prefix(7);
+        return components(rest) == 2;
+    }
+    if (scheme == "http" || scheme == "https")
+        return components(rest) == 1;
+    if (scheme != "file")
+        return false;
+
+    auto path = rest;
+#ifdef _WIN32
+    if (path.size() >= 3 && path[0] == '/' && path[2] == ':')
+        path.remove_prefix(1);
+#endif
+    std::error_code error;
+    return fs::is_directory(local_path(path), error);
+}
+
 const std::vector<std::string>* Contract::fields_of(std::string_view level) const {
     for (const auto& [name, names] : fields) {
         if (name == level)
@@ -419,9 +454,30 @@ Dataset open_dataset(const std::string& source, const std::string& cache_dir) {
     Dataset dataset;
     std::error_code error;
     if (has_uri_scheme(source)) {
-        const bool archive = is_zip_name(source) ||
-                             (!is_explicit_remote_directory(source) && is_remote_cozip(source));
-        dataset = archive ? open_zip(source, cache_root) : open_uri_directory(source, cache_root);
+        if (is_zip_name(source)) {
+            dataset = open_zip(source, cache_root);
+        } else if (is_explicit_remote_directory(source)) {
+            dataset = open_uri_directory(source, cache_root);
+        } else {
+            bool archive = false;
+            bool opened_as_directory = false;
+            try {
+                archive = is_remote_cozip(source);
+            } catch (const Error& probe_error) {
+                if (probe_error.transport() != KARU_ERR_AUTH)
+                    throw;
+                const auto original = std::current_exception();
+                try {
+                    dataset = open_uri_directory(source, cache_root);
+                    opened_as_directory = true;
+                } catch (...) {
+                    std::rethrow_exception(original);
+                }
+            }
+            if (!opened_as_directory)
+                dataset = archive ? open_zip(source, cache_root)
+                                  : open_uri_directory(source, cache_root);
+        }
     }
     else if (fs::is_directory(local_path(source), error))
         dataset = open_local_directory(source);

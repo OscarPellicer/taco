@@ -1,6 +1,7 @@
 #include "transport.hpp"
 
 #include "error.hpp"
+#include "paths.hpp"
 
 #include <karu/karu.h>
 
@@ -66,7 +67,7 @@ Locator resolve(const std::string& uri) {
     karu_locator* raw = nullptr;
     const karu_status status = karu_resolve(uri.c_str(), &raw);
     if (status != KARU_OK)
-        transport_error(status, "could not resolve " + uri);
+        transport_error(status, "could not resolve " + redact_uri(uri));
     return Locator(raw);
 }
 
@@ -82,7 +83,7 @@ std::uint64_t object_size(const std::string& uri) {
     std::uint64_t size = 0;
     const karu_status status = karu_client_size(transport.get(), locator.get(), &size);
     if (status != KARU_OK)
-        transport_error(status, "could not open " + uri);
+        transport_error(status, "could not open " + redact_uri(uri));
     return size;
 }
 
@@ -107,7 +108,7 @@ std::vector<std::string> read_ranges(const std::vector<Range>& ranges) {
     const auto transport = client();
     const karu_status status = karu_client_fetch(transport.get(), requests.data(), requests.size());
     if (status != KARU_OK)
-        transport_error(status, "could not read " + ranges.front().uri);
+        transport_error(status, "could not read " + redact_uri(ranges.front().uri));
     return buffers;
 }
 
@@ -115,7 +116,7 @@ std::string read_object(const std::string& uri, std::uint64_t limit, const std::
     const std::uint64_t size = object_size(uri);
     if (size > limit)
         fail(what + " is larger than " + std::to_string(limit / (1024 * 1024)) +
-             " MiB, refusing to read it: " + uri);
+             " MiB, refusing to read it: " + redact_uri(uri));
     return std::move(read_ranges({Range{uri, 0, size}}).front());
 }
 

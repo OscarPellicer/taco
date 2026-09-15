@@ -42,6 +42,10 @@ struct Dataset {
 // cache_dir empty selects the default cache.
 Dataset open_dataset(const std::string& source, const std::string& cache_dir);
 
+// True when the URI shape can only name a backend root or explicitly names a
+// directory. Such sources must not pay an object probe first.
+bool is_explicit_remote_directory(std::string_view source);
+
 // Where a remote directory is. karu only resolves URIs that name an object, so
 // a bucket or repository root is located through its COLLECTION.json.
 std::string remote_directory(const std::string& directory);

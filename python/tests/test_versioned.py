@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -85,6 +86,9 @@ class Handler(SimpleHTTPRequestHandler):
         type(self).requests.append(self.path)
         if self.path == "/unavailable/taco.json":
             self.send_error(503)
+            return
+        if self.path == "/folder" or self.path.startswith("/signed?"):
+            self.send_error(403)
             return
         super().do_GET()
 
@@ -240,3 +244,24 @@ def test_invalid_json_and_missing_explicit_manifest_are_rejected(tmp_path: Path)
 def test_http_errors_other_than_not_found_do_not_fall_back(tmp_path: Path) -> None:
     with server(tmp_path) as base, pytest.raises(ContainerError, match="HTTP 503"):
         taco.open_dataset(f"{base}/unavailable/")
+
+
+def test_forbidden_object_probe_falls_back_to_directory(tmp_path: Path) -> None:
+    fixture = Path(__file__).parents[2] / "core/tests/data/taco_folder"
+    shutil.copytree(fixture, tmp_path / "folder")
+
+    with server(tmp_path) as base:
+        dataset = taco.open_dataset(f"{base}/folder")
+
+    assert dataset.sources == (f"{base}/folder",)
+    assert "/folder" in Handler.requests
+    assert "/folder/COLLECTION.json" in Handler.requests
+
+
+def test_failed_directory_fallback_preserves_original_probe_error(tmp_path: Path) -> None:
+    secret = "do-not-leak"
+    with server(tmp_path) as base, pytest.raises(ContainerError) as caught:
+        taco.open_dataset(f"{base}/signed?X-Amz-Signature={secret}")
+
+    assert "HTTP 403" in str(caught.value)
+    assert secret not in str(caught.value)
