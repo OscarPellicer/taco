@@ -105,7 +105,7 @@ TACO is guided by five design principles.
 
 **Supports FAIR datasets.** TACO provides descriptive metadata, identifiers, licensing, spatial and temporal extents, Parquet, and VSI paths. Producers remain responsible for the quality and accessibility of the information they publish.
 
-**Language-agnostic.** The reader is a DuckDB extension. Any language with a DuckDB client can use the same SQL interface.
+**Language-agnostic.** One C++ core resolves datasets and generates the reader SQL. Python, R, and Julia call it through a C interface and run that SQL with their own DuckDB client.
 
 ### 4.1. Tradeoffs
 
@@ -757,91 +757,93 @@ with taco.open_writer(collection, "clouds.zip") as writer:
     writer.run()
 ```
 
-### 8.2. DuckDB Extension (Reader)
+### 8.2. Reader
 
-The reference reader is part of the CoZIP DuckDB extension. Every DuckDB client uses the same SQL interface. Remote access goes through DuckDB's filesystem layer, including `httpfs`.
+The reference reader is the TACO core, a C++ library with a C interface. The Python, R, and Julia packages load the same library, so a read returns the same rows in every language.
+
+The core detects ZIP, FOLDER, or TACOCAT from the path and reads `COLLECTION.json` and the metadata Parquet through Karu. It generates the SQL for the requested view, and each package runs that SQL with its own DuckDB client.
+
+For a ZIP, the core reads the byte-0 index and fetches `COLLECTION.json` and every indexed Parquet range in one batch. For a remote FOLDER or TACOCAT, it fetches the Parquet files named by `taco:metadata`, because object stores cannot list directories reliably. This metadata is written to a local cache with one directory per dataset version, keyed by the ZIP integrity hash or by the collection and the Parquet sizes. A local FOLDER or TACOCAT is read in place. The cache lives in the user cache directory, and `TACO_CACHE_DIR` overrides it.
+
+#### read(path, idx, level, layout, files, location)
+
+`read` returns a table in the native table type of the language.
+
+**path** is required. It accepts a local path or a remote location supported by Karu, including HTTP, S3, Google Cloud Storage, Azure, Hugging Face, and Source Cooperative.
 
 ```
-INSTALL cozip FROM community;
-LOAD cozip;
+taco.read("/data/cloudsen12.zip")
+taco.read("https://example.com/cloudsen12.zip")
+taco.read("s3://bucket/cloudsen12.zip")
+taco.read("hf://datasets/tacofoundation/cloudsen12/cloudsen12.zip")
+taco.read("source://taco/cloudsen12/cloudsen12.zip")
 ```
 
-#### read\_taco(path, idx, level, pivoted, files, location)
+Remote file locations use the VSI prefix of their storage, such as `/vsicurl/`, `/vsis3/`, `/vsigs/`, `/vsiaz/`, `/vsihf/`, or `/vsisource/`.
 
-`read_taco` returns a table and detects ZIP, FOLDER, or TACOCAT from the path.
-
-**path** is required and accepts any local or remote filesystem supported by DuckDB, including HTTP, S3, Azure, GCS, and Hugging Face. For ZIP containers, DuckDB reads the byte-0 index and scans the indexed Parquet ranges with predicate and projection pushdown.
-
-```
-SELECT * FROM read_taco('/data/cloudsen12.zip');
-SELECT * FROM read_taco('s3://bucket/cloudsen12.zip');
-SELECT * FROM read_taco('https://example.com/cloudsen12.zip');
-SELECT * FROM read_taco('hf://datasets/tacofoundation/cloudsen12/cloudsen12.zip');
-```
-
-**idx** selects samples by their local integer position. `NULL` returns all samples, an integer returns one sample, and a two-element list `[start, end]` returns the half-open range from `start` through `end - 1`.
+**idx** selects samples by their local integer position. By default all samples are returned. An integer returns one sample, and a pair `(start, end)` returns the half-open range from `start` through `end - 1`.
 
 For TACOCAT, the selection is applied independently to every source partition. Filter `source_file` when selecting from one partition.
 
 ```
-SELECT * FROM read_taco('dataset.zip');                -- all samples
-SELECT * FROM read_taco('dataset.zip', idx := 5);         -- sample 5
-SELECT * FROM read_taco('dataset.zip', idx := [0, 100]);  -- first 100 samples
+taco.read("dataset.zip")                # all samples
+taco.read("dataset.zip", idx=5)         # sample 5
+taco.read("dataset.zip", idx=(0, 100))  # first 100 samples
 ```
 
-**level** selects a metadata level. `NULL` returns the default dataset view. A level name reads its Parquet directly without joins. When `level` is set, `idx`, `pivoted`, `files`, and `location` do not apply. A raw level read does not synthesize a location column and removes any stored `cozip:location` or `taco:location` column.
+**level** selects a metadata level. By default the reader returns the joined dataset view. A level name reads its Parquet directly without joins. When `level` is set, `idx`, `layout`, `files`, and `location` do not apply. A raw level read does not synthesize a location column and removes any stored `cozip:location` or `taco:location` column.
 
 ```
-SELECT * FROM read_taco('dataset.zip');                         -- joined view
-SELECT * FROM read_taco('dataset.zip', level := 'sample');          -- sample.parquet
-SELECT * FROM read_taco('dataset.zip', level := 'children');        -- children.parquet
-SELECT * FROM read_taco('dataset.zip', level := 'children/before'); -- children__before.parquet
+taco.read("dataset.zip")                           # joined view
+taco.read("dataset.zip", level="sample")           # sample.parquet
+taco.read("dataset.zip", level="children")         # children.parquet
+taco.read("dataset.zip", level="children/before")  # children__before.parquet
 ```
 
-**pivoted** controls the result shape. The default value is `true`, which returns one row per sample, its sample metadata, and one VSI path column per selected file. When `false`, the result contains one row per file. Each row includes the metadata of that file and its ancestor folders, with the nearest declaration taking precedence when the same qualified field appears at more than one level.
+**layout** controls the result shape. The default `wide` layout returns one row per sample, its sample metadata, and one VSI path column per selected file. The `long` layout returns one row per file. Each row includes the metadata of that file and its ancestor folders, with the nearest declaration taking precedence when the same qualified field appears at more than one level.
 
-**files** limits which structure declarations appear in a pivoted result. A fixed file is selected by its full contract path. A variable sequence is selected by its declaration, such as `img*[4,16].tif`. `NULL` returns every declared file.
+**files** limits which structure declarations appear in the result. A fixed file is selected by its full contract path. A variable sequence is selected by its declaration, such as `img*[4,16].tif`. By default every declared file is returned.
 
-**location** controls whether the reader calculates file locations. The default is `true`. In a pivoted result, calculated values populate the file columns defined by `taco:structure`. In an unpivoted result, each file row includes `taco:location`. When `false`, a reader MAY replace calculated locations with `NULL` or omit them.
+**location** controls whether the reader calculates file locations. The default is `true`. In a wide result, calculated values populate the file columns defined by `taco:structure`. In a long result, each file row includes `taco:location`. When `false`, a reader MAY replace calculated locations with `NULL` or omit them.
 
-Both shapes include `sample_id`. TACOCAT also includes `source_file`, and the pair identifies a sample. The unpivoted shape adds `path` and the reader-calculated `taco:location`. `cozip:location` belongs to the Flat profile and MUST NOT be emitted by a TACO reader.
+Both layouts include `sample_id`. TACOCAT also includes `source_file`, and the pair identifies a sample. The long layout adds `path` and the reader-calculated `taco:location`. `cozip:location` belongs to the Flat profile and MUST NOT be emitted by a TACO reader.
 
-Collection metadata is not repeated in every result row. It is available through `taco_collection()` and the language wrappers.
-
-```
--- Pivoted (default), one row per sample, one column per file
-SELECT * FROM read_taco('cloudsen12.zip');
--- sample_id | ml:split | quality:cloud_cover | s2_l1c.tif      | s2_l2a.tif      | target.tif
--- 0         | train    | 23.5                | /vsisubfile/... | /vsisubfile/... | /vsisubfile/...
-
--- Unpivoted, one row per file
-SELECT * FROM read_taco('cloudsen12.zip', pivoted := false);
--- sample_id | ml:split | path       | taco:location
--- 0         | train    | s2_l1c.tif | /vsisubfile/...
--- 0         | train    | s2_l2a.tif | /vsisubfile/...
--- 0         | train    | target.tif | /vsisubfile/...
-
--- Two selected files
-SELECT * FROM read_taco('change_detection.zip', files := ['before/B02.tif', 'after/B02.tif']);
--- sample_id | ml:split | before/B02.tif  | after/B02.tif
-```
-
-A variable sequence such as `img*[4,16].tif` becomes a `LIST(VARCHAR)` column in the pivoted view.
+Collection metadata is not repeated in every result row. It is available through `Dataset.collection`.
 
 ```
-SELECT * FROM read_taco('multitemporal_s2.zip');
--- sample_id | ml:split | img
--- 0         | train    | [/vsisubfile/..., /vsisubfile/..., ...]
--- 1         | val      | [/vsisubfile/..., /vsisubfile/..., ...]
+# Wide (default), one row per sample, one column per file
+taco.read("cloudsen12.zip")
+# sample_id | ml:split | quality:cloud_cover | s2_l1c.tif      | s2_l2a.tif      | target.tif
+# 0         | train    | 23.5                | /vsisubfile/... | /vsisubfile/... | /vsisubfile/...
+
+# Long, one row per file
+taco.read("cloudsen12.zip", layout="long")
+# sample_id | ml:split | path       | taco:location
+# 0         | train    | s2_l1c.tif | /vsisubfile/...
+# 0         | train    | s2_l2a.tif | /vsisubfile/...
+# 0         | train    | target.tif | /vsisubfile/...
+
+# Two selected files
+taco.read("change_detection.zip", files=["before/B02.tif", "after/B02.tif"])
+# sample_id | ml:split | before/B02.tif  | after/B02.tif
+```
+
+A variable sequence such as `img*[4,16].tif` becomes a `LIST(VARCHAR)` column in the wide layout.
+
+```
+taco.read("multitemporal_s2.zip")
+# sample_id | ml:split | img
+# 0         | train    | [/vsisubfile/..., /vsisubfile/..., ...]
+# 1         | val      | [/vsisubfile/..., /vsisubfile/..., ...]
 ```
 
 The list is ordered by the numeric sequence index. A sequence with no files returns an empty list.
 
-When `taco:structure` is null, the default result contains one reader-calculated `taco:location` column for the sample file. Query results have no implicit row order. Callers MUST use `ORDER BY` when order matters.
+When `taco:structure` is null, the default result contains one reader-calculated `taco:location` column for the sample file. Results have no implicit row order. Callers MUST sort them when order matters.
 
-#### taco\_contract(path)
+#### Inspection
 
-`taco_contract` returns the structure and levels as `kind` and `value` rows. The extension also provides `taco_structure`, `taco_levels`, and `taco_collection` for direct inspection. `taco_sql` shows the SQL generated by `read_taco`.
+`taco.reader.inspect` reads the contract without reading samples. `contract` returns the structure and levels as `kind` and `value` rows. `structure`, `levels`, `collection`, and `profile` return them directly, and `sql` shows the SQL the core generates for a read.
 
 ### 8.3. Dataset API
 
@@ -910,7 +912,7 @@ Rows from a source list include `source_file`. As with TACOCAT, the pair `(sourc
 
 The default `wide` layout returns one row per sample with sample metadata and one path column per declared file. The `long` layout returns one row per file and includes metadata inherited from its sample and folders. Collection metadata remains on `dataset.collection` and is never repeated in result rows.
 
-`Dataset` is not a dataframe. It owns dataset semantics and leaves tabular operations to Arrow, DuckDB, Pandas, or Polars. Calling `read()` returns `pyarrow.Table`. The low-level `taco.reader` functions remain available when direct access to the extension is useful.
+`Dataset` is not a dataframe. It owns dataset semantics and leaves tabular operations to Arrow, DuckDB, Pandas, or Polars. Calling `read()` returns `pyarrow.Table`. `taco.reader.inspect` remains available for direct access to the contract and the generated SQL.
 
 Notebook environments use the Dataset HTML representation to show the collection identity, structure, and metadata levels without materializing the sample table.
 
@@ -932,14 +934,14 @@ TACO v3 is not compatible with v2 datasets. Existing datasets MUST be rebuilt to
 | Extension system | Formal `extend_with()` interface with SampleExtension, TortillaExtension, TacoExtension classes | Scoped Pydantic groups for sample, folder, asset, and collection metadata |
 | Structural constraint | Position-Invariant Tree inferred at runtime | Structure and metadata declared in a contract |
 | Library dependency | GDAL required | VSI path convention. GDAL is one implementation. |
-| Reader implementation | TacoReader (Python classes with lazy query, DuckDB internally) | Native DuckDB extension (`read_taco`), thin wrappers in Python/R/Julia |
+| Reader implementation | TacoReader (Python classes with lazy query, DuckDB internally) | One C++ core that generates the reader SQL, thin wrappers in Python/R/Julia that run it with DuckDB |
 | Writer implementation | TacoToolbox (Sample, Tortilla, Taco classes) | `taco.open_writer()` |
 | ZIP extension | `.tacozip` | `.zip`, with the CoZIP profile byte as the only type signal |
 | TACOCAT format | Binary file with 128-byte header, fixed 7-entry index table | Directory with merged Parquets and COLLECTION.json |
 | TACOLLECTION | Separate `TACOLLECTION.json` file | Merged into TACOCAT COLLECTION.json via `taco:sources` field |
 | Dataset versioning | `dataset_version` field, no formal scheme | SemVer with defined semantics (PATCH/MINOR/MAJOR, see Section 6) |
 | Spec versioning | SemVer (`2.0.0`) | SemVer (`3.0.0`) |
-| Hierarchical navigation | `read()` method traversing `__meta__` files | SQL queries via `read_taco()` with `level` parameter |
+| Hierarchical navigation | `read()` method traversing `__meta__` files | `read()` with the `level` parameter |
 | Filtering | `filter_bbox()`, `filter_datetime()` with cascading JOINs | SQL `WHERE` clauses on Parquet columns |
 | Concatenation | `concat()` with column modes | SQL `UNION` or TACOCAT consolidation |
 
@@ -963,7 +965,7 @@ v3 stores sample, folder, and asset metadata in the Parquet files under `METADAT
 
 v2 used a Python reader with separate backends for ZIP, FOLDER, and TACOCAT. DuckDB was hidden behind TACO-specific dataset and dataframe classes.
 
-v3 moves reading into the CoZIP DuckDB extension. It exposes `read_taco()` and inspection functions through SQL, detects the container, and builds paths internally. Every DuckDB client uses the same implementation, with an optional convenience wrapper for Python.
+v3 moves reading into one C++ core shared by the Python, R, and Julia packages. The core detects the container, reads the metadata through Karu, builds the file locations, and generates the SQL that each package runs with its own DuckDB client.
 
 ### A.5. Extension System
 
@@ -997,7 +999,7 @@ OceanTACO, built with Nils Lehmann at TUM, tested v2 on ocean remote sensing dat
 
 TACO v2 worked. We published datasets, people used them, and the tools held up for small and medium collections. Asterisk Labs then used TACO to build datasets at production scale. Each dataset revealed another limit of v2.
 
-TACO v3 is smaller than v2. The contract replaces PIT, the extension hierarchy, and padding. One DuckDB extension replaces three Python reader backends. Local `__meta__` files and the binary TACOCAT header are gone.
+TACO v3 is smaller than v2. The contract replaces PIT, the extension hierarchy, and padding. One reader core replaces three Python reader backends. Local `__meta__` files and the binary TACOCAT header are gone.
 
 The original idea remains the same. Data and metadata should live together so that a machine learning researcher can query, filter, and load a dataset without thinking about its packaging.
 

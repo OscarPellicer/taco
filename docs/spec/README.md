@@ -29,7 +29,7 @@ independent copy of the specification.
 5. Data Model (Contract, Structure, Metadata, Collection)
 6. Dataset Versioning (SemVer)
 7. Physical Layer (Directory, Parquet, ZIP, FOLDER, TACOCAT)
-8. API Layer (taco writer, DuckDB extension, language clients)
+8. API Layer (taco writer, reader core, language clients)
 - Annex A: Migration from v2
 - Annex B: History
 
