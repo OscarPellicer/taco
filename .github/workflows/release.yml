@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           submodules: true
           persist-credentials: false
 
@@ -69,6 +70,16 @@ jobs:
               if tag != expected:
                   raise SystemExit(f"tag {tag} does not match expected {expected}")
               if tag == f"v{version}":
+                  import subprocess
+
+                  native_tag = f"libtaco-v{version}"
+                  comparison = subprocess.run(
+                      ["git", "diff", "--quiet", native_tag, "HEAD", "--", "core", "extern/karu"]
+                  )
+                  if comparison.returncode != 0:
+                      raise SystemExit(
+                          f"core or extern/karu differs between {native_tag} and {tag}"
+                      )
                   artifacts = (root / "julia/Artifacts.toml").read_text()
                   expected_url = f"releases/download/libtaco-v{version}/"
                   if artifacts.count("[[taco]]") != 5 or artifacts.count(expected_url) != 5:
@@ -126,13 +137,24 @@ jobs:
     env:
       VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
       VCPKG_DEFAULT_HOST_TRIPLET: ${{ matrix.triplet }}
-      VCPKG_INSTALLED_DIR: vcpkg_installed
       MACOSX_DEPLOYMENT_TARGET: ${{ startsWith(matrix.name, 'macos-') && '11.0' || '' }}
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: true
           persist-credentials: false
+
+      - name: Set release paths (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          echo "VCPKG_INSTALLED_DIR=$PWD/vcpkg_installed" >> "$GITHUB_ENV"
+          echo "TACO_TRIPLETS_DIR=$PWD/core/triplets" >> "$GITHUB_ENV"
+
+      - name: Set release paths (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_INSTALLED_DIR=$($PWD.Path)\vcpkg_installed"
+          Add-Content -Path $env:GITHUB_ENV -Value "TACO_TRIPLETS_DIR=$($PWD.Path)\core\triplets"
 
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
@@ -143,13 +165,20 @@ jobs:
 
       - uses: lukka/run-vcpkg@v11
         with:
+          vcpkgDirectory: vcpkg
           vcpkgGitCommitId: 9e44ec0e9f247d77c230ced0ee66c76296837807
           vcpkgJsonGlob: "**/core/vcpkg.json"
           runVcpkgInstall: true
+          runVcpkgFormatString: '[`install`, `--recurse`, `--clean-after-build`, `--x-install-root`, `$[env.VCPKG_INSTALLED_DIR]`, `--triplet`, `$[env.VCPKG_DEFAULT_TRIPLET]`, `--overlay-triplets=triplets`]'
           doNotCache: false
 
-      - name: Configure
-        run: cmake -S core -B core/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=core/install -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_INSTALLED_DIR=vcpkg_installed -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ env.MACOSX_DEPLOYMENT_TARGET }} -DTACO_BUILD_TESTS=ON -DTACO_WERROR=ON
+      - name: Configure (Unix)
+        if: runner.os != 'Windows'
+        run: cmake -S core -B core/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=core/install -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR" -DVCPKG_OVERLAY_TRIPLETS="$TACO_TRIPLETS_DIR" -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ env.MACOSX_DEPLOYMENT_TARGET }} -DTACO_BUILD_TESTS=ON -DTACO_WERROR=ON
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S core -B core/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=core/install -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} "-DVCPKG_INSTALLED_DIR=$env:VCPKG_INSTALLED_DIR" "-DVCPKG_OVERLAY_TRIPLETS=$env:TACO_TRIPLETS_DIR" -DTACO_BUILD_TESTS=ON -DTACO_WERROR=ON
 
       - run: cmake --build core/build-release --config Release --parallel
       - run: ctest --test-dir core/build-release -C Release --output-on-failure
@@ -698,4 +727,11 @@ jobs:
         run: npm ci
 
       - working-directory: javascript
-        run: npm publish --access public
+        run: |
+          package=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$package@$version" version >/dev/null 2>&1; then
+            echo "$package@$version is already published; skipping npm publish"
+            exit 0
+          fi
+          npm publish --access public
