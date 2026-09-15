@@ -2,3 +2,4 @@
 ^src/.*\.(o|so|dll|dylib)$
 ^src/Makevars$
 ^src/Makevars\.win$
+^config\.(log|status)$

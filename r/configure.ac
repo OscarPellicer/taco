@@ -16,8 +16,10 @@ AS_IF([$PKG_CONFIG --exists 'libcurl >= 7.83.0' 'openssl >= 3.0'], [
 
 DEPENDENCY_CPPFLAGS=`$PKG_CONFIG --cflags libcurl openssl`
 DEPENDENCY_LIBS=`$PKG_CONFIG --libs libcurl openssl`
+NATIVE_OBJECTS=`find src/vendor/taco/src src/vendor/karu/src -type f -name '*.cpp' -print | LC_ALL=C sort | sed -e 's|^src/||' -e 's|\.cpp$|.o|' | tr '\n' ' '`
 AC_SUBST([DEPENDENCY_CPPFLAGS])
 AC_SUBST([DEPENDENCY_LIBS])
+AC_SUBST([NATIVE_OBJECTS])
 
 AC_CONFIG_FILES([src/Makevars])
 AC_OUTPUT

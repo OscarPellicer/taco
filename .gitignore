@@ -33,6 +33,10 @@ python/taco/_lib/
 *.o
 *~
 autom4te.cache/
+/r/config.log
+/r/config.status
+/r/src/Makevars
+/r/src/Makevars.win
 
 create-julia-skeleton.sh
 _site/

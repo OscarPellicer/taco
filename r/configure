@@ -590,6 +590,7 @@ PACKAGE_URL=''
 ac_unique_file="DESCRIPTION"
 ac_subst_vars='LTLIBOBJS
 LIBOBJS
+NATIVE_OBJECTS
 DEPENDENCY_LIBS
 DEPENDENCY_CPPFLAGS
 PKG_CONFIG
@@ -1874,6 +1875,8 @@ fi
 
 DEPENDENCY_CPPFLAGS=`$PKG_CONFIG --cflags libcurl openssl`
 DEPENDENCY_LIBS=`$PKG_CONFIG --libs libcurl openssl`
+NATIVE_OBJECTS=`find src/vendor/taco/src src/vendor/karu/src -type f -name '*.cpp' -print | LC_ALL=C sort | sed -e 's|^src/||' -e 's|\.cpp$|.o|' | tr '\n' ' '`
+
 
 
 

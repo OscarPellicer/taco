@@ -14,7 +14,7 @@ Encoding: UTF-8
 Language: en-US
 SystemRequirements: C++23, libcurl (>= 7.83.0), OpenSSL (>= 3.0)
 Depends:
-    R (>= 4.1)
+    R (>= 4.3)
 Imports:
     duckdb (>= 1.5.5),
     DBI,

@@ -13,10 +13,13 @@ fi
 
 dependency_cppflags=$(pkg-config --cflags libcurl openssl)
 dependency_libs=$(pkg-config --libs libcurl openssl)
+native_objects=$(find src/vendor/taco/src src/vendor/karu/src -type f -name '*.cpp' -print | LC_ALL=C sort | sed -e 's|^src/||' -e 's|\.cpp$|.o|' | tr '\n' ' ')
 escaped_cppflags=$(printf '%s' "$dependency_cppflags" | sed 's/[&|]/\\&/g')
 escaped_libs=$(printf '%s' "$dependency_libs" | sed 's/[&|]/\\&/g')
+escaped_objects=$(printf '%s' "$native_objects" | sed 's/[&|]/\\&/g')
 
 sed \
     -e "s|@DEPENDENCY_CPPFLAGS@|$escaped_cppflags|g" \
     -e "s|@DEPENDENCY_LIBS@|$escaped_libs|g" \
+    -e "s|@NATIVE_OBJECTS@|$escaped_objects|g" \
     src/Makevars.win.in > src/Makevars.win

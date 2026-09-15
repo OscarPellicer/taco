@@ -17,7 +17,7 @@ OPENSSL_ROOT_DIR ?= $(shell brew --prefix openssl@3 2>/dev/null)
 CORE_BUILD := core/build
 CORE_LIB := $(CORE_BUILD)/$(if $(filter Darwin,$(shell uname -s)),libtaco.dylib,libtaco.so)
 
-# The R and Julia packages link the core built here.
+# Julia links the development core built here. R compiles its vendored copy.
 export TACO_CORE_DIR := $(abspath core)
 export TACO_LIB := $(abspath $(CORE_LIB))
 
