@@ -1,11 +1,17 @@
 import { openTacoArchive } from "../container/cozip.js";
 import { directoryUrl, httpUrl, openHttpObject } from "../container/http.js";
 import { encodeRelativePath, levelFilename, relativePath } from "../container/paths.js";
-import { fail } from "../errors.js";
+import { fail, TacoError } from "../errors.js";
 import { loadCollection, parseCollectionJson } from "./collection.js";
 
 const COLLECTION = "COLLECTION.json";
 const METADATA = "METADATA";
+const NOT_ARCHIVE = new Set([
+  "HTTP_ERROR",
+  "ARCHIVE_TOO_SMALL",
+  "TRUNCATED_INDEX",
+  "INVALID_INDEX",
+]);
 
 /**
  * @typedef {import("../contract/collection.js").ParsedCollection} ParsedCollection
@@ -120,8 +126,17 @@ export async function openSource(source, client, hint = "auto", embedded = null)
   if (!["auto", "folder", "zip", "tacocat"].includes(hint)) {
     throw new TypeError("taco: container must be auto, folder, zip, or tacocat");
   }
-  const zip = hint === "zip" || (hint === "auto" && new URL(url).pathname.toLowerCase().endsWith(".zip"));
-  if (zip) return openZip(url, client, embedded);
+  const pathname = new URL(url).pathname;
+  const zipName = pathname.toLowerCase().endsWith(".zip");
+  const directoryName = pathname.endsWith("/") || pathname.split("/").at(-1) === ".tacocat";
+  if (hint === "zip" || (hint === "auto" && zipName)) return openZip(url, client, embedded);
+  if (hint === "auto" && !directoryName) {
+    try {
+      return await openZip(url, client, embedded);
+    } catch (error) {
+      if (!isNotArchive(error)) throw error;
+    }
+  }
 
   const base = directoryUrl(url);
   const parsed = embedded ?? (await loadCollection(client, new URL(COLLECTION, base).href));
@@ -132,6 +147,16 @@ export async function openSource(source, client, hint = "auto", embedded = null)
   return actual === "tacocat"
     ? new TacocatSource(base, client, parsed)
     : new FolderSource(base, client, parsed);
+}
+
+/**
+ * Failures before a CoZIP profile can be read mean the URL may be a directory.
+ * Once a profile or authenticated index is visible, preserve the archive error.
+ *
+ * @param {unknown} error
+ */
+function isNotArchive(error) {
+  return error instanceof TacoError && NOT_ARCHIVE.has(error.code);
 }
 
 /**

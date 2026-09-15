@@ -24,6 +24,16 @@ test("opens a TACO-profile ZIP and exposes its contract", async () => {
   assert.deepEqual(dataset.levels, ["sample", "children"]);
 });
 
+test("detects a TACO-profile ZIP without relying on its URL suffix", async () => {
+  const dataset = await openDataset(`${fixture.baseUrl}/dataset`);
+  assert.equal(dataset.container, "zip");
+  assert.equal(dataset.collection.id, "taco-fixture");
+  await assert.rejects(
+    () => openDataset(`${fixture.baseUrl}/flat`),
+    (error) => error instanceof TacoError && error.code === "UNKNOWN_PROFILE",
+  );
+});
+
 test("raw level reads never synthesize a location", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
   const rows = await dataset.readLevel("sample", {

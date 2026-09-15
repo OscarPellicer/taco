@@ -31,9 +31,9 @@ console.log(dataset.levels);     // sample, children, ...
 ```
 
 The same call accepts the URL of a FOLDER directory or a `.tacocat` directory.
-Auto-detection treats `.zip` URLs as archives and classifies directories from
-their `COLLECTION.json`. A container hint is available for URLs without the
-standard suffix:
+Auto-detection verifies the CoZIP profile even when an archive URL has no
+`.zip` suffix, and classifies directories from their `COLLECTION.json`. An
+explicit container hint is also available:
 
 ```js
 const dataset = await openDataset(url, { container: "zip" });

@@ -27,8 +27,14 @@ export async function fixtureServer() {
     const path = new URL(request.url ?? "/", "http://fixture.test").pathname;
     requests.push({ path, range: request.headers.range });
     if (path === "/dataset.zip") return serve(response, archive, request.headers.range);
+    if (path === "/dataset") return serve(response, archive, request.headers.range);
     if (path === "/full.zip") return serve(response, archive, undefined);
     if (path === "/flat.zip") {
+      const bytes = archive.slice();
+      bytes[57] = 1;
+      return serve(response, bytes, request.headers.range);
+    }
+    if (path === "/flat") {
       const bytes = archive.slice();
       bytes[57] = 1;
       return serve(response, bytes, request.headers.range);
