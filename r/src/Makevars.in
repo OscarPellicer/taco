@@ -1,6 +1,6 @@
-CXX_STD = CXX23
-
 OBJECTS = taco.o @NATIVE_OBJECTS@
+
+PKG_CXXFLAGS = @TACO_CXX23_FLAG@
 
 PKG_CPPFLAGS = \
     -include taco_versions.h \
