@@ -6,6 +6,8 @@
 #include "paths.hpp"
 #include "transport.hpp"
 
+#include <karu/karu.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -304,9 +306,29 @@ bool is_remote_cozip(const std::string& source) {
     try {
         (void)read_cozip_profile(source);
         return true;
-    } catch (const Error&) {
-        return false;
+    } catch (const Error& error) {
+        // A missing object may be a directory URL. Format failures mean the
+        // object is not a CoZIP archive. Authentication, network, TLS and
+        // server failures must keep their original diagnostic.
+        if (error.transport() == KARU_ERR_NOT_FOUND || error.transport() == 0)
+            return false;
+        throw;
     }
+}
+
+bool is_explicit_remote_directory(std::string_view source) {
+    const auto object = without_query(source);
+    if (object.ends_with('/') || source_name(source) == ".tacocat")
+        return true;
+    if (!object.starts_with("file://"))
+        return false;
+    auto path = object.substr(7);
+#ifdef _WIN32
+    if (path.size() >= 3 && path[0] == '/' && path[2] == ':')
+        path.remove_prefix(1);
+#endif
+    std::error_code error;
+    return fs::is_directory(local_path(path), error);
 }
 
 Contract read_contract(const Dataset& dataset) {
@@ -396,9 +418,11 @@ Dataset open_dataset(const std::string& source, const std::string& cache_dir) {
 
     Dataset dataset;
     std::error_code error;
-    if (has_uri_scheme(source))
-        dataset = is_zip_name(source) || is_remote_cozip(source) ? open_zip(source, cache_root)
-                                                                 : open_uri_directory(source, cache_root);
+    if (has_uri_scheme(source)) {
+        const bool archive = is_zip_name(source) ||
+                             (!is_explicit_remote_directory(source) && is_remote_cozip(source));
+        dataset = archive ? open_zip(source, cache_root) : open_uri_directory(source, cache_root);
+    }
     else if (fs::is_directory(local_path(source), error))
         dataset = open_local_directory(source);
     else
