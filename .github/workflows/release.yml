@@ -3,55 +3,563 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build Python package
+  validate:
+    name: Validate version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - id: version
+        name: Check package versions
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          root = Path.cwd()
+          python = tomllib.loads((root / "python/pyproject.toml").read_text())["project"]["version"]
+          julia = tomllib.loads((root / "julia/Project.toml").read_text())["version"]
+          javascript = json.loads((root / "javascript/package.json").read_text())["version"]
+          vcpkg = json.loads((root / "core/vcpkg.json").read_text())["version-string"]
+          description = (root / "r/DESCRIPTION").read_text()
+          r = re.search(r"^Version:\s*(\S+)", description, re.MULTILINE).group(1)
+          configure = (root / "r/configure.ac").read_text()
+          r_configure = re.search(r"AC_INIT\(\[taco\], \[([^]]+)\]\)", configure).group(1)
+          cmake = (root / "core/CMakeLists.txt").read_text()
+          core = re.search(r"project\(taco\s+VERSION\s+([0-9.]+)", cmake, re.MULTILINE).group(1)
+
+          versions = {
+              "core": core,
+              "vcpkg": vcpkg,
+              "python": python,
+              "R": r,
+              "R configure": r_configure,
+              "Julia": julia,
+              "JavaScript": javascript,
+          }
+          if len(set(versions.values())) != 1:
+              raise SystemExit(f"package versions disagree: {versions}")
+          version = python
+          tag = os.environ["GITHUB_REF_NAME"]
+          if os.environ["GITHUB_REF_TYPE"] == "tag" and tag != f"v{version}":
+              raise SystemExit(f"tag {tag} does not match version {version}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"value={version}", file=output)
+          PY
+
+  build-lib:
+    name: libtaco (${{ matrix.name }})
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            triplet: x64-linux
+            library: libtaco.so
+            shell: bash
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            container: quay.io/pypa/manylinux_2_28_aarch64
+            triplet: arm64-linux
+            library: libtaco.so
+            shell: bash
+          - name: macos-aarch64
+            runner: macos-14
+            container: ""
+            triplet: arm64-osx
+            library: libtaco.dylib
+            shell: bash
+          - name: macos-x86_64
+            runner: macos-15-intel
+            container: ""
+            triplet: x64-osx
+            library: libtaco.dylib
+            shell: bash
+          - name: windows-x86_64
+            runner: windows-2022
+            container: ""
+            triplet: x64-windows-static
+            library: taco.dll
+            shell: pwsh
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
+      VCPKG_DEFAULT_HOST_TRIPLET: ${{ matrix.triplet }}
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - uses: lukka/get-cmake@v4
+
+      - uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 9e44ec0e9f247d77c230ced0ee66c76296837807
+          vcpkgJsonGlob: "**/core/vcpkg.json"
+          runVcpkgInstall: true
+          doNotCache: false
+
+      - name: Configure
+        run: cmake -S core -B core/build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=core/install -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_INSTALLED_DIR=${{ github.workspace }}/vcpkg_installed -DTACO_BUILD_TESTS=ON -DTACO_WERROR=ON
+
+      - run: cmake --build core/build-release --config Release --parallel
+      - run: ctest --test-dir core/build-release -C Release --output-on-failure
+      - run: cmake --install core/build-release --config Release
+
+      - if: runner.os == 'Linux'
+        name: Verify Linux dependencies
+        run: |
+          ldd core/install/lib/libtaco.so
+          if ldd core/install/lib/libtaco.so | grep -E 'curl|ssl|crypto'; then
+            echo "libtaco still depends on a build-environment crypto or curl library"
+            exit 1
+          fi
+
+      - if: runner.os == 'macOS'
+        name: Verify and sign macOS library
+        run: |
+          otool -L core/install/lib/libtaco.dylib
+          if otool -L core/install/lib/libtaco.dylib | tail -n +2 | grep -E 'curl|ssl|crypto|/(opt/homebrew|usr/local|vcpkg)/'; then
+            echo "libtaco still contains a build-environment library path"
+            exit 1
+          fi
+          codesign --force --sign - core/install/lib/libtaco.dylib
+
+      - if: runner.os == 'Windows'
+        name: Verify Windows dependencies
+        run: |
+          $dependencies = (dumpbin /dependents core\install\bin\taco.dll | Out-String)
+          $dependencies
+          if ($dependencies -match 'libcurl|libssl|libcrypto') {
+            throw "taco.dll still depends on a build-environment crypto or curl DLL"
+          }
+
+      - name: Stage artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p staged
+          cp core/install/lib/${{ matrix.library }} staged/
+          cp core/include/taco/taco.h staged/
+          cp python/LICENSE staged/LICENSE
+          cp extern/karu/LICENSE staged/karu-LICENSE
+          cp README.md staged/
+
+      - name: Stage artifact (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force -Path staged | Out-Null
+          Copy-Item core\install\bin\taco.dll staged\
+          Copy-Item core\include\taco\taco.h staged\
+          Copy-Item python\LICENSE staged\LICENSE
+          Copy-Item extern\karu\LICENSE staged\karu-LICENSE
+          Copy-Item README.md staged\
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: libtaco-${{ matrix.name }}
+          path: staged/
+          if-no-files-found: error
+
+  python-wheel:
+    name: Python wheel (${{ matrix.name }})
+    needs: build-lib
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            library: libtaco.so
+            platform: manylinux_2_28_x86_64
+            shell: bash
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            container: quay.io/pypa/manylinux_2_28_aarch64
+            library: libtaco.so
+            platform: manylinux_2_28_aarch64
+            shell: bash
+          - name: macos-aarch64
+            runner: macos-14
+            container: ""
+            library: libtaco.dylib
+            shell: bash
+          - name: macos-x86_64
+            runner: macos-15-intel
+            container: ""
+            library: libtaco.dylib
+            shell: bash
+          - name: windows-x86_64
+            runner: windows-2022
+            container: ""
+            library: taco.dll
+            shell: pwsh
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - if: runner.os == 'Linux'
+        name: Select build Python
+        run: |
+          ln -sf /opt/python/cp312-cp312/bin/python3 /usr/local/bin/python
+          ln -sf /opt/python/cp312-cp312/bin/pip /usr/local/bin/pip
+
+      - if: runner.os != 'Linux'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: python -m pip install --upgrade pip build hatchling cffi packaging wheel
+      - if: runner.os == 'Linux'
+        run: python -m pip install auditwheel
+      - if: runner.os == 'macOS'
+        run: python -m pip install delocate
+      - if: runner.os == 'Windows'
+        run: python -m pip install delvewheel
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: libtaco-${{ matrix.name }}
+          path: libtaco-bin/
+
+      - name: Bundle core (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p python/taco/_lib
+          cp libtaco-bin/${{ matrix.library }} python/taco/_lib/
+
+      - name: Bundle core (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force -Path python\taco\_lib | Out-Null
+          Copy-Item libtaco-bin\taco.dll python\taco\_lib\
+
+      - working-directory: python
+        run: python -m build --wheel --outdir ../wheelhouse-raw
+
+      - if: runner.os == 'Linux'
+        name: Repair Linux wheel
+        run: |
+          mkdir -p wheelhouse
+          auditwheel repair wheelhouse-raw/*.whl --plat ${{ matrix.platform }} -w wheelhouse
+
+      - if: runner.os == 'macOS'
+        name: Repair macOS wheel
+        run: |
+          mkdir -p wheelhouse
+          delocate-wheel -v -w wheelhouse wheelhouse-raw/*.whl
+
+      - if: runner.os == 'Windows'
+        name: Repair Windows wheel
+        run: |
+          New-Item -ItemType Directory -Force -Path wheelhouse | Out-Null
+          delvewheel repair wheelhouse-raw\*.whl --wheel-dir wheelhouse
+
+      - name: Test installed wheel (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          python -m pip install wheelhouse/*.whl
+          cp core/tests/data/taco_flat.zip "${RUNNER_TEMP}/taco.zip"
+          cd "${RUNNER_TEMP}"
+          python -c "import taco; table = taco.read('taco.zip', location=False); assert table.num_rows > 0; print(taco.__version__)"
+
+      - name: Test installed wheel (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $wheel = (Get-ChildItem wheelhouse\*.whl | Select-Object -First 1).FullName
+          python -m pip install $wheel
+          Copy-Item core\tests\data\taco_flat.zip "$env:RUNNER_TEMP\taco.zip"
+          Push-Location $env:RUNNER_TEMP
+          try { python -c "import taco; table = taco.read('taco.zip', location=False); assert table.num_rows > 0; print(taco.__version__)" } finally { Pop-Location }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-wheel-${{ matrix.name }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  python-sdist:
+    name: Python sdist
+    needs: validate
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
+          submodules: true
           persist-credentials: false
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - name: Check version
+      - name: Install native build dependencies
         run: |
-          VERSION=$(python -c 'from pathlib import Path; import tomllib; print(tomllib.loads(Path("python/pyproject.toml").read_text())["project"]["version"])')
-          if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match version ${VERSION}"
-            exit 1
-          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev libssl-dev
 
-      - name: Test
+      - name: Build and rebuild from the sdist
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e "./python[dev,test-eo]"
-          python -m ruff format --check --config python/pyproject.toml python/taco python/tests python/examples
-          python -m ruff check --config python/pyproject.toml python/taco python/tests python/examples tools
-          python -m mypy --config-file python/pyproject.toml python/taco
-          python -m pytest python --cov=taco --cov-config=python/pyproject.toml --cov-report=term-missing
-
-      - name: Build
-        run: |
-          python -m pip install build twine
-          python -m build --sdist --wheel --outdir dist python
-          python -m twine check dist/*
+          python -m pip install --upgrade pip build twine
+          python -m build --sdist --outdir sdist-out python
+          python -m twine check sdist-out/*
+          python -m pip wheel --no-deps --wheel-dir sdist-wheel sdist-out/*.tar.gz
+          python -m pip install sdist-wheel/*.whl
+          cp core/tests/data/taco_flat.zip "${RUNNER_TEMP}/taco.zip"
+          cd "${RUNNER_TEMP}"
+          python -c "import taco; assert taco.read('taco.zip', location=False).num_rows > 0"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: python-package
-          path: dist/
+          name: python-sdist
+          path: sdist-out/*.tar.gz
           if-no-files-found: error
 
-  publish:
+  r-package:
+    name: R package (${{ matrix.os }})
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Verify vendored core
+        run: |
+          python tools/sync_r_core.py
+          git diff --exit-code -- r/src/vendor r/inst/karu-LICENSE
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - if: runner.os == 'Linux'
+        name: Install R check tools (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends autoconf automake devscripts
+
+      - if: runner.os == 'macOS'
+        name: Install R check tools (macOS)
+        run: brew install autoconf automake checkbashisms
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: r
+          extra-packages: any::rcmdcheck
+          needs: check
+
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          working-directory: r
+          args: 'c("--no-manual", "--as-cran")'
+          error-on: '"warning"'
+
+  julia-package:
+    name: Julia package (${{ matrix.name }})
+    needs: build-lib
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            library: libtaco.so
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            library: libtaco.so
+          - name: macos-aarch64
+            runner: macos-14
+            library: libtaco.dylib
+          - name: macos-x86_64
+            runner: macos-15-intel
+            library: libtaco.dylib
+          - name: windows-x86_64
+            runner: windows-2022
+            library: taco.dll
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+
+      - uses: julia-actions/cache@v2
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: libtaco-${{ matrix.name }}
+          path: libtaco-bin/
+
+      - name: Select core (Unix)
+        if: runner.os != 'Windows'
+        run: echo "TACO_LIB=$(pwd)/libtaco-bin/${{ matrix.library }}" >> "$GITHUB_ENV"
+
+      - name: Select core (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value "TACO_LIB=$((Resolve-Path libtaco-bin\taco.dll).Path)"
+
+      - run: julia --project=julia -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
+
+  javascript-package:
+    name: npm package
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: javascript/package-lock.json
+
+      - working-directory: javascript
+        run: npm ci
+
+      - working-directory: javascript
+        run: npm run types
+
+      - working-directory: javascript
+        run: npm test
+
+      - working-directory: javascript
+        run: npm pack --dry-run
+
+  github-release:
+    name: GitHub release
+    needs: [validate, build-lib, python-wheel, python-sdist, r-package, julia-package, javascript-package]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: libtaco-*
+          path: artifacts/
+
+      - name: Build release archives
+        run: |
+          set -euo pipefail
+          version="${{ needs.validate.outputs.version }}"
+          mkdir -p release-files staging
+          for directory in artifacts/libtaco-*; do
+            platform=$(basename "$directory" | sed 's/^libtaco-//')
+            package="libtaco-${version}-${platform}"
+            stage="staging/${package}"
+            mkdir -p "$stage/include/taco"
+            case "$platform" in
+              windows-*) mkdir -p "$stage/bin"; cp "$directory/taco.dll" "$stage/bin/" ;;
+              macos-*) mkdir -p "$stage/lib"; cp "$directory/libtaco.dylib" "$stage/lib/" ;;
+              linux-*) mkdir -p "$stage/lib"; cp "$directory/libtaco.so" "$stage/lib/" ;;
+            esac
+            cp "$directory/taco.h" "$stage/include/taco/"
+            cp "$directory/LICENSE" "$directory/karu-LICENSE" "$directory/README.md" "$stage/"
+            tar czf "release-files/${package}.tar.gz" -C staging "$package"
+            if [[ "$platform" == windows-* ]]; then
+              (cd staging && zip -qr "../release-files/${package}.zip" "$package")
+            fi
+          done
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-files/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+
+  update-julia-artifacts:
+    name: Update Julia artifacts
+    needs: [validate, github-release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: taco-julia-artifacts
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+
+      - working-directory: julia
+        run: |
+          julia make-artifacts-toml.jl "${{ needs.validate.outputs.version }}" > Artifacts.toml.new
+          mv Artifacts.toml.new Artifacts.toml
+
+      - env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add julia/Artifacts.toml
+          git diff --staged --quiet && exit 0
+          git commit -m "update Julia artifacts for v${VERSION}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+  publish-pypi:
     name: Publish to PyPI
-    needs: build
+    needs: [python-wheel, python-sdist, r-package, julia-package, javascript-package]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     environment:
       name: pypi
@@ -61,7 +569,38 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: python-package
+          pattern: python-wheel-*
+          path: dist/
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-sdist
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-npm:
+    name: Publish to npm
+    needs: [python-wheel, python-sdist, r-package, julia-package, javascript-package]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+
+      - working-directory: javascript
+        run: npm ci
+
+      - working-directory: javascript
+        run: npm publish --access public

@@ -26,8 +26,13 @@ python/uv.lock
 /julia/Manifest.toml
 
 *.dylib
+*.so
+*.dll
+python/taco/_lib/
 
 *.o
+*~
+autom4te.cache/
 
 create-julia-skeleton.sh
 _site/

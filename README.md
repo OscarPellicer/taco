@@ -2,13 +2,13 @@
   <img src="docs/images/banner.svg" alt="TACO — AI-ready Earth Observation datasets." width="700"/>
   <p>
     <a href="docs/spec/LICENSE"><img src="https://img.shields.io/badge/license-MIT-EAB308?style=flat-square" alt="License MIT"/></a>
-    <a href="https://github.com/asterisk-labs/taco/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/asterisk-labs/taco/release.yml?label=python%20tests&style=flat-square" alt="Python tests"/></a>
+    <a href="https://github.com/asterisk-labs/taco/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/asterisk-labs/taco/release.yml?label=release&style=flat-square" alt="Release"/></a>
     <a href="https://github.com/asterisk-labs/taco/actions/workflows/release.yml"><img src="https://img.shields.io/badge/python%20coverage-88%25-brightgreen?style=flat-square" alt="Python coverage 88%"/></a>
     <a href="https://pypi.org/project/taco-eo"><img src="https://img.shields.io/pypi/v/taco-eo?label=python&logo=python&logoColor=white&color=3776AB&style=flat-square" alt="Python"/></a>
     <a href="https://pypi.org/project/taco-eo"><img src="https://img.shields.io/pypi/pyversions/taco-eo?style=flat-square" alt="Supported Python versions"/></a>
     <a href="https://asterisk-labs.r-universe.dev/taco"><img src="https://img.shields.io/badge/r--universe-taco-276DC3?logo=r&logoColor=white&style=flat-square" alt="R"/></a>
     <a href="https://github.com/asterisk-labs/AsteriskRegistry"><img src="https://img.shields.io/badge/julia-Taco.jl-9558B2?logo=julia&logoColor=white&style=flat-square" alt="Julia"/></a>
-    <a href="javascript/"><img src="https://img.shields.io/badge/javascript-v1.0.0-F7DF1E?logo=javascript&logoColor=black&style=flat-square" alt="JavaScript 1.0.0"/></a>
+    <a href="javascript/"><img src="https://img.shields.io/badge/javascript-v0.7.0-F7DF1E?logo=javascript&logoColor=black&style=flat-square" alt="JavaScript 0.7.0"/></a>
     <a href="https://asterisk.coop/taco/spec"><img src="https://img.shields.io/badge/spec-v3-A8B9CC?style=flat-square" alt="Specification"/></a>
   </p>
 </div>
