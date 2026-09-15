@@ -566,7 +566,11 @@ jobs:
             stage="staging/${package}"
             mkdir -p "$stage/include/taco"
             case "$platform" in
-              windows-*) mkdir -p "$stage/bin"; cp "$directory/taco.dll" "$stage/bin/" ;;
+              windows-*)
+                mkdir -p "$stage/bin"
+                cp "$directory/taco.dll" "$stage/bin/"
+                chmod 0755 "$stage/bin/taco.dll"
+                ;;
               macos-*) mkdir -p "$stage/lib"; cp "$directory/libtaco.dylib" "$stage/lib/" ;;
               linux-*) mkdir -p "$stage/lib"; cp "$directory/libtaco.so" "$stage/lib/" ;;
             esac
