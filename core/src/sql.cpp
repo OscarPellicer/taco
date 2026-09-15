@@ -1,0 +1,444 @@
+#include "sql.hpp"
+
+#include "error.hpp"
+#include "paths.hpp"
+
+#include <algorithm>
+#include <cstring>
+#include <exception>
+
+namespace taco {
+namespace {
+
+// TACO spec 7.2. Users may not define columns with this prefix, so the
+// builder can hide them from the projected metadata without collisions.
+constexpr const char* id_current = "internal:current_id";
+constexpr const char* id_parent = "internal:parent_id";
+constexpr const char* id_path = "internal:relative_path";
+constexpr const char* id_offset = "internal:offset";
+constexpr const char* id_size = "internal:size";
+constexpr const char* id_source = "internal:source_file";
+constexpr const char* location_column = "taco:location";
+constexpr const char* flat_location_column = "cozip:location";
+constexpr const char* data_directory = "DATA";
+
+std::string regex_escape(std::string_view value) {
+    std::string out;
+    for (const char c : value) {
+        if (std::strchr(".^$|()[]{}*+?\\/", c))
+            out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+// A structure leaf is a literal name or prefix*[min,max]suffix.
+struct Leaf {
+    std::string declaration;
+    bool variable = false;
+    std::string prefix;
+    std::string suffix;
+};
+
+Leaf parse_leaf(const std::string& declaration) {
+    Leaf leaf;
+    leaf.declaration = declaration;
+    const auto star = declaration.find('*');
+    if (star == std::string::npos)
+        return leaf;
+    const auto open = declaration.find('[', star);
+    const auto close = declaration.find(']', open == std::string::npos ? star : open);
+    if (open != star + 1 || close == std::string::npos)
+        fail("malformed variable leaf in taco:structure: " + declaration);
+    leaf.variable = true;
+    leaf.prefix = declaration.substr(0, star);
+    leaf.suffix = declaration.substr(close + 1);
+    return leaf;
+}
+
+class QueryBuilder {
+  public:
+    QueryBuilder(const Dataset& dataset, const ReadOptions& options)
+        : dataset_(dataset), options_(options), tacocat_(dataset.container == Container::tacocat),
+          has_offsets_(dataset.container != Container::folder) {}
+
+    [[nodiscard]] std::string level_query() const {
+        const auto level = dataset_.level_index(options_.level);
+        return "SELECT " + metadata_projection() + " FROM read_parquet(" +
+               sql_literal(dataset_.level_paths[level]) + ")";
+    }
+
+    // A dataset whose taco:structure is null: the sample is the file.
+    [[nodiscard]] std::string null_structure_query() const {
+        std::string out = "SELECT " + sql_identifier(id_current) + " AS sample_id";
+        if (tacocat_)
+            out += ", " + sql_identifier(id_source) + " AS source_file";
+        if (options_.location)
+            out += ", " + location_expression(0) + " AS " + sql_identifier(location_column);
+        out += ", *" + exclude_list(0);
+        out += " FROM (SELECT " + metadata_projection() + " FROM read_parquet(" +
+               sql_literal(dataset_.level_paths[0]) + ")) AS " + alias(0);
+        const auto idx = idx_filter(alias(0));
+        if (!idx.empty())
+            out += " WHERE " + idx;
+        return out;
+    }
+
+    [[nodiscard]] std::string flat_query() const {
+        if (!options_.has_files)
+            return common_table_expressions() + "\n" + flat_branches(false);
+        const auto leaves = selected_leaves();
+        return common_table_expressions() + "\n" + flat_branches(false, &leaves);
+    }
+
+    [[nodiscard]] std::string pivot_query() const {
+        const auto leaves = selected_leaves();
+        if (!options_.location) {
+            std::string out = "SELECT " + alias(0) + "." + sql_identifier(id_current) + " AS sample_id";
+            if (tacocat_)
+                out += ", " + alias(0) + "." + sql_identifier(id_source) + " AS source_file";
+            out += ", " + alias(0) + ".*" + exclude_list(0);
+            for (const auto& leaf : leaves) {
+                const auto& name = leaf.variable ? leaf.prefix : leaf.declaration;
+                out += leaf.variable ? ", NULL::VARCHAR[] AS " : ", NULL::VARCHAR AS ";
+                out += sql_identifier(name);
+            }
+            out += " FROM (SELECT " + metadata_projection() + " FROM read_parquet(" +
+                   sql_literal(dataset_.level_paths[0]) + ")) AS " + alias(0);
+            const auto idx = idx_filter(alias(0));
+            if (!idx.empty())
+                out += " WHERE " + idx;
+            return out;
+        }
+
+        std::string out = common_table_expressions();
+        out += ", flat AS (\n" + flat_branches(true, options_.has_files ? &leaves : nullptr) + "\n)";
+        out += ", pivoted AS (SELECT sample_id";
+        if (tacocat_)
+            out += ", source_file";
+        for (const auto& leaf : leaves) {
+            if (leaf.variable) {
+                // TACO spec 5.2: the index has no leading zeros, so img01.tif is
+                // not an instance of img*[a,b].tif.
+                const auto pattern = variable_pattern(leaf);
+                out += ", list(" + sql_identifier(location_column) +
+                       " ORDER BY TRY_CAST(regexp_extract(path, " + sql_literal(pattern) +
+                       ", 1) AS BIGINT)) FILTER (WHERE regexp_matches(path, " + sql_literal(pattern) +
+                       ")) AS " + sql_identifier(leaf.prefix);
+            } else {
+                out += ", MAX(CASE WHEN path = " + sql_literal(leaf.declaration) + " THEN " +
+                       sql_identifier(location_column) + " END) AS " + sql_identifier(leaf.declaration);
+            }
+        }
+        out += " FROM flat GROUP BY ALL)";
+
+        out += "\nSELECT " + alias(0) + "." + sql_identifier(id_current) + " AS sample_id";
+        if (tacocat_)
+            out += ", " + alias(0) + "." + sql_identifier(id_source) + " AS source_file";
+        out += ", " + alias(0) + ".*" + exclude_list(0);
+        for (const auto& leaf : leaves) {
+            const auto& name = leaf.variable ? leaf.prefix : leaf.declaration;
+            if (leaf.variable)
+                out += ", COALESCE(p." + sql_identifier(name) + ", []::VARCHAR[]) AS " + sql_identifier(name);
+            else
+                out += ", p." + sql_identifier(name);
+        }
+        out += " FROM " + alias(0) + " LEFT JOIN pivoted p ON p.sample_id = " + alias(0) + "." +
+               sql_identifier(id_current);
+        if (tacocat_)
+            out += " AND p.source_file = " + alias(0) + "." + sql_identifier(id_source);
+        const auto idx = idx_filter(alias(0));
+        if (!idx.empty())
+            out += " WHERE " + idx;
+        return out;
+    }
+
+  private:
+    static std::string alias(std::size_t level) { return "l" + std::to_string(level); }
+
+    static std::string metadata_projection() {
+        return "COLUMNS(lambda c: c != " + sql_literal(flat_location_column) + " AND c != " +
+               sql_literal(location_column) + ")";
+    }
+
+    // Columns the reader owns and therefore hides from the projected metadata.
+    // shadowed additionally hides fields a deeper level of the same branch
+    // redeclares, so the most specific value wins instead of colliding.
+    [[nodiscard]] std::string exclude_list(std::size_t level,
+                                           const std::vector<std::string>& shadowed = {}) const {
+        std::vector<std::string> columns = {id_current, id_path};
+        if (level > 0)
+            columns.push_back(id_parent);
+        if (has_offsets_ && (level > 0 || dataset_.contract.null_structure)) {
+            columns.push_back(id_offset);
+            columns.push_back(id_size);
+        }
+        if (tacocat_)
+            columns.push_back(id_source);
+        columns.insert(columns.end(), shadowed.begin(), shadowed.end());
+        std::string out = " EXCLUDE (";
+        for (std::size_t i = 0; i < columns.size(); ++i)
+            out += (i ? ", " : "") + sql_identifier(columns[i]);
+        return out + ")";
+    }
+
+    // Where one data row can be read from.
+    [[nodiscard]] std::string location_expression(std::size_t level) const {
+        const auto row = alias(level);
+        if (dataset_.container == Container::folder)
+            return sql_literal(dataset_.location_base + "/" + data_directory + "/") + " || " + row + "." +
+                   sql_identifier(id_path);
+        const std::string archive =
+            tacocat_ ? sql_literal(dataset_.location_base + "/") + " || " + row + "." + sql_identifier(id_source)
+                     : sql_literal(dataset_.location_base);
+        return "'/vsisubfile/' || " + row + "." + sql_identifier(id_offset) + " || '_' || " + row + "." +
+               sql_identifier(id_size) + " || ',' || " + archive;
+    }
+
+    // The contract path: internal:relative_path without the sample index.
+    static std::string path_expression(std::size_t level) {
+        return "regexp_replace(" + alias(level) + "." + sql_identifier(id_path) + ", '^[0-9]+/', '')";
+    }
+
+    // Folder rows carry no bytes. A child level proves a name is a folder.
+    [[nodiscard]] std::string file_filter(std::size_t level) const {
+        std::vector<std::string> folders;
+        for (std::size_t i = 1; i < dataset_.level_names.size(); ++i) {
+            if (parent_level(dataset_.level_names[i]) == dataset_.level_names[level])
+                folders.push_back(last_segment(dataset_.level_names[i]));
+        }
+        if (folders.empty())
+            return "";
+        std::string out = "regexp_replace(" + alias(level) + "." + sql_identifier(id_path) + ", '^.*/', '') NOT IN (";
+        for (std::size_t i = 0; i < folders.size(); ++i)
+            out += (i ? ", " : "") + sql_literal(folders[i]);
+        return out + ")";
+    }
+
+    static std::string variable_pattern(const Leaf& leaf) {
+        return "^" + regex_escape(leaf.prefix) + "(0|[1-9][0-9]*)" + regex_escape(leaf.suffix) + "$";
+    }
+
+    [[nodiscard]] std::string selected_files_filter(std::size_t level, const std::vector<Leaf>& leaves) const {
+        const auto path = path_expression(level);
+        std::string out = "(";
+        for (std::size_t i = 0; i < leaves.size(); ++i) {
+            if (i)
+                out += " OR ";
+            if (leaves[i].variable)
+                out += "regexp_matches(" + path + ", " + sql_literal(variable_pattern(leaves[i])) + ")";
+            else
+                out += path + " = " + sql_literal(leaves[i].declaration);
+        }
+        return out + ")";
+    }
+
+    // The user columns of level and of every ancestor, deepest first. A field
+    // redeclared higher up is hidden, so the row carries the value of the
+    // level it belongs to.
+    [[nodiscard]] std::string ancestor_projection(std::size_t level) const {
+        std::vector<std::size_t> chain;
+        for (auto node = level; node > 0; node = dataset_.level_index(parent_level(dataset_.level_names[node])))
+            chain.push_back(node);
+        chain.push_back(0);
+
+        std::string out;
+        std::vector<std::string> seen;
+        for (const auto index : chain) {
+            std::vector<std::string> shadowed;
+            if (const auto* declared = dataset_.contract.fields_of(dataset_.level_names[index])) {
+                for (const auto& name : *declared) {
+                    if (std::find(seen.begin(), seen.end(), name) != seen.end())
+                        shadowed.push_back(name);
+                    else
+                        seen.push_back(name);
+                }
+            }
+            out += ", " + alias(index) + ".*" + exclude_list(index, shadowed);
+        }
+        return out;
+    }
+
+    // Joins from level up to the sample level.
+    [[nodiscard]] std::string join_chain(std::size_t level) const {
+        std::string out;
+        for (auto child = level; child > 0;) {
+            const auto parent = dataset_.level_index(parent_level(dataset_.level_names[child]));
+            out += " JOIN " + alias(parent) + " ON " + alias(child) + "." + sql_identifier(id_parent) + " = " +
+                   alias(parent) + "." + sql_identifier(id_current);
+            if (tacocat_) {
+                // Row ids restart in every partition, so identity is (source, id).
+                out += " AND " + alias(child) + "." + sql_identifier(id_source) + " = " + alias(parent) + "." +
+                       sql_identifier(id_source);
+            }
+            child = parent;
+        }
+        return out;
+    }
+
+    [[nodiscard]] std::string idx_filter(const std::string& row) const {
+        if (options_.idx.empty())
+            return "";
+        const auto invalid = [&](const char* reason) {
+            fail(std::string("taco: idx must ") + reason + ", got " + options_.idx);
+        };
+        std::string text = options_.idx;
+        const auto trim = [](std::string value) {
+            const auto first = value.find_first_not_of(" \t");
+            const auto last = value.find_last_not_of(" \t");
+            return first == std::string::npos ? std::string() : value.substr(first, last - first + 1);
+        };
+        text = trim(text);
+        const bool range = !text.empty() && text.front() == '[';
+        if (range) {
+            if (text.back() != ']')
+                invalid("be an integer or a two-element list");
+            text = text.substr(1, text.size() - 2);
+        } else if (text.find_first_of("[],") != std::string::npos) {
+            invalid("be an integer or a two-element list");
+        }
+
+        std::vector<std::string> parts;
+        for (std::size_t start = 0;;) {
+            const auto comma = text.find(',', start);
+            parts.push_back(trim(text.substr(start, comma == std::string::npos ? comma : comma - start)));
+            if (comma == std::string::npos)
+                break;
+            start = comma + 1;
+        }
+        if ((!range && parts.size() != 1) || (range && parts.size() != 2))
+            invalid("be an integer or a two-element list");
+
+        std::vector<std::uint64_t> bounds;
+        for (const auto& part : parts) {
+            if (part.empty())
+                invalid("be an integer or a two-element list");
+            if (part.find_first_not_of("0123456789") != std::string::npos)
+                invalid("contain non-negative integers");
+            try {
+                bounds.push_back(std::stoull(part));
+            } catch (const std::exception&) {
+                invalid("be an integer or a two-element list");
+            }
+        }
+        const auto column = row + "." + sql_identifier(id_current);
+        if (bounds.size() == 1)
+            return column + " = " + std::to_string(bounds[0]);
+        if (bounds[0] > bounds[1])
+            fail("taco: idx range start must not exceed its end, got " + options_.idx);
+        // Half-open, so [0, 100] is the first hundred samples.
+        return column + " >= " + std::to_string(bounds[0]) + " AND " + column + " < " + std::to_string(bounds[1]);
+    }
+
+    [[nodiscard]] std::string common_table_expressions() const {
+        std::string out = "WITH ";
+        for (std::size_t i = 0; i < dataset_.level_paths.size(); ++i) {
+            out += (i ? ", " : "") + alias(i) + " AS (SELECT " + metadata_projection() + " FROM read_parquet(" +
+                   sql_literal(dataset_.level_paths[i]) + "))";
+        }
+        return out;
+    }
+
+    // One row per data file, columns aligned across levels by name.
+    [[nodiscard]] std::string flat_branches(bool identity_only, const std::vector<Leaf>* selected = nullptr) const {
+        std::string out;
+        for (std::size_t level = 1; level < dataset_.level_names.size(); ++level) {
+            if (!out.empty())
+                out += "\nUNION ALL BY NAME\n";
+            out += "SELECT " + alias(0) + "." + sql_identifier(id_current) + " AS sample_id";
+            if (tacocat_)
+                out += ", " + alias(0) + "." + sql_identifier(id_source) + " AS source_file";
+            out += ", " + path_expression(level) + " AS path";
+            if (identity_only || options_.location)
+                out += ", " + location_expression(level) + " AS " + sql_identifier(location_column);
+            if (!identity_only)
+                out += ancestor_projection(level);
+            out += " FROM " + alias(level) + join_chain(level);
+
+            std::vector<std::string> filters;
+            if (auto files = file_filter(level); !files.empty())
+                filters.push_back(std::move(files));
+            if (auto idx = idx_filter(alias(0)); !idx.empty())
+                filters.push_back(std::move(idx));
+            if (selected)
+                filters.push_back(selected_files_filter(level, *selected));
+            for (std::size_t i = 0; i < filters.size(); ++i)
+                out += (i ? " AND " : " WHERE ") + filters[i];
+        }
+        return out;
+    }
+
+    [[nodiscard]] std::vector<Leaf> selected_leaves() const {
+        const auto& structure = dataset_.contract.structure;
+        std::string unknown;
+        for (const auto& name : options_.files) {
+            if (std::find(structure.begin(), structure.end(), name) == structure.end())
+                unknown += (unknown.empty() ? "" : ", ") + name;
+        }
+        if (!unknown.empty())
+            fail("taco: files contains unknown structure leaf: " + unknown);
+
+        std::vector<Leaf> leaves;
+        for (const auto& declaration : structure) {
+            if (options_.has_files &&
+                std::find(options_.files.begin(), options_.files.end(), declaration) == options_.files.end())
+                continue;
+            leaves.push_back(parse_leaf(declaration));
+        }
+        if (leaves.empty())
+            fail("taco: no structure leaf matches the requested files");
+        return leaves;
+    }
+
+    const Dataset& dataset_;
+    const ReadOptions& options_;
+    bool tacocat_;
+    bool has_offsets_;
+};
+
+} // namespace
+
+std::string build_sql(const Dataset& dataset, const ReadOptions& options) {
+    const QueryBuilder builder(dataset, options);
+    if (!options.level.empty()) {
+        if (options.has_files)
+            fail("taco: files does not apply when level is set");
+        return builder.level_query();
+    }
+    if (dataset.contract.null_structure) {
+        if (options.has_files)
+            fail("taco: files requires taco:structure");
+        return builder.null_structure_query();
+    }
+    if (!options.pivot)
+        return builder.flat_query();
+    if (dataset.contract.structure.empty())
+        fail("taco:structure is null but the dataset has " + std::to_string(dataset.level_names.size()) +
+             " metadata levels: " + dataset.source);
+    return builder.pivot_query();
+}
+
+std::string build_union_sql(const std::vector<const Dataset*>& datasets, const ReadOptions& options) {
+    if (datasets.empty())
+        fail("taco: a read needs at least one dataset");
+    if (datasets.size() == 1)
+        return build_sql(*datasets.front(), options);
+
+    std::vector<std::string> sources;
+    for (const auto* dataset : datasets)
+        sources.push_back(dataset->source);
+    const auto labels = source_labels(sources);
+
+    std::string out;
+    for (std::size_t i = 0; i < datasets.size(); ++i) {
+        if (i)
+            out += "\nUNION ALL BY NAME\n";
+        const auto label = sql_literal(labels[i]);
+        out += options.level.empty() ? "SELECT taco.sample_id, " + label + " AS source_file, taco.* EXCLUDE (sample_id)"
+                                     : "SELECT " + label + " AS source_file, taco.*";
+        out += " FROM (" + build_sql(*datasets[i], options) + ") AS taco";
+    }
+    return out;
+}
+
+} // namespace taco

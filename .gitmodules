@@ -1,0 +1,3 @@
+[submodule "extern/karu"]
+	path = extern/karu
+	url = https://github.com/asterisk-labs/karu.git
