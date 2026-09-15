@@ -7,7 +7,6 @@ import { loadCollection, parseCollectionJson } from "./collection.js";
 const COLLECTION = "COLLECTION.json";
 const METADATA = "METADATA";
 const NOT_ARCHIVE = new Set([
-  "HTTP_ERROR",
   "ARCHIVE_TOO_SMALL",
   "TRUNCATED_INDEX",
   "INVALID_INDEX",
@@ -156,7 +155,10 @@ export async function openSource(source, client, hint = "auto", embedded = null)
  * @param {unknown} error
  */
 function isNotArchive(error) {
-  return error instanceof TacoError && NOT_ARCHIVE.has(error.code);
+  return error instanceof TacoError && (
+    NOT_ARCHIVE.has(error.code) ||
+    (error.code === "HTTP_ERROR" && /\bHTTP 404\b/.test(error.message))
+  );
 }
 
 /**

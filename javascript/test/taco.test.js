@@ -34,6 +34,19 @@ test("detects a TACO-profile ZIP without relying on its URL suffix", async () =>
   );
 });
 
+test("preserves network failures while probing a suffixless URL", async () => {
+  const unavailable = async () => new Response("unavailable", {
+    status: 503,
+    statusText: "Unavailable",
+  });
+  await assert.rejects(
+    () => openDataset("https://example.test/1.0.0", { fetch: unavailable }),
+    (error) => error instanceof TacoError &&
+      error.code === "HTTP_ERROR" &&
+      /HTTP 503.*https:\/\/example\.test\/1\.0\.0/.test(error.message),
+  );
+});
+
 test("raw level reads never synthesize a location", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
   const rows = await dataset.readLevel("sample", {
