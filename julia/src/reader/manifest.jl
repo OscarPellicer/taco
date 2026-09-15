@@ -47,7 +47,7 @@ function _resolve_dataset(source)
         _plain(collection),
         String(resolution["version"]),
         String.(resolution["versions"]),
-        String(resolution["manifest"]),
+        _local_path(String(resolution["manifest"])),
         String.(collect(keys(collection["taco:metadata"]))),
     )
 end
