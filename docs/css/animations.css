@@ -1,4 +1,4 @@
-/* === KEYFRAMES === */
+/* Animations */
 
 @keyframes pulse {
   0%, 100% { transform: scale(1); opacity: .6; }

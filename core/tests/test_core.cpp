@@ -10,6 +10,8 @@
 #include <taco/taco.h>
 
 #include <cstdio>
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -204,13 +206,16 @@ void test_open_archives() {
     CHECK(again.level_paths == flat.level_paths);
     CHECK(fs::last_write_time(again.level_paths[0]) == written);
 
-    // A different archive at the same path gets its own entry.
+    // A changed archive at the same path rebuilds its entry in place.
     const fs::path moving = scratch("moving") / "dataset.zip";
     fs::copy_file(data("taco_flat.zip"), moving);
     const auto first = taco::open_dataset(moving.string(), cache);
     fs::copy_file(data("taco_null.zip"), moving, fs::copy_options::overwrite_existing);
+    fs::last_write_time(moving, fs::file_time_type::clock::now() + std::chrono::seconds(5));
     const auto second = taco::open_dataset(moving.string(), cache);
     CHECK(first.level_paths[0] != second.level_paths[0]);
+    CHECK(contains(second.level_paths[0], "taco-null-1.0.0-zip-local-"));
+    CHECK(!fs::exists(fs::path(first.level_paths[0]).parent_path()));
     CHECK((second.level_names == Strings{"sample"}));
 
     const auto nested = taco::open_dataset(data("taco_nested.zip"), cache);
@@ -286,6 +291,8 @@ void test_sql() {
     CHECK(contains(wide, "read_parquet(" + taco::sql_literal(nested.level_paths[0]) + ")"));
     CHECK(contains(wide, "'/vsisubfile/'"));
     CHECK(contains(wide, taco::sql_literal(data("taco_nested.zip"))));
+    CHECK(contains(wide, "\"before__B02.bin\""));
+    CHECK(!contains(wide, "AS \"before/B02.bin\""));
 
     taco::ReadOptions long_quiet;
     long_quiet.pivot = false;
@@ -329,6 +336,9 @@ void test_sql() {
     files.has_files = true;
     CHECK_THROWS(taco::build_sql(null, files), "files requires taco:structure");
     CHECK(contains(taco::build_sql(null, taco::ReadOptions{}), "\"taco:location\""));
+    taco::ReadOptions null_flat;
+    null_flat.pivot = false;
+    CHECK(contains(taco::build_sql(null, null_flat), "NULL::VARCHAR AS path"));
 
     const auto folder = taco::open_dataset(data("taco_folder"), cache);
     CHECK(contains(taco::build_sql(folder, taco::ReadOptions{}), taco::sql_literal(data("taco_folder") + "/DATA/")));
@@ -400,6 +410,10 @@ void test_manifest() {
     CHECK(direct.find("collection")->is_null());
     CHECK(direct.find("manifest")->is_null());
     CHECK(taco::json::parse(taco::resolve_dataset(data("taco_folder"))).find("version")->is_null());
+    const std::string folder_uri = "file://" + fs::absolute(data("taco_folder")).generic_string();
+    const auto direct_uri = taco::json::parse(taco::resolve_dataset(folder_uri));
+    CHECK(direct_uri.find("source")->string == folder_uri);
+    CHECK(direct_uri.find("manifest")->is_null());
 
     const std::vector<std::pair<std::string, std::string>> invalid = {
         {replace(manifest_json(), "\"versioned\"", "\"zip\""), "taco:container must be 'versioned'"},
@@ -418,6 +432,153 @@ void test_manifest() {
         CHECK_THROWS(taco::resolve_dataset((root / "taco.json").string()), message);
     }
     CHECK_THROWS(taco::resolve_dataset((root / "missing" / "taco.json").string()), "does not exist");
+    CHECK_THROWS(taco::resolve_dataset("file://" + (root / "missing" / "taco.json").generic_string()),
+                 "does not exist");
+}
+
+void set_environment(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    if (*value)
+        setenv(name, value, 1);
+    else
+        unsetenv(name);
+#endif
+}
+
+void test_cache() {
+    const std::string cache = scratch("cache").generic_string();
+    const fs::path copies = scratch("cache-sources");
+
+    // A remote entry is trusted: the source can disappear and the dataset
+    // still opens without a request. TACO_CACHE_REFRESH asks again.
+    const fs::path archive = copies / "dataset.zip";
+    fs::copy_file(data("taco_flat.zip"), archive);
+    const std::string uri = "file://" + archive.generic_string();
+    const auto first = taco::open_dataset(uri, cache);
+    fs::remove(archive);
+    const auto again = taco::open_dataset(uri, cache);
+    CHECK(again.level_paths == first.level_paths);
+    CHECK((again.level_names == Strings{"sample", "children"}));
+    CHECK(again.collection == first.collection);
+    set_environment("TACO_CACHE_REFRESH", "1");
+    CHECK_THROWS(taco::open_dataset(uri, cache), "could not");
+    set_environment("TACO_CACHE_REFRESH", "");
+
+    fs::copy_options overwrite = fs::copy_options::overwrite_existing;
+    fs::create_directories(copies / "folder");
+    fs::copy(data("taco_folder"), copies / "folder", fs::copy_options::recursive | overwrite);
+    const std::string folder = "file://" + (copies / "folder").generic_string();
+    const auto cached_folder = taco::open_dataset(folder, cache);
+    fs::remove_all(copies / "folder");
+    CHECK(taco::open_dataset(folder, cache).container == taco::Container::folder);
+    CHECK(taco::open_dataset(folder, cache).level_paths == cached_folder.level_paths);
+
+    // Entries are named for people and the root carries CACHEDIR.TAG.
+    Strings names;
+    for (const auto& entry : fs::directory_iterator(cache))
+        names.push_back(entry.path().filename().string());
+    std::sort(names.begin(), names.end());
+    CHECK(names.size() == 3);
+    CHECK(names[0] == "CACHEDIR.TAG");
+    CHECK(names[1].starts_with("taco-flat-1.0.0-folder-file-"));
+    CHECK(names[2].starts_with("taco-flat-1.0.0-zip-file-"));
+    const auto stamp = taco::json::parse(read_file(fs::path(cache) / names[2] / "taco-cache.json"));
+    CHECK(stamp.find("source")->string == uri);
+    CHECK(stamp.find("key")->string == "trusted");
+
+    // Over the size cap, the least recently opened entries go first.
+    set_environment("TACO_CACHE_SIZE", "1");
+    fs::copy_file(data("taco_nested.zip"), copies / "nested.zip");
+    taco::open_dataset("file://" + (copies / "nested.zip").generic_string(), cache);
+    names.clear();
+    for (const auto& entry : fs::directory_iterator(cache))
+        names.push_back(entry.path().filename().string());
+    std::sort(names.begin(), names.end());
+    CHECK(names.size() == 2);
+    CHECK(names[1].starts_with("taco-nested-1.0.0-zip-file-"));
+    set_environment("TACO_CACHE_SIZE", "");
+
+    // A local archive is checked against its size and modification time.
+    const fs::path local = copies / "local.zip";
+    fs::copy_file(data("taco_flat.zip"), local);
+    CHECK((taco::open_dataset(local.string(), cache).level_names == Strings{"sample", "children"}));
+    fs::copy_file(data("taco_null.zip"), local, overwrite);
+    fs::last_write_time(local, fs::file_time_type::clock::now() + std::chrono::seconds(5));
+    CHECK((taco::open_dataset(local.string(), cache).level_names == Strings{"sample"}));
+}
+
+struct Event {
+    std::string phase;
+    std::uint64_t done;
+    std::uint64_t total;
+};
+
+void record_progress(const char* phase, uint64_t done, uint64_t total, void* user) {
+    static_cast<std::vector<Event>*>(user)->push_back(Event{phase, done, total});
+}
+
+void test_progress() {
+    std::vector<Event> events;
+    taco_set_progress(record_progress, &events);
+    const fs::path out = scratch("progress");
+    const std::string archive = data("taco_flat.zip");
+    taco::fetch_files({taco::Fetch{archive, 0, 0, (out / "copy.zip").generic_string()},
+                       taco::Fetch{archive, 0, 100, (out / "head.bin").generic_string()}},
+                      4096);
+    CHECK(events.size() >= 3);
+    CHECK(events.front().phase == "downloading 2 files");
+    CHECK(events.front().done == 0);
+    CHECK(events.front().total == fs::file_size(archive) + 100);
+    CHECK(events.back().done == events.back().total);
+    for (std::size_t i = 1; i < events.size(); ++i)
+        CHECK(events[i].done > events[i - 1].done);
+
+    // A cache miss reports the metadata download under the dataset name.
+    events.clear();
+    const std::string cache = scratch("progress-cache").generic_string();
+    taco::open_dataset(archive, cache);
+    CHECK(!events.empty());
+    CHECK(events.front().phase == "downloading taco_flat.zip metadata");
+    CHECK(events.back().done == events.back().total && events.back().total > 0);
+    events.clear();
+    taco::open_dataset(archive, cache);
+    CHECK(events.empty());
+    taco::fetch_files({});
+    CHECK(events.empty());
+    taco_set_progress(nullptr, nullptr);
+}
+
+void test_fetch() {
+    const fs::path out = scratch("fetch");
+    const std::string archive = data("taco_flat.zip");
+    const std::string whole = read_file(archive);
+    const auto index = taco::read_cozip_index(archive);
+    const taco::CozipEntry* collection = index.find("COLLECTION.json");
+    const auto target = [&](const char* name) { return (out / name).generic_string(); };
+
+    // A range, a whole object and a tail, into directories that do not exist yet.
+    taco::fetch_files({taco::Fetch{archive, collection->offset, collection->size, target("a/COLLECTION.json")},
+                       taco::Fetch{data("taco_folder/COLLECTION.json"), 0, 0, target("b/c/whole.json")},
+                       taco::Fetch{archive, 10, 0, target("tail.bin")}});
+    CHECK(read_file(out / "a" / "COLLECTION.json") == whole.substr(collection->offset, collection->size));
+    CHECK(read_file(out / "b" / "c" / "whole.json") == read_file(data("taco_folder/COLLECTION.json")));
+    CHECK(read_file(out / "tail.bin") == whole.substr(10));
+
+    // Small chunks exercise the batches that keep large objects out of memory.
+    taco::fetch_files({taco::Fetch{archive, 0, 0, target("chunked.zip")}, taco::Fetch{archive, 7, 100, target("piece.bin")}},
+                      1000);
+    CHECK(read_file(out / "chunked.zip") == whole);
+    CHECK(read_file(out / "piece.bin") == whole.substr(7, 100));
+
+    // A second copy replaces the first instead of appending to it.
+    taco::fetch_files({taco::Fetch{archive, 0, 4, target("piece.bin")}});
+    CHECK(read_file(out / "piece.bin") == "PK\x03\x04");
+
+    CHECK_THROWS(taco::fetch_files({taco::Fetch{archive, index.file_size + 1, 0, target("x")}}), "past the end");
+    CHECK_THROWS(taco::fetch_files({taco::Fetch{data("does_not_exist.zip"), 0, 4, target("y")}}), "could not");
+    CHECK_THROWS(taco::fetch_files({taco::Fetch{archive, 0, 4, target("")}}), "could not write");
 }
 
 void test_c_api() {
@@ -472,6 +633,17 @@ void test_c_api() {
     CHECK(taco_resolve(data("taco_flat.zip").c_str(), &resolved) == TACO_OK);
     CHECK(resolved && contains(resolved, "\"manifest\":null"));
     taco_free(resolved);
+
+    const std::string archive = data("taco_flat.zip");
+    const std::string head = cache + "/head.bin";
+    const taco_fetch_item item = {archive.c_str(), 0, 4, head.c_str()};
+    CHECK(taco_fetch(&item, 1) == TACO_OK);
+    CHECK(read_file(head) == "PK\x03\x04");
+    CHECK(taco_fetch(nullptr, 0) == TACO_OK);
+    CHECK(taco_fetch(nullptr, 1) == TACO_ERR_INVALID);
+    const taco_fetch_item unnamed = {nullptr, 0, 4, head.c_str()};
+    CHECK(taco_fetch(&unnamed, 1) == TACO_ERR_INVALID);
+    CHECK(contains(taco_last_error(), "must not be NULL"));
     taco_shutdown();
     taco_shutdown();
 }
@@ -506,6 +678,12 @@ void test_remote() {
 
     const auto resolved = taco::json::parse(taco::resolve_dataset(base + "/folder"));
     CHECK(resolved.find("manifest")->is_null());
+
+    const fs::path out = scratch("remote-fetch");
+    taco::fetch_files({taco::Fetch{base + "/single-zip/dataset.zip", 0, 4, (out / "head.bin").generic_string()},
+                       taco::Fetch{base + "/folder/COLLECTION.json", 0, 0, (out / "COLLECTION.json").generic_string()}});
+    CHECK(read_file(out / "head.bin") == "PK\x03\x04");
+    CHECK(contains(read_file(out / "COLLECTION.json"), "\"taco:version\""));
 }
 
 } // namespace
@@ -518,6 +696,9 @@ int main() {
     test_open_directories();
     test_sql();
     test_manifest();
+    test_cache();
+    test_progress();
+    test_fetch();
     test_c_api();
     if (remote_tests())
         test_remote();

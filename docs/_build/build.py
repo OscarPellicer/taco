@@ -1,4 +1,4 @@
-"""Compile the documentation source tree into the deployable ``_site`` directory."""
+"""Build ``docs/_site`` from the documentation sources."""
 
 from __future__ import annotations
 

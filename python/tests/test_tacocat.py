@@ -55,9 +55,9 @@ def test_consolidate(tmp_path: Path, collection: taco.Collection, make_sample) -
     opened = taco.open_dataset(output)
     assert opened.collection.sources == dataset.collection.sources
     assert ">TACOCAT<" in opened._repr_html_()
-    assert taco.read(opened).num_rows == 3
-    assert set(taco.read(opened).column("source_file").to_pylist()) == {"a.zip", "b.zip"}
-    assert taco.read(opened, layout="long").num_rows == 12
+    assert opened.read().num_rows == 3
+    assert set(opened.read().column("source_file").to_pylist()) == {"a.zip", "b.zip"}
+    assert opened.sql("SELECT * FROM files").num_rows == 12
     with pytest.raises(ContainerError, match="TACOCAT"):
         taco.open_dataset([output, parts[0]])
 
@@ -69,7 +69,7 @@ def test_open_partitions(tmp_path: Path, collection: taco.Collection, make_sampl
     ]
 
     dataset = taco.open_dataset(parts)
-    wide = taco.read(dataset)
+    wide = dataset.read()
 
     assert dataset.sources == tuple(parts)
     assert dataset.collection.extent == taco.contract.Extent(
@@ -83,13 +83,13 @@ def test_open_partitions(tmp_path: Path, collection: taco.Collection, make_sampl
         ("a.zip", 1),
         ("b.zip", 0),
     }
-    assert taco.read(dataset, idx=0).num_rows == 2
-    assert taco.read(dataset, layout="long").num_rows == 12
-    raw = taco.read(dataset, level="sample")
+    assert dataset.sql("SELECT * FROM data WHERE sample_id = 0").num_rows == 2
+    assert dataset.sql("SELECT * FROM files").num_rows == 12
+    raw = dataset.sql("SELECT * FROM sample")
     assert raw.num_rows == 3
     assert set(raw.column("source_file").to_pylist()) == {"a.zip", "b.zip"}
     for row in wide.to_pylist():
-        assert str(tmp_path / row["source_file"]) in row["before/B02.tif"]
+        assert str(tmp_path / row["source_file"]) in row["before__B02.tif"]
 
 
 def test_consolidate_preserves_schema_metadata(tmp_path: Path, collection: taco.Collection, make_sample) -> None:

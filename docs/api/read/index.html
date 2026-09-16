@@ -13,13 +13,14 @@
     <aside class="api-nav"><p>API Cookbook</p><section><b>Write</b><a href="../write/">Overview</a></section><section><b>Read</b><a href="../read/" aria-current="page">Overview</a></section></aside>
     <main class="manual">
       <p class="kicker">Read</p><h1>Reading a TACO dataset</h1><p class="lede">The same logical reader opens TACO folders, ZIPs, partition lists, TACOCATs, and versioned roots from Python, R, or Julia.</p>
-      <section class="manual-section first" id="open"><div class="section-label"><span>01</span><small>Open and select</small></div><h2>One operation, three languages</h2><p class="section-intro">Choose a language inside the code block. Each example resolves the same dataset and reads the same sample range.</p>
+      <section class="manual-section first" id="open"><div class="section-label"><span>01</span><small>Open and read</small></div><h2>One logical reader, three languages</h2><p class="section-intro">Every binding resolves the same dataset. Python keeps the high-level read small and uses SQL for partial access.</p>
         <div class="code-block language-code">
           <div class="code-bar"><div class="language-tabs" role="tablist" aria-label="Code language"><button type="button" role="tab" aria-selected="true" data-language="python">Python</button><button type="button" role="tab" aria-selected="false" data-language="r">R</button><button type="button" role="tab" aria-selected="false" data-language="julia">Julia</button></div><button type="button">Copy</button></div>
           <pre data-code="python"><code><span class="kw">import</span> taco
 
 dataset = taco.open_dataset(<span class="str">"https://data.source.coop/major-tom/core-dem/"</span>)
-samples = taco.read(dataset, idx=[<span class="num">0</span>, <span class="num">100</span>], files=[<span class="str">"dem.rumi"</span>])</code></pre>
+samples = dataset.read(files=<span class="str">"dem.rumi"</span>)
+first_100 = dataset.sql(<span class="str">"SELECT * FROM data WHERE sample_id &lt; 100"</span>)</code></pre>
           <pre data-code="r" hidden><code>library(taco)
 
 dataset &lt;- open_dataset(<span class="str">"https://data.source.coop/major-tom/core-dem/"</span>)
@@ -30,9 +31,10 @@ dataset = Taco.open_dataset(<span class="str">"https://data.source.coop/major-to
 samples = Taco.read(dataset; idx=(<span class="num">0</span>, <span class="num">100</span>), files=[<span class="str">"dem.rumi"</span>])</code></pre>
         </div>
       </section>
-      <section class="manual-section" id="arguments"><div class="section-label"><span>02</span><small>Arguments</small></div><h2>Shared concepts</h2><table><thead><tr><th>Argument</th><th>Meaning</th></tr></thead><tbody><tr><td><code>source</code></td><td>Folder, ZIP, ZIP list, TACOCAT, or versioned root.</td></tr><tr><td><code>idx</code></td><td>One sample or a half-open sample range.</td></tr><tr><td><code>files</code></td><td>Declared asset paths to return.</td></tr><tr><td><code>layout</code></td><td>One row per sample or one row per file.</td></tr></tbody></table></section>
+      <section class="manual-section" id="arguments"><div class="section-label"><span>02</span><small>Python API</small></div><h2>Read all samples or query a subset</h2><table><thead><tr><th>Operation</th><th>Meaning</th></tr></thead><tbody><tr><td><code>dataset.read()</code></td><td>Every sample, ordered by its sample key.</td></tr><tr><td><code>dataset.read(files=...)</code></td><td>The complete sample table with only the selected structural file columns.</td></tr><tr><td><code>dataset.sql(query)</code></td><td>A partial query over <code>data</code>, <code>files</code>, or a named metadata level.</td></tr></tbody></table></section>
+      <section class="manual-section" id="native-bindings"><div class="section-label"><span>03</span><small>R and Julia</small></div><h2>Native reader controls remain available</h2><p class="section-intro">R and Julia currently expose <code>layout</code>, <code>idx</code>, <code>level</code>, <code>files</code>, and <code>location</code> directly. Their examples above use the same core-generated views while Python uses SQL for partial access.</p></section>
     </main>
-    <aside class="page-toc"><b>On this page</b><a href="#open">Open and select</a><a href="#arguments">Arguments</a></aside>
+    <aside class="page-toc"><b>On this page</b><a href="#open">Open and read</a><a href="#arguments">Python API</a><a href="#native-bindings">R and Julia</a></aside>
   </div>
   <script src="../app.js"></script>
 </body></html>

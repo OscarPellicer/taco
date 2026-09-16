@@ -28,8 +28,9 @@ def open_writer(
 ) -> Writer:
     """Create the writer selected by the output path.
 
-    A ``.zip`` path creates an immutable archive writer.  A path without a
-    suffix creates a folder writer, which also supports append and hard links.
+    A ``.zip`` path creates an immutable archive writer. A path without a
+    suffix, or whose name equals the collection version, creates a folder
+    writer, which also supports append and hard links.
     """
     if collection.sources is not None:
         raise ValueError("taco:sources is reserved for TACOCAT")
@@ -51,8 +52,8 @@ def open_writer(
             progress=progress,
             workers=workers,
         )
-    if path.suffix:
-        raise ValueError("output must end in .zip or have no suffix")
+    if path.suffix and path.name != collection.dataset_version:
+        raise ValueError("output must end in .zip, have no suffix, or be the collection version")
     if partition_size is not None or partition_by is not None:
         raise ValueError("partitioning is only valid for ZIP datasets")
     if workers != 1:

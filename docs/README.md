@@ -1,7 +1,7 @@
 # TACO website
 
-Everything used to build the public TACO website lives in this directory.
-The generated website is written to `_site/` and must not be edited directly.
+This directory contains the public website sources. `make site` writes the
+generated site to `_site/`; edit the sources here rather than that output.
 
 ```text
 docs/
@@ -19,7 +19,7 @@ docs/
 └── index.html    landing page
 ```
 
-Build and validate the complete website from the repository root:
+Build and validate it from the repository root:
 
 ```bash
 make site

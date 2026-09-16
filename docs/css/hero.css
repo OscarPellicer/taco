@@ -1,4 +1,4 @@
-/* === RESET === */
+/* Reset */
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 html {
@@ -15,7 +15,7 @@ body {
   background: #fff;
 }
 
-/* === TOP NAVIGATION === */
+/* Navigation */
 .top-nav {
   position: fixed;
   top: 1.15rem;
@@ -107,7 +107,7 @@ body {
   outline-offset: 5px;
 }
 
-/* === HERO CONTAINER === */
+/* Hero */
 .hero {
   position: relative;
   width: 100%;
@@ -123,14 +123,14 @@ body {
   z-index: 2;
 }
 
-/* === CANVAS === */
+/* Canvas */
 canvas#sky {
   position: absolute; top: 0; left: 0;
   width: 100%; height: 100%; z-index: 0;
   pointer-events: none;
 }
 
-/* === NEBULA === */
+/* Nebula */
 .nebula {
   position: absolute; border-radius: 50%;
   filter: blur(60px); z-index: 0; pointer-events: none;
@@ -139,14 +139,14 @@ canvas#sky {
 .n2 { width: 250px; height: 180px; bottom: 5%; right: -5%; background: radial-gradient(ellipse, var(--neb2), transparent); animation: neb 10s ease-in-out infinite 2s; }
 .n3 { width: 200px; height: 140px; top: 35%; right: 8%; background: radial-gradient(ellipse, var(--neb3), transparent); animation: neb 12s ease-in-out infinite 4s; }
 
-/* === CONTENT === */
+/* Content */
 .content {
   position: relative; z-index: 2;
   display: flex; flex-direction: column; align-items: center;
   gap: 16px; pointer-events: none;
 }
 
-/* === TACO SYSTEM === */
+/* TACO system */
 .taco-system {
   position: relative; width: 385px; height: 385px;
   display: flex; justify-content: center; align-items: center;
@@ -158,7 +158,7 @@ canvas#sky {
   animation: pulse 4s ease-in-out infinite; z-index: 0;
 }
 
-/* === MORPH (taco <-> earth) === */
+/* Taco-to-earth morph */
 .morph-center {
   position: relative; z-index: 1; width: 145px; height: 145px;
   display: flex; justify-content: center; align-items: center;
@@ -173,7 +173,7 @@ canvas#sky {
 .taco-emoji  { animation: morph-taco 8s infinite; }
 .earth-emoji { animation: morph-planet 8s infinite; }
 
-/* === ORBIT === */
+/* Orbit */
 .orbit-ring {
   position: absolute; width: 325px; height: 325px;
   border: 1px solid var(--orbit-color); border-radius: 50%; z-index: 3;
@@ -191,7 +191,7 @@ canvas#sky {
   filter: drop-shadow(0 0 6px var(--sat-glow));
 }
 
-/* === TITLES === */
+/* Titles */
 .title-wrap {
   display: flex; flex-direction: column; align-items: center; text-align: center;
   transform: translateY(-18px);
@@ -227,10 +227,10 @@ canvas#sky {
   color: var(--text-sub);
 }
 
-/* === ENTRANCE === */
+/* Entrance */
 .content { opacity: 0; animation: rise .8s ease-out .2s forwards; }
 
-/* === RESPONSIVE === */
+/* Responsive layout */
 @media (max-width: 600px) {
   html { scroll-snap-type: none; }
   .hero { min-height: 100vh; }
@@ -259,7 +259,7 @@ canvas#sky {
   .top-nav::-webkit-scrollbar { display: none; }
 }
 
-/* === NAV D-PAD === */
+/* Navigation pad */
 .nav-dpad {
   position: fixed; bottom: 24px; right: 24px; z-index: 50;
   display: grid;
@@ -292,7 +292,7 @@ canvas#sky {
   transition: stroke .3s ease;
 }
 
-/* --- Light slides (default) --- */
+/* Light slides */
 .nav-dpad.on-light .dpad-key {
   background: rgba(20, 20, 30, .55);
   border-color: rgba(0, 0, 0, .08);
@@ -308,7 +308,7 @@ canvas#sky {
   border-color: rgba(0, 0, 0, .2);
 }
 
-/* --- Dark slides (hero) --- */
+/* Dark slides */
 .nav-dpad.on-dark .dpad-key {
   background: rgba(255, 255, 255, .1);
   border-color: rgba(255, 255, 255, .15);
@@ -325,7 +325,7 @@ canvas#sky {
   border-color: rgba(100, 180, 255, .5);
 }
 
-/* --- Shared states --- */
+/* Shared states */
 .dpad-key:hover:not(:disabled) { transform: scale(1.08); }
 .dpad-key:active:not(:disabled),
 .dpad-key.pressed { transform: scale(.9); }

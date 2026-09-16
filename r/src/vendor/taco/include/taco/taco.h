@@ -1,12 +1,12 @@
-// C API for reading TACO datasets.
+// C API for TACO metadata access.
 //
-// The core resolves ZIP, FOLDER and TACOCAT containers, local or remote,
-// copies their metadata into a cache and writes the SQL that DuckDB runs to
-// read them. Python, R and Julia bind this header.
+// The core opens local or remote containers, caches their metadata, and
+// produces DuckDB SQL. Python, R, and Julia use this ABI.
 #ifndef TACO_H
 #define TACO_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #if defined(_WIN32)
 #  if defined(TACO_BUILD)
@@ -44,6 +44,13 @@ TACO_API void taco_free(char* text);
 // Releases transport resources cached by this thread. Call this before
 // unloading the shared library. It is safe to call more than once.
 TACO_API void taco_shutdown(void);
+
+// Progress of downloads and copies. phase names the work, done and total
+// count bytes; total is 0 while unknown. The callback runs on the thread
+// doing the work. NULL restores the built-in bar, which writes to stderr
+// when that is a terminal and stays silent otherwise.
+typedef void (*taco_progress_fn)(const char* phase, uint64_t done, uint64_t total, void* user);
+TACO_API void taco_set_progress(taco_progress_fn callback, void* user);
 
 typedef struct taco_dataset taco_dataset;
 
@@ -95,6 +102,19 @@ TACO_API taco_status taco_join_manifest_href(const char* candidate, const char* 
 // "source", "collection", "version", "versions" and "manifest"; the last
 // four are null or empty when the source is not versioned.
 TACO_API taco_status taco_resolve(const char* source, char** out_json);
+
+// A byte range of a local or remote object and the file it is copied to. A
+// zero length copies from offset to the end of the object.
+typedef struct {
+    const char* uri;
+    uint64_t offset;
+    uint64_t length;
+    const char* path;
+} taco_fetch_item;
+
+// Copies every item into its file, creating parent directories. The Python
+// writer exports samples with it.
+TACO_API taco_status taco_fetch(const taco_fetch_item* items, size_t count);
 
 #ifdef __cplusplus
 } // extern "C"

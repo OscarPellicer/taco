@@ -153,3 +153,16 @@ describe("versioned dataset discovery", {
     expect_error(taco::open_dataset(path), "does not exist")
   })
 })
+
+
+test_that("file URI without versioned manifest is direct", {
+  directory <- tempfile("taco-file-uri-")
+  dir.create(directory)
+  on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  path <- normalizePath(directory, winslash = "/", mustWork = TRUE)
+  uri <- paste0("file://", if (.Platform$OS.type == "windows") "/" else "", path)
+
+  resolution <- taco:::.resolve_dataset(uri)
+  expect_identical(resolution$sources, uri)
+  expect_null(resolution$manifest)
+})

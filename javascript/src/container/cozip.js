@@ -53,10 +53,8 @@ export class TacoArchive {
 }
 
 /**
- * Open and authenticate a CoZIP TACO-profile archive.
- *
- * This implementation is private to @asterisk-labs/taco. It intentionally
- * does not import or depend on @asterisk-labs/cozip.
+ * Open and authenticate a CoZIP TACO-profile archive without depending on
+ * @asterisk-labs/cozip.
  *
  * @param {string} url
  * @param {import("./http.js").HttpClient} client

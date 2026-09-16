@@ -8,7 +8,7 @@ body {
   padding: 20px 0;
 }
 
-/* === A4 PAGE === */
+/* A4 page */
 .page {
   width: 210mm;
   height: 286mm;
@@ -23,7 +23,7 @@ body {
   overflow: hidden;
 }
 
-/* === HEADER === */
+/* Header */
 .header {
   display: flex;
   justify-content: space-between;
@@ -56,7 +56,7 @@ body {
   line-height: 1.5;
 }
 
-/* === TAGS === */
+/* Tags */
 .tag {
   display: inline-block;
   font-size: 6.5pt;
@@ -69,7 +69,7 @@ body {
 .tag-green  { background: #dcfce7; color: #166534; }
 .tag-amber  { background: #fef3c7; color: #92400e; }
 
-/* === TWO COLUMNS === */
+/* Columns */
 .cols {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -77,7 +77,7 @@ body {
   margin-top: 2px;
 }
 
-/* === SECTIONS === */
+/* Sections */
 .section { margin-bottom: 7px; }
 
 .s-label {
@@ -100,7 +100,7 @@ body {
 }
 .bold { font-weight: 700; }
 
-/* === CONTRACT BOX === */
+/* Contract */
 .contract-box {
   background: #eff6ff;
   border: 1px solid #bfdbfe;
@@ -120,7 +120,7 @@ body {
   color: #3b82f6;
 }
 
-/* === INLINE CODE === */
+/* Inline code */
 code {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 7.5pt;
@@ -130,7 +130,7 @@ code {
   color: #1e293b;
 }
 
-/* === CODE BLOCKS === */
+/* Code blocks */
 pre {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 7.5pt;
@@ -158,7 +158,7 @@ pre code {
 .cm  { color: #64748b; }  /* comments */
 .op  { color: #fbbf24; }  /* operators and numbers */
 
-/* === TABLES === */
+/* Tables */
 table {
   width: 100%;
   border-collapse: collapse;
@@ -186,7 +186,7 @@ td.label   { font-weight: 600; }
 td.name    { font-weight: 700; white-space: nowrap; width: 90px; }
 td.desc    { color: #555; }
 
-/* === EXTENSIONS === */
+/* Extensions */
 .extension-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -208,7 +208,7 @@ td.desc    { color: #555; }
   margin-bottom: 1px;
 }
 
-/* === CONTAINER MODES === */
+/* Container modes */
 .container-modes {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -232,7 +232,7 @@ td.desc    { color: #555; }
   margin-bottom: 2px;
 }
 
-/* === ECOSYSTEM === */
+/* Ecosystem */
 .ecosystem-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -256,7 +256,7 @@ td.desc    { color: #555; }
   font-weight: 900;
 }
 
-/* === PILLARS === */
+/* Pillars */
 .pillars {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -287,7 +287,7 @@ td.desc    { color: #555; }
   line-height: 1.35;
 }
 
-/* === LANGUAGE ACCESS === */
+/* Language access */
 .language-orbit {
   height: 144px;
   margin: 4px 0 6px;
@@ -360,7 +360,7 @@ td.desc    { color: #555; }
 .node-matlab { left: 18%; bottom: 2%; }
 .node-cpp { right: 18%; bottom: 3%; }
 
-/* === TREE === */
+/* Tree */
 .tree {
   font-family: 'JetBrains Mono', monospace;
   font-size: 7.1pt;
@@ -374,7 +374,7 @@ td.desc    { color: #555; }
   white-space: pre;
 }
 
-/* === FOOTER === */
+/* Footer */
 .footer {
   position: absolute;
   bottom: 4mm;
@@ -420,7 +420,7 @@ td.desc    { color: #555; }
   color: #ccc;
 }
 
-/* === PRINT BUTTON === */
+/* Print button */
 .footer-heart { color: #ef4444; }
 
 .btn-wrap {
@@ -442,7 +442,7 @@ td.desc    { color: #555; }
 }
 .btn-pdf:hover { background: #333; }
 
-/* === PRINT === */
+/* Print */
 @media print {
   body { background: #fff; padding: 0; }
   .page { margin: 0; box-shadow: none; }

@@ -43,12 +43,14 @@ set(KARU_WERROR ${TACO_WERROR} CACHE BOOL "" FORCE)
 add_subdirectory(${TACO_KARU_DIR} ${CMAKE_CURRENT_BINARY_DIR}/karu EXCLUDE_FROM_ALL)
 
 set(TACO_SOURCES
+    src/cache.cpp
     src/capi.cpp
     src/cozip_index.cpp
     src/dataset.cpp
     src/json.cpp
     src/manifest.cpp
     src/paths.cpp
+    src/progress.cpp
     src/sql.cpp
     src/transport.cpp
 )

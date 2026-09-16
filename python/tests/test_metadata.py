@@ -472,7 +472,7 @@ def test_custom_derived_group(tmp_path) -> None:
 
 @dataclass(frozen=True)
 class BatchSize(taco.DerivedMetadata):
-    """Reads the whole batch, which is exactly what a derived group may not do."""
+    """Inspect the complete batch instead of one row."""
 
     @property
     def requires(self) -> tuple[str, ...]:

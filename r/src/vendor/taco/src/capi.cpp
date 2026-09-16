@@ -4,6 +4,7 @@
 #include "dataset.hpp"
 #include "error.hpp"
 #include "manifest.hpp"
+#include "progress.hpp"
 #include "sql.hpp"
 #include "transport.hpp"
 
@@ -77,6 +78,10 @@ void taco_free(char* text) {
 
 void taco_shutdown(void) {
     taco::shutdown_transport();
+}
+
+void taco_set_progress(taco_progress_fn callback, void* user) {
+    taco::set_progress(callback, user);
 }
 
 taco_status taco_open(const char* source, const char* cache_dir, taco_dataset** out) {
@@ -191,5 +196,17 @@ taco_status taco_resolve(const char* source, char** out_json) {
     return guard([&] {
         require(source && out_json, "taco_resolve: source and out_json must not be NULL");
         *out_json = copy_string(taco::resolve_dataset(source));
+    });
+}
+
+taco_status taco_fetch(const taco_fetch_item* items, size_t count) {
+    return guard([&] {
+        require(items || count == 0, "taco_fetch: items must not be NULL");
+        std::vector<taco::Fetch> fetches;
+        for (size_t i = 0; i < count; ++i) {
+            require(items[i].uri && items[i].path, "taco_fetch: uri and path must not be NULL");
+            fetches.push_back(taco::Fetch{items[i].uri, items[i].offset, items[i].length, items[i].path});
+        }
+        taco::fetch_files(fetches);
     });
 }

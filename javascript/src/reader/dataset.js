@@ -145,6 +145,8 @@ export class Dataset {
     const leaves = this.#selectedLeaves(options.files);
     const samples = await this.#sampleRows(idx);
 
+    // The three layouts share sample selection but differ in how payload rows
+    // are attached: one location, columns per leaf, or one row per file.
     let rows;
     if (this.structure === null) {
       rows = samples.map((sample) => this.#nullStructureRow(sample, location));
@@ -241,6 +243,8 @@ export class Dataset {
    */
   async #wideRows(samples, leaves, location) {
     if (!leaves) throw new Error("taco: internal null-structure mismatch");
+    // Seed every sample before reading children. This keeps samples with
+    // missing optional files and gives variable leaves an empty-list default.
     const outputs = new Map();
     for (const sample of samples) {
       const output = this.#sampleIdentity(sample);
@@ -251,6 +255,8 @@ export class Dataset {
     if (!location || samples.length === 0) return [...outputs.values()];
 
     const files = await this.#fileNodes(samples, leaves, true);
+    // Variable leaves are collected with their numeric index and sorted only
+    // after the hierarchy has been walked.
     /** @type {Map<string, Map<string, Array<{ index: number, location: string }>>>} */
     const sequences = new Map();
     for (const node of files) {
@@ -316,6 +322,8 @@ export class Dataset {
    * @returns {Promise<Node[]>}
    */
   async #fileNodes(samples, leaves, identityOnly) {
+    // Reconstruct the metadata tree level by level. Each read is restricted to
+    // known parent ids, so unrelated Parquet rows are never decoded.
     /** @type {Map<string, Map<string, Node>>} */
     const nodes = new Map();
     /** @type {Node[]} */

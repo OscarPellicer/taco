@@ -1,5 +1,3 @@
-"""Read semantics of the native core, from the joins to the error messages."""
-
 from __future__ import annotations
 
 import json
@@ -113,6 +111,18 @@ def data(tmp_path_factory: pytest.TempPathFactory) -> Path:
         samples.append(taco.Sample(metadata=taco.Metadata(ml=Split(split="train", n_images=index)), assets=assets))
     write("variable", variable, samples, root / "variable.zip")
 
+    nested_variable = taco.Contract(structure=["before/img*[0,3].bin"])
+    write(
+        "nested-variable",
+        nested_variable,
+        [
+            taco.Sample(
+                assets=[taco.Asset(payload(f"img{number}", 0), path=f"before/img{number}.bin") for number in range(2)]
+            )
+        ],
+        root / "nested-variable.zip",
+    )
+
     shadow = taco.Contract(
         structure=["before/B02.bin", "change.bin"],
         metadata=taco.MetadataSchema(
@@ -157,7 +167,7 @@ def by_sample(table: pa.Table) -> list[dict]:
 
 
 def test_long_rows_carry_their_own_and_ancestor_metadata(data: Path) -> None:
-    table = taco.read(data / "nested.zip", layout="long")
+    table = taco.open_dataset(data / "nested.zip").sql("SELECT * FROM files")
     assert table.num_rows == 12
     first = [row for row in by_sample(table) if row["sample_id"] == 0]
     assert [(row["path"], row["node:kind"], row["raster:resolution"]) for row in first] == [
@@ -172,21 +182,27 @@ def test_long_rows_carry_their_own_and_ancestor_metadata(data: Path) -> None:
 def test_wide_rows_have_a_location_per_leaf(data: Path) -> None:
     table = taco.read(data / "nested.zip")
     assert table.num_rows == 3
+    assert table.column("sample_id").to_pylist() == [0, 1, 2]
     row = by_sample(table)[0]
-    assert row["before/B02.bin"].startswith("/vsisubfile/")
-    assert row["before/B02.bin"].endswith(str((data / "nested.zip").resolve()))
-    assert taco.read(data / "nested.zip", location=False).column("change.bin").null_count == 3
+    assert row["before__B02.bin"].startswith("/vsisubfile/")
+    assert row["before__B02.bin"].endswith(str((data / "nested.zip").resolve()))
+    assert "change.bin" not in taco.open_dataset(data / "nested.zip").sql("SELECT * FROM data").column_names
 
 
-def test_files_idx_and_level(data: Path) -> None:
+def test_files_and_sql_relations(data: Path) -> None:
     path = data / "nested.zip"
+    dataset = taco.open_dataset(path)
     assert taco.read(path, files=["change.bin"]).column_names[-1] == "change.bin"
-    assert "before/B02.bin" not in taco.read(path, files=["change.bin"]).column_names
-    assert set(taco.read(path, layout="long", files=["change.bin"]).column("path").to_pylist()) == {"change.bin"}
-    assert taco.read(path, idx=1).column("sample_id").to_pylist() == [1]
-    assert sorted(taco.read(path, idx=(1, 3)).column("sample_id").to_pylist()) == [1, 2]
+    assert "before__B02.bin" not in taco.read(path, files=["change.bin"]).column_names
+    assert set(dataset.sql("SELECT path FROM files WHERE path = 'change.bin'").column("path").to_pylist()) == {
+        "change.bin"
+    }
+    assert dataset.sql("SELECT sample_id FROM data WHERE sample_id = 1").column("sample_id").to_pylist() == [1]
+    assert sorted(
+        dataset.sql("SELECT sample_id FROM data WHERE sample_id >= 1 AND sample_id < 3").column("sample_id").to_pylist()
+    ) == [1, 2]
 
-    level = taco.read(path, level="children/before")
+    level = dataset.sql("SELECT * FROM children__before")
     assert level.num_rows == 6
     assert sorted(level.column("internal:relative_path").to_pylist())[0] == "0/before/B02.bin"
 
@@ -195,36 +211,52 @@ def test_variable_leaves_are_ordered_lists(data: Path) -> None:
     path = data / "variable.zip"
     rows = by_sample(taco.read(path))
     assert [(row["ml:n_images"], len(row["img"])) for row in rows] == [(0, 0), (1, 1), (2, 2)]
-    long = taco.read(path, layout="long")
+    long = taco.open_dataset(path).sql("SELECT * FROM files")
     first_image = next(
         row["taco:location"] for row in long.to_pylist() if row["sample_id"] == 2 and row["path"] == "img0.bin"
     )
     assert rows[2]["img"][0] == first_image
-    assert taco.read(path, location=False).column("img").null_count == 3
+    assert "img" not in taco.open_dataset(path).sql("SELECT * FROM data").column_names
+
+    nested = taco.read(data / "nested-variable.zip")
+    assert nested.column_names == ["sample_id", "before__img"]
+    assert len(nested.column("before__img")[0].as_py()) == 2
 
 
 def test_a_redeclared_field_takes_the_deepest_value(data: Path) -> None:
-    rows = by_sample(taco.read(data / "shadow.zip", layout="long"))
+    dataset = taco.open_dataset(data / "shadow.zip")
+    rows = by_sample(dataset.sql("SELECT * FROM files"))
     assert [(row["sample_id"], row["path"], row["raster:resolution"]) for row in rows] == [
         (0, "before/B02.bin", 3),
         (0, "change.bin", 2),
         (1, "before/B02.bin", 3),
         (1, "change.bin", 2),
     ]
+    raw = dataset.sql(
+        'SELECT folder."raster:resolution" AS folder_resolution, '
+        'asset."raster:resolution" AS asset_resolution '
+        "FROM children AS folder JOIN children__before AS asset "
+        'ON asset."internal:parent_id" = folder."internal:current_id"'
+    )
+    assert raw.to_pydict() == {"folder_resolution": [1, 1], "asset_resolution": [3, 3]}
 
 
 def test_single_file_samples(data: Path) -> None:
-    table = taco.read(data / "null.zip")
+    dataset = taco.open_dataset(data / "null.zip")
+    table = dataset.read()
     assert table.num_rows == 6
     assert all(value.startswith("/vsisubfile/") for value in table.column("taco:location").to_pylist())
+    files = dataset.sql("SELECT * FROM files ORDER BY sample_id")
+    assert "path" in files.column_names
+    assert files.column("path").null_count == files.num_rows
     with pytest.raises(ContainerError, match="files requires taco:structure"):
-        taco.read(data / "null.zip", files=["change.bin"])
+        dataset.read(files=["change.bin"])
 
 
 def test_folder_and_catalog_locations(data: Path) -> None:
     folder = by_sample(taco.read(data / "nested"))
     assert folder[0]["change.bin"] == f"{(data / 'nested').resolve()}/DATA/0/change.bin"
-    assert taco.read(data / "nested", layout="long").num_rows == 12
+    assert taco.open_dataset(data / "nested").sql("SELECT * FROM files").num_rows == 12
 
     catalog = taco.read(data / "catalog" / ".tacocat")
     assert catalog.num_rows == 3
@@ -238,7 +270,7 @@ def test_contract_errors(data: Path, tmp_path: Path) -> None:
     shutil.copytree(data / "nested", broken)
     (broken / "COLLECTION.json").write_text("{ not json")
     with pytest.raises(ContainerError, match=r"COLLECTION\.json is not valid JSON"):
-        taco.read(broken, level="sample")
+        taco.open_dataset(broken)
 
     old = tmp_path / "old"
     shutil.copytree(data / "nested", old)
@@ -248,9 +280,6 @@ def test_contract_errors(data: Path, tmp_path: Path) -> None:
     with pytest.raises(ContainerError, match="unsupported TACO version"):
         taco.reader.inspect.levels(old)
 
-    with pytest.raises(ContainerError, match="files does not apply when level is set"):
-        taco.read(data / "nested.zip", level="children", files=["change.bin"])
-
 
 @pytest.mark.skipif(
     os.environ.get("TACO_TEST_REMOTE") != "1",
@@ -258,7 +287,7 @@ def test_contract_errors(data: Path, tmp_path: Path) -> None:
 )
 def test_remote_datasets() -> None:
     base = "hf://datasets/asterisk-labs/taco-api-fixtures/data/04-change-detection"
-    archive = taco.read(f"{base}/single-zip/dataset.zip", layout="long")
+    archive = taco.open_dataset(f"{base}/single-zip/dataset.zip").sql("SELECT * FROM files")
     assert archive.num_rows == 18
     assert (
         archive.column("taco:location")[0]
@@ -275,7 +304,7 @@ def test_remote_datasets() -> None:
     )
 
     mirror = "source://asterisk-labs/taco-api-fixtures/data/04-change-detection"
-    catalog = taco.read(f"{mirror}/by-split/.tacocat", layout="long")
+    catalog = taco.open_dataset(f"{mirror}/by-split/.tacocat").sql("SELECT * FROM files")
     assert catalog.num_rows == 18
     location = catalog.column("taco:location")[0].as_py()
     assert ",/vsisource/asterisk-labs/taco-api-fixtures/data/04-change-detection/by-split/" in location

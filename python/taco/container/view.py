@@ -31,7 +31,7 @@ Container = Literal["zip", "folder", "tacocat"]
 
 @dataclass(frozen=True)
 class DataRow:
-    """One data file as the metadata layer describes it."""
+    """Location metadata for one payload file."""
 
     level: str
     row: int

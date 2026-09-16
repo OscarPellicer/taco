@@ -814,7 +814,7 @@ function renderPlotLegend(field, analysis) {
   title.textContent = field;
   const summary = document.createElement("small");
   summary.textContent = analysis.mode === "continuous"
-    ? `Continuous · robust 2–98% range`
+    ? `Continuous · 2–98% stretch`
     : `Categorical · ${analysis.truncated ? "64+" : analysis.uniqueCount} values`;
   element.plotLegend.append(title, summary);
 

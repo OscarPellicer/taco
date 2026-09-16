@@ -4,10 +4,9 @@ Pure-JavaScript reader for remote [TACO](https://asterisk.coop/taco/spec/)
 datasets. It opens FOLDER, ZIP, and TACOCAT containers directly over HTTP and
 runs in modern browsers and Node.js 20 or newer.
 
-It does not import, wrap, or depend on `@asterisk-labs/cozip`. ZIP support is a
-private TACO-profile implementation
-that validates CoZIP binary version 1, requires `profile = 2`, and verifies the
-archive integrity hash before trusting priority-file offsets.
+ZIP support is implemented directly and does not depend on
+`@asterisk-labs/cozip`. The reader validates CoZIP binary version 1, requires
+`profile = 2`, and checks the archive hash before using priority-file offsets.
 
 ## Install
 
@@ -129,8 +128,8 @@ const blob = await asset.blob("application/octet-stream");
 ZIP and TACOCAT assets are fetched with one HTTP byte-range request. FOLDER
 assets are fetched from their direct URL.
 
-The package treats payloads as opaque bytes. In particular, Rumi decoding does
-not belong to TACO and is intentionally not included here.
+The package treats payloads as opaque bytes; Rumi decoding remains the
+responsibility of a Rumi library.
 
 ## Authentication and CORS
 
@@ -161,8 +160,8 @@ Version 1 is reader-only and supports TACO specification 3.0.0:
 - calculated locations and browser-native asset range reads.
 
 It does not implement a writer, arbitrary SQL, local filesystem paths, or Rumi
-decoding. The separate [fixture playground](https://github.com/asterisk-labs/taco/tree/main/docs/playground)
-consumes this package directly and keeps payload decoding outside TACO.
+decoding. The [fixture playground](https://github.com/asterisk-labs/taco/tree/main/docs/playground)
+uses this package directly.
 
 ## License
 

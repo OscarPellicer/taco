@@ -47,6 +47,7 @@ dependencies = [
     "cozip>=2026.9.4",
     "duckdb>=1.5.5",
     "numpy>=1.24",
+    "tqdm>=4.66",
     "pyarrow>=14",
     "pydantic>=2.8",
     "pyproj>=3.6",
@@ -60,7 +61,6 @@ test-eo = ["rumi-eo[write]>=0.19", "antimeridian>=0.4"]
 geoenrich = ["earthengine-api>=1"]
 rumi = ["rumi-eo[write]>=0.19"]
 antimeridian = ["pyproj>=3.6", "shapely>=2", "antimeridian>=0.4"]
-progress = ["tqdm>=4.66"]
 
 [project.urls]
 Homepage = "https://asterisk.coop/taco"
@@ -79,6 +79,7 @@ path = "hatch_build.py"
 include = ["taco/**", "tests/**", "examples/**", "hatch_build.py", "LICENSE", "README.md", "CHANGELOG.md", "pyproject.toml"]
 
 [tool.hatch.build.targets.sdist.force-include]
+"../r/inst/conformance/reader-resolution.json" = "tests/data/reader-resolution.json"
 "../core/CMakeLists.txt" = "native/core/CMakeLists.txt"
 "../core/include" = "native/core/include"
 "../core/src" = "native/core/src"
@@ -113,7 +114,7 @@ module = "taco.container.cozip"
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*", "cffi"]
+module = ["pyarrow", "pyarrow.*", "cffi", "tqdm", "tqdm.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

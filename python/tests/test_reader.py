@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect as python_inspect
 import shutil
 import threading
 from pathlib import Path
@@ -7,19 +8,16 @@ from pathlib import Path
 import pytest
 
 import taco
-import taco.reader as reader
 import taco.reader.dataset as dataset_module
 import taco.reader.engine as engine
 import taco.reader.inspect as inspect_module
 import taco.reader.native as native
-import taco.reader.query as query_module
 from taco.errors import ContainerError
 
 from .datasets import get_case
 
 
 def test_reader_inspects_an_archive(archive: Path) -> None:
-    assert taco.reader is reader
     contract = inspect_module.contract(archive)
     assert contract.column("kind").to_pylist() == ["structure"] * 5 + ["level"] * 4
     assert inspect_module.structure(archive) == [
@@ -33,9 +31,9 @@ def test_reader_inspects_an_archive(archive: Path) -> None:
     assert inspect_module.derived(archive) == {}
     assert inspect_module.collection(archive)["id"] == "tiny-change"
     assert inspect_module.profile(archive) == "taco"
-    assert "read_parquet(" in inspect_module.sql(archive, idx=1)
+    assert "read_parquet(" in inspect_module.native_sql(archive, idx=1)
     with pytest.raises(ValueError, match="layout"):
-        inspect_module.sql(archive, layout="flat")
+        inspect_module.native_sql(archive, layout="flat")
 
 
 def test_dataset_api(archive: Path) -> None:
@@ -44,20 +42,27 @@ def test_dataset_api(archive: Path) -> None:
     assert isinstance(dataset, taco.Dataset)
     assert dataset.sources == (archive.resolve(),)
     assert dataset.collection.id == "tiny-change"
-    assert taco.read(dataset).num_rows == 4
+    assert dataset.read().num_rows == 4
     assert taco.read(archive).num_rows == 4
     assert repr(dataset).startswith("Dataset(")
 
-    long = taco.read(dataset, layout="long", idx=3, files=["mask.tif"])
+    long = dataset.sql("SELECT sample_id, path, \"taco:location\" FROM files WHERE sample_id = 3 AND path = 'mask.tif'")
     assert long.column("path").to_pylist() == ["mask.tif"]
     assert long.column("sample_id").to_pylist() == [3]
     assert long.column("taco:location")[0].as_py().startswith("/vsisubfile/")
-    assert "taco:location" not in taco.read(dataset, layout="long", location=False).column_names
+    assert "taco:location" not in dataset.sql("SELECT * FROM data").column_names
 
-    level = taco.read(dataset, level="children/before")
+    level = dataset.sql("SELECT * FROM children__before")
     assert level.num_rows == 8
     assert "internal:current_id" in level.column_names
     assert "taco:location" not in level.column_names
+    assert dataset.sql("SELECT * FROM data WHERE sample_id = 1 -- trailing comment").num_rows == 1
+
+
+def test_high_level_read_signatures() -> None:
+    assert list(python_inspect.signature(taco.read).parameters) == ["source", "files"]
+    assert list(python_inspect.signature(taco.Dataset.read).parameters) == ["self", "files"]
+    assert list(python_inspect.signature(taco.Dataset.sql).parameters) == ["self", "query"]
 
 
 def test_reader_combines_partitions(archive: Path, tmp_path: Path) -> None:
@@ -68,11 +73,24 @@ def test_reader_combines_partitions(archive: Path, tmp_path: Path) -> None:
     dataset = taco.open_dataset([archive, copy])
     assert "sources=2" in repr(dataset)
     assert "2 sources" in dataset._repr_html_()
-    wide = taco.read(dataset)
+    wide = dataset.read()
     assert wide.num_rows == 8
+    assert list(zip(wide.column("source_file").to_pylist(), wide.column("sample_id").to_pylist(), strict=True)) == [
+        ("dataset.zip", 0),
+        ("dataset.zip", 1),
+        ("dataset.zip", 2),
+        ("dataset.zip", 3),
+        ("part.zip", 0),
+        ("part.zip", 1),
+        ("part.zip", 2),
+        ("part.zip", 3),
+    ]
     assert set(wide.column("source_file").to_pylist()) == {"dataset.zip", "part.zip"}
-    assert taco.read([archive, copy], idx=(2, 4)).num_rows == 4
-    assert set(taco.read(dataset, level="sample").column("source_file").to_pylist()) == {"dataset.zip", "part.zip"}
+    assert dataset.sql("SELECT * FROM data WHERE sample_id >= 2 AND sample_id < 4").num_rows == 4
+    assert set(dataset.sql("SELECT * FROM sample").column("source_file").to_pylist()) == {
+        "dataset.zip",
+        "part.zip",
+    }
 
 
 def test_reader_keeps_the_location_of_single_file_samples(tmp_path: Path) -> None:
@@ -82,22 +100,24 @@ def test_reader_keeps_the_location_of_single_file_samples(tmp_path: Path) -> Non
         writer.extend(case.samples)
         writer.run()
 
-    assert all(value.startswith("/vsisubfile/") for value in taco.read(path).column("taco:location").to_pylist())
-    assert "taco:location" not in taco.read(path, location=False).column_names
+    dataset = taco.open_dataset(path)
+    assert all(value.startswith("/vsisubfile/") for value in dataset.read().column("taco:location").to_pylist())
+    assert "taco:location" not in dataset.sql("SELECT * FROM data").column_names
 
 
 def test_reader_reports_core_errors(archive: Path, tmp_path: Path) -> None:
-    with pytest.raises(ContainerError, match="has no level 'nope'"):
-        taco.read(archive, level="nope")
     with pytest.raises(ContainerError, match=r"unknown structure leaf: nope\.tif"):
         taco.read(archive, files=["nope.tif"])
     with pytest.raises(ContainerError, match="could not open"):
         taco.read(tmp_path / "missing.zip")
-    with pytest.raises(TypeError, match="location"):
-        taco.read(archive, location="yes")  # type: ignore[arg-type]
+    dataset = taco.open_dataset(archive)
+    with pytest.raises(TypeError, match="query"):
+        dataset.sql(1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="empty"):
+        dataset.sql("  ; ")
 
 
-def test_dataset_rejects_unknown_layout(monkeypatch: pytest.MonkeyPatch, collection: taco.Collection) -> None:
+def test_dataset_rejects_invalid_sources(monkeypatch: pytest.MonkeyPatch, collection: taco.Collection) -> None:
     monkeypatch.setattr(dataset_module, "merge_collections", lambda paths: collection)
     dataset = taco.open_dataset("https://example.com/data.zip")
 
@@ -108,8 +128,6 @@ def test_dataset_rejects_unknown_layout(monkeypatch: pytest.MonkeyPatch, collect
         taco.open_dataset([])
     with pytest.raises(ValueError, match="unique"):
         taco.open_dataset(["same.zip", "same.zip"])
-    with pytest.raises(ValueError, match="layout"):
-        taco.read(dataset, layout="flat")  # type: ignore[arg-type]
 
 
 def test_dataset_html_escapes_collection_text(monkeypatch: pytest.MonkeyPatch, collection: taco.Collection) -> None:
@@ -144,22 +162,35 @@ def test_dataset_reads_folder(folder_dataset: Path) -> None:
     html = dataset._repr_html_()
     assert ">FOLDER<" in html
     assert 'aria-label="TACO folder storage"' in html
-    assert taco.read(dataset).num_rows == 4
-    assert taco.read(dataset, layout="long").num_rows == 19
+    assert dataset.read().num_rows == 4
+    assert dataset.sql("SELECT * FROM files").num_rows == 19
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [(None, None), (3, "3"), ((1, 4), "[1, 4]")],
-)
-def test_index_encoding(value, expected) -> None:
-    assert query_module.normalize_index(value) == expected
+def test_file_selection_accepts_one_name(archive: Path) -> None:
+    assert taco.read(archive, files="mask.tif").column_names[-1] == "mask.tif"
+    assert inspect_module.native_sql(archive, files="mask.tif") == inspect_module.native_sql(
+        archive, files=["mask.tif"]
+    )
 
 
-@pytest.mark.parametrize("value", [True, [1], [1, 2, 3], [0, True]])
-def test_invalid_indexes(value) -> None:
-    with pytest.raises(TypeError, match="idx"):
-        query_module.normalize_index(value)
+def test_sql_relations_and_nested_wide_names(archive: Path) -> None:
+    dataset = taco.open_dataset(archive)
+
+    assert "before__B02.tif" in dataset.read().column_names
+    assert "before/B02.tif" not in dataset.read().column_names
+    assert dataset.sql("SELECT count(*) AS n FROM data").column("n").to_pylist() == [4]
+    files = dataset.sql(
+        "SELECT sample_id, path, \"taco:location\" FROM files WHERE path = 'before/B02.tif' ORDER BY sample_id"
+    )
+    assert files.num_rows == 4
+    assert all(value.startswith("/vsisubfile/") for value in files.column("taco:location").to_pylist())
+    assert dataset.sql("SELECT count(*) AS n FROM children__before").column("n").to_pylist() == [8]
+
+
+@pytest.mark.parametrize("value", [1, b"mask.tif", ["mask.tif", 1]])
+def test_file_selection_rejects_non_strings(archive: Path, value) -> None:
+    with pytest.raises(TypeError, match="files"):
+        taco.read(archive, files=value)
 
 
 def test_engine_keeps_one_connection_per_thread() -> None:

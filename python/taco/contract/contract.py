@@ -126,12 +126,10 @@ def _check_row_independent(
     assets: tuple[Path | None, ...],
     produced: dict[str, list[Any]],
 ) -> None:
-    """Recompute the first row alone and compare.
+    """Reject extensions whose output depends on neighboring rows.
 
-    Derived groups run once per buffered batch, so a computation that looks at
-    the other rows silently produces a different answer for every batch size.
-    Values that aggregate across samples belong in a collection summary, which
-    accumulates until the writer closes.
+    Batch-dependent output changes with ``batch_size``. Cross-sample values
+    belong in a collection summary.
     """
     assert group.extension is not None
     probe = group.extension.run(

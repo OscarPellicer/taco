@@ -10,7 +10,7 @@ from .source import Location, PathInput
 
 
 def load_collection(path: PathInput | Location) -> dict[str, object]:
-    """Read and parse one ``COLLECTION.json`` document."""
+    """Load ``COLLECTION.json`` from one dataset."""
     data = json.loads(native.NativeDataset(path).collection)
     if not isinstance(data, dict):
         raise ContainerError(f"COLLECTION.json is not a JSON object: {path}")
@@ -18,12 +18,11 @@ def load_collection(path: PathInput | Location) -> dict[str, object]:
 
 
 def load_collections(paths: Sequence[Location]) -> list[dict[str, object]]:
-    """Read collection documents in the same order as their sources."""
     return [load_collection(path) for path in paths]
 
 
 def merge_collections(paths: tuple[Location, ...]) -> Collection:
-    """Validate compatible partitions and merge their collection extents."""
+    """Merge compatible source collections and their extents."""
     collections = tuple(Collection.from_dict(data) for data in load_collections(paths))
     if len(collections) == 1:
         return collections[0]

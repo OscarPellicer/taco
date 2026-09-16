@@ -52,8 +52,7 @@ class Writer:
         self._temporary = tempfile.TemporaryDirectory(prefix="taco-")
         self._stage = Path(self._temporary.name)
 
-        # ZIP creation needs to walk the samples more than once. Keeping the
-        # prepared objects on disk avoids growing memory with the dataset.
+        # Archive planning needs multiple passes without retaining every sample.
         self._samples: StagedSamples[tuple[_PreparedSample, int]] = StagedSamples(self._stage / "samples.stage")
         self._inline_assets = self._stage / "inline-assets"
 
@@ -93,8 +92,7 @@ class Writer:
         return self._add_prepared(self.contract.prepare_sample(sample))
 
     def _add_prepared(self, sample: _PreparedSample) -> int:
-        # Export stages rows read from an existing dataset. They already
-        # follow the contract, so they skip the model validation of add().
+        # Exported rows already satisfy the source contract.
         sample_id = self.sample_count
         sample = self._materialize_inline_assets(sample_id, sample)
         data_size = sum(self._asset_size(asset) for asset in sample.assets)
@@ -107,8 +105,7 @@ class Writer:
         return self.sample_count
 
     def run(self) -> BuildResult:
-        # Returning the same result makes run() safe to call from cleanup or
-        # orchestration code without publishing the dataset twice.
+        # run() is idempotent after a successful build.
         if self.state == "succeeded":
             assert self._result is not None
             return self._result
@@ -142,8 +139,7 @@ class Writer:
     def _render_collection(self, summaries: Mapping[str, Any]) -> str:
         data = self.collection.to_dict()
 
-        # The freshly computed summary wins over a possibly stale extent from
-        # the input collection. If no profile produced one, it stays absent.
+        # Recompute summaries instead of carrying stale collection values.
         data.pop("extent", None)
         for name, value in summaries.items():
             if value is None:
@@ -156,8 +152,7 @@ class Writer:
         if not any(asset.is_inline for asset in sample.assets):
             return sample
 
-        # From this point on both writers can treat every asset uniformly as a
-        # file. The temporary copy disappears together with the writer stage.
+        # Writers operate on files; inline bytes live only in the staging area.
         assets: list[_PreparedAsset] = []
         for position, asset in enumerate(sample.assets):
             if isinstance(asset.source, Path):

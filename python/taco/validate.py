@@ -90,10 +90,9 @@ class _Collector:
 
 
 def validate(path: str | PathLike[str], *, check_data: bool = True) -> ValidationReport:
-    """Validate a dataset and return a report; it never raises for findings.
+    """Return all validation errors and warnings for a local dataset.
 
-    ``check_data`` compares the metadata against the actual files or ZIP
-    entries (slower on large datasets but catches broken offsets).
+    ``check_data`` also checks files or ZIP entries against their metadata.
     """
     location = Path(path).expanduser()
     collector = _Collector(location)
@@ -158,7 +157,7 @@ def _check_metadata_files(dataset: DatasetView, collector: _Collector) -> None:
 
 
 def _split_by_source(dataset: DatasetView) -> dict[str, dict[str, pa.Table]]:
-    """Slice TACOCAT tables per partition; ids restart in every source file."""
+    """Split TACOCAT tables because row ids restart in each partition."""
     import pyarrow.compute as pc
 
     sources: set[str] = set()

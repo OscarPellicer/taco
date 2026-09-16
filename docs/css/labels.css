@@ -1,4 +1,4 @@
-/* === FLOATING LABELS === */
+/* Floating labels */
 .label {
   position: absolute; font-size: .58rem; letter-spacing: 1.35px;
   text-transform: uppercase; color: var(--label-color);
@@ -24,7 +24,7 @@
   transform: scale(1.12) translateY(-3px) !important;
 }
 
-/* === TOOLTIPS === */
+/* Tooltips */
 .label .tip {
   position: absolute; left: 50%;
   transform: translate(-50%, 8px);
@@ -43,7 +43,7 @@
 .label.bot .tip { bottom: calc(100% + 10px); }
 .label:hover .tip { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
 
-/* === POSITIONS === */
+/* Positions */
 .l1 { top: 16%; left: 10%; }
 .l2 { bottom: 16%; right: 10%; }
 .l3 { top: 18%; right: 12%; }
@@ -54,7 +54,7 @@
 .l8 { bottom: 7%; left: 34%; }
 .l9 { bottom: 8%; right: 34%; }
 
-/* === STAGGERED ENTRANCE + DRIFT + BLINK === */
+/* Entrance and motion */
 .label {
   opacity: 0;
   animation: fade-in .5s ease forwards, drift 6s ease-in-out infinite, blink 5s infinite;

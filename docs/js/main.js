@@ -1,10 +1,7 @@
-// === MAIN ORCHESTRATOR ===
-
 const hero = document.getElementById("hero");
 const canvas = document.getElementById("sky");
 const ctx = canvas.getContext("2d");
 
-// --- Stars ---
 const PAD = 0.08;
 const layers = [
   { stars: [], d: 0.015, n: 70 },
@@ -77,7 +74,6 @@ function drawStars(w, h, t, smx, smy) {
   }
 }
 
-// --- Resize ---
 let resizing = false;
 function resize() {
   if (resizing) return;
@@ -94,7 +90,6 @@ window.addEventListener("resize", () => {
   resizeTimer = setTimeout(resize, 100);
 });
 
-// --- Mouse ---
 let mx = 0.5, my = 0.5, smx = 0.5, smy = 0.5;
 hero.addEventListener("mousemove", (e) => {
   const r = hero.getBoundingClientRect();
@@ -103,10 +98,8 @@ hero.addEventListener("mousemove", (e) => {
 });
 hero.addEventListener("mouseleave", () => { mx = 0.5; my = 0.5; });
 
-// --- Init ---
 initStars();
 
-// --- Draw ---
 function draw(t) {
   const w = hero.offsetWidth, h = hero.offsetHeight;
   ctx.clearRect(0, 0, w, h);

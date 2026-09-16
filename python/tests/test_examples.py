@@ -31,8 +31,8 @@ def test_minimal_example(tmp_path: Path, monkeypatch) -> None:
     assert dataset.collection.id == "minimal"
     assert dataset.contract.structure is None
     assert "sample file" in dataset._repr_html_()
-    assert taco.read(dataset).num_rows == 1
-    assert taco.read(dataset, layout="long").num_rows == 1
+    assert dataset.read().num_rows == 1
+    assert dataset.sql("SELECT * FROM files").num_rows == 1
 
 
 @pytest.mark.parametrize("name", EXAMPLES)

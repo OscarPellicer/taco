@@ -1,5 +1,6 @@
 #include "manifest.hpp"
 
+#include "cache.hpp"
 #include "error.hpp"
 #include "json.hpp"
 #include "paths.hpp"
@@ -18,14 +19,31 @@ namespace {
 
 constexpr std::uint64_t manifest_limit = 64ULL * 1024 * 1024;
 
+std::optional<fs::path> manifest_local_path(std::string_view candidate) {
+    if (!has_uri_scheme(candidate))
+        return local_path(candidate);
+    if (!candidate.starts_with("file://"))
+        return std::nullopt;
+
+    std::string_view path = without_query(candidate).substr(7);
+#ifdef _WIN32
+    if (path.size() >= 3 && path[0] == '/' && path[2] == ':')
+        path.remove_prefix(1);
+#endif
+    return local_path(path);
+}
+
 std::optional<std::string> read_manifest(const std::string& candidate, bool required) {
-    if (!has_uri_scheme(candidate)) {
+    if (const auto path = manifest_local_path(candidate)) {
         std::error_code error;
-        if (!fs::is_regular_file(local_path(candidate), error)) {
+        if (!fs::is_regular_file(*path, error)) {
             if (!required)
                 return std::nullopt;
             throw Error(TACO_ERR_NOT_FOUND, "versioned manifest does not exist: " + candidate);
         }
+        if (fs::file_size(*path, error) > manifest_limit)
+            fail("versioned manifest is larger than 64 MiB, refusing to read it: " + candidate);
+        return read_local(*path);
     }
     try {
         return read_object(candidate, manifest_limit, "versioned manifest");
@@ -93,6 +111,13 @@ std::optional<std::string> manifest_candidate(const std::string& source) {
         return source;
     if (name == ".tacocat" || is_zip_name(name) || is_semver(name))
         return std::nullopt;
+    if (source.starts_with("file://")) {
+        const std::string candidate = trim_trailing_slashes(without_query(source)) + "/taco.json";
+        std::error_code error;
+        if (!fs::is_regular_file(*manifest_local_path(candidate), error))
+            return std::nullopt;
+        return candidate;
+    }
     if (has_uri_scheme(source))
         return trim_trailing_slashes(without_query(source)) + "/taco.json";
     std::error_code error;

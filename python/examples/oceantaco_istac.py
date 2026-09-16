@@ -294,7 +294,7 @@ with taco.open_writer(collection, "oceantaco-istac.zip", overwrite=True) as writ
 
 dataset = taco.open_dataset("oceantaco-istac.zip")
 samples = taco.read(dataset)
-assets = taco.read(dataset, layout="long")
+assets = dataset.sql("SELECT * FROM files")
 assert samples.num_rows == 2
 assert assets.num_rows == 10
 assert "istac:geometry" in samples.column_names

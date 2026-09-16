@@ -34,6 +34,9 @@ _ffi.cdef(
     const char* taco_last_error(void);
     void taco_free(char* text);
 
+    typedef void (*taco_progress_fn)(const char* phase, uint64_t done, uint64_t total, void* user);
+    void taco_set_progress(taco_progress_fn callback, void* user);
+
     typedef struct taco_dataset taco_dataset;
     taco_status taco_open(const char* source, const char* cache_dir, taco_dataset** out);
     void taco_close(taco_dataset* dataset);
@@ -61,11 +64,53 @@ _ffi.cdef(
     taco_status taco_manifest_candidate(const char* source, char** out_candidate);
     taco_status taco_join_manifest_href(const char* candidate, const char* href, char** out_source);
     taco_status taco_resolve(const char* source, char** out_json);
+
+    typedef struct {
+        const char* uri;
+        uint64_t offset;
+        uint64_t length;
+        const char* path;
+    } taco_fetch_item;
+
+    taco_status taco_fetch(const taco_fetch_item* items, size_t count);
     """
 )
 
 _lock = threading.Lock()
 _library: Any = None
+_bars: dict[str, Any] = {}
+
+
+def _on_progress(phase: Any, done: int, total: int, user: Any) -> None:
+    # C callbacks must not raise. Bars are keyed by native phase.
+    try:
+        name = _ffi.string(phase).decode("utf-8", errors="replace")
+        bar = _bars.get(name)
+        if bar is None:
+            from tqdm.auto import tqdm
+
+            bar = tqdm(
+                total=total or None,
+                desc=name,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+                leave=False,
+                dynamic_ncols=True,
+                disable=None,
+            )
+            _bars[name] = bar
+        bar.n = done
+        bar.refresh()
+        if total and done >= total:
+            bar.close()
+            del _bars[name]
+    except Exception:
+        # A broken bar must not break a download.
+        pass
+
+
+_progress_callback = _ffi.callback("void(const char*, uint64_t, uint64_t, void*)", _on_progress)
 
 
 def _library_path() -> str:
@@ -93,6 +138,7 @@ def _load() -> Any:
                     raise ContainerError(
                         f"the TACO core at {path} has C API {library.taco_api_version()}, expected {API_VERSION}"
                     )
+                library.taco_set_progress(_progress_callback, _ffi.NULL)
                 _library = library
     return _library
 
@@ -125,7 +171,7 @@ def _call(function: str, *arguments: Any) -> str | None:
 
 
 class NativeDataset:
-    """An open dataset whose metadata is available locally."""
+    """Native handle for an open dataset."""
 
     __slots__ = ("_handle",)
 
@@ -177,7 +223,7 @@ def sql(
     files: Sequence[str] | None,
     location: bool,
 ) -> str:
-    """The query that reads the datasets, as one union when there are several."""
+    """Build the native read query, combining sources when needed."""
     # cffi owns every buffer below until the call returns.
     keep: list[Any] = []
 
@@ -219,9 +265,29 @@ def resolve(source: str | PathLike[str]) -> dict[str, Any]:
     return value
 
 
+def fetch(items: Sequence[tuple[str, int, int, str | PathLike[str]]]) -> None:
+    """Copy object ranges to local files.
+
+    Items are ``(uri, offset, length, path)``. A zero length reads to EOF.
+    """
+    if not items:
+        return
+    keep: list[Any] = []
+    array = _ffi.new("taco_fetch_item[]", len(items))
+    for slot, (uri, offset, length, path) in zip(array, items, strict=True):
+        keep.append(_ffi.new("char[]", _encode(uri)))
+        slot.uri = keep[-1]
+        slot.offset = offset
+        slot.length = length
+        keep.append(_ffi.new("char[]", _encode(path)))
+        slot.path = keep[-1]
+    _check(_load().taco_fetch(array, len(items)))
+
+
 __all__ = [
     "LIBRARY_ENV",
     "NativeDataset",
+    "fetch",
     "join_manifest_href",
     "manifest_candidate",
     "profile",

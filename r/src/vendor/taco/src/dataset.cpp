@@ -1,22 +1,21 @@
 #include "dataset.hpp"
 
+#include "cache.hpp"
 #include "cozip_index.hpp"
 #include "error.hpp"
 #include "json.hpp"
 #include "paths.hpp"
+#include "progress.hpp"
 #include "transport.hpp"
 
 #include <karu/karu.h>
 
 #include <algorithm>
-#include <atomic>
-#include <chrono>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <functional>
+#include <optional>
 #include <sstream>
-#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -28,7 +27,6 @@ constexpr std::string_view metadata_prefix = "METADATA/";
 constexpr std::string_view parquet_suffix = ".parquet";
 constexpr std::string_view supported_version = "3.0.0";
 constexpr std::uint64_t collection_limit = 64ULL * 1024 * 1024;
-constexpr std::string_view cache_format = "taco-cache 1";
 
 struct Level {
     std::string name;
@@ -80,83 +78,59 @@ std::string location_base(const std::string& path) {
     return canonical;
 }
 
-std::string read_local(const fs::path& path) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream)
-        throw Error(TACO_ERR_IO, "could not read " + utf8(path));
-    std::ostringstream out;
-    out << stream.rdbuf();
-    return out.str();
-}
-
-std::string unique_suffix() {
-    static std::atomic<std::uint64_t> counter{0};
-    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto thread = std::hash<std::thread::id>{}(std::this_thread::get_id());
-    return hex64(fnv1a64(std::to_string(now) + ":" + std::to_string(thread) + ":" +
-                         std::to_string(counter.fetch_add(1))));
-}
-
-void write_atomically(const fs::path& target, std::string_view bytes) {
-    fs::path temporary = target;
-    temporary += ".tmp-" + unique_suffix();
-    {
-        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-        stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        if (!stream)
-            throw Error(TACO_ERR_IO, "could not write the metadata cache: " + utf8(temporary));
-    }
+// A local archive is checked against its size and modification time, which
+// costs a stat. A remote one is trusted until TACO_CACHE_REFRESH rebuilds it,
+// because TACO versions are immutable.
+std::string cache_key(const std::string& source) {
+    if (has_uri_scheme(source))
+        return "trusted";
     std::error_code error;
-    fs::rename(temporary, target, error);
-    if (error) {
-        std::error_code ignored;
-        fs::remove(temporary, ignored);
-        throw Error(TACO_ERR_IO, "could not write the metadata cache " + utf8(target) + ": " + error.message());
-    }
+    const auto path = local_path(source);
+    const auto size = fs::file_size(path, error);
+    const auto written = fs::last_write_time(path, error);
+    if (error)
+        return "local unknown";
+    return "local " + std::to_string(size) + " " +
+           std::to_string(static_cast<long long>(written.time_since_epoch().count()));
 }
 
-// One directory per dataset version. A version never overwrites another, so
-// concurrent readers of different versions cannot mix their files.
-class Cache {
-  public:
-    Cache(const std::string& root, const std::string& identity, const std::string& key,
-          std::vector<std::string> files)
-        : directory_(local_path(root) / hex64(fnv1a64(identity + "\n" + key))),
-          stamp_(std::string(cache_format) + "\n" + identity + "\n" + key + "\n"),
-          files_(std::move(files)) {}
+std::string expected_key(const std::string& source) {
+    return has_uri_scheme(source) ? "" : cache_key(source);
+}
 
-    [[nodiscard]] bool complete() const {
-        std::error_code error;
-        for (const auto& file : files_) {
-            if (!fs::is_regular_file(directory_ / local_path(file), error))
-                return false;
-        }
-        if (!fs::is_regular_file(directory_ / "stamp", error))
-            return false;
-        return read_local(directory_ / "stamp") == stamp_;
+std::optional<Container> parse_container(const std::string& name) {
+    for (const auto container : {Container::zip, Container::folder, Container::tacocat}) {
+        if (name == container_name(container))
+            return container;
     }
+    return std::nullopt;
+}
 
-    void store(const std::vector<std::string>& contents) const {
-        std::error_code error;
-        fs::create_directories(directory_, error);
-        if (error)
-            throw Error(TACO_ERR_IO, "could not create the metadata cache " + utf8(directory_) + ": " +
-                                         error.message());
-        for (std::size_t i = 0; i < files_.size(); ++i)
-            write_atomically(directory_ / local_path(files_[i]), contents[i]);
-        // The stamp is written last and marks the directory as complete.
-        write_atomically(directory_ / "stamp", stamp_);
+CacheStamp make_stamp(const std::string& source, Container container) {
+    CacheStamp stamp;
+    stamp.source = source;
+    stamp.container = container_name(container);
+    stamp.key = cache_key(source);
+    return stamp;
+}
+
+Dataset cached_dataset(const std::string& source, Container container, std::string location_base,
+                       const CacheEntry& cache) {
+    Dataset dataset;
+    dataset.source = source;
+    dataset.container = container;
+    dataset.location_base = std::move(location_base);
+    dataset.collection = read_local(local_path(cache.path(collection_name)));
+    std::vector<Level> levels;
+    for (const auto& file : cache.parquet_files())
+        levels.push_back(Level{file_to_level(file), cache.path("METADATA/" + file)});
+    sort_and_validate(levels, source);
+    for (const auto& level : levels) {
+        dataset.level_names.push_back(level.name);
+        dataset.level_paths.push_back(level.origin);
     }
-
-    [[nodiscard]] std::string path(std::string_view file) const {
-        return utf8(directory_ / local_path(file));
-    }
-
-  private:
-    fs::path directory_;
-    std::string stamp_;
-    std::vector<std::string> files_;
-};
+    return dataset;
+}
 
 std::string cache_identity(const std::string& source) {
     if (has_uri_scheme(source))
@@ -166,7 +140,20 @@ std::string cache_identity(const std::string& source) {
     return error ? source : utf8(absolute.lexically_normal());
 }
 
+std::string metadata_phase(const std::string& source) {
+    std::string name = source_name(source);
+    if (name == ".tacocat")
+        name = source_name(parent_path(source));
+    return "downloading " + name + " metadata";
+}
+
+std::string entry_label(const std::string& collection, Container container, const std::string& source);
+
 Dataset open_zip(const std::string& source, const std::string& cache_root) {
+    CacheEntry cache(cache_root, cache_identity(source));
+    if (const auto stamp = cache.find({std::string(collection_name)}, expected_key(source)); stamp && stamp->container == "zip")
+        return cached_dataset(source, Container::zip, location_base(source), cache);
+
     const CozipIndex index = read_cozip_index(source);
     if (index.profile != cozip_profile_taco)
         fail("taco needs a TACO-profile archive (profile=2). Got profile=" + profile_name(index.profile) +
@@ -184,30 +171,19 @@ Dataset open_zip(const std::string& source, const std::string& cache_root) {
     }
     sort_and_validate(levels, source);
 
-    std::vector<std::string> files = {std::string(collection_name)};
-    for (const auto& level : levels)
-        files.push_back(level_to_file(level.name));
-    const Cache cache(cache_root, cache_identity(source),
-                      "zip " + std::to_string(index.file_size) + " " + hex64(index.integrity), files);
-    if (!cache.complete()) {
-        std::vector<Range> ranges = {Range{source, collection->offset, collection->size}};
-        for (const auto& level : levels) {
-            const CozipEntry* entry = index.find(level.origin);
-            ranges.push_back(Range{source, entry->offset, entry->size});
-        }
-        cache.store(read_ranges(ranges));
-    }
-
-    Dataset dataset;
-    dataset.source = source;
-    dataset.container = Container::zip;
-    dataset.location_base = location_base(source);
-    dataset.collection = read_local(local_path(cache.path(collection_name)));
+    std::vector<std::string> names = {std::string(collection_name)};
+    std::vector<Range> ranges = {Range{source, collection->offset, collection->size}};
     for (const auto& level : levels) {
-        dataset.level_names.push_back(level.name);
-        dataset.level_paths.push_back(cache.path(level_to_file(level.name)));
+        const CozipEntry* entry = index.find(level.origin);
+        names.push_back(level.origin);
+        ranges.push_back(Range{source, entry->offset, entry->size});
     }
-    return dataset;
+    const auto contents = download(ranges, metadata_phase(source));
+    std::vector<std::pair<std::string, std::string>> files;
+    for (std::size_t i = 0; i < names.size(); ++i)
+        files.emplace_back(names[i], contents[i]);
+    cache.store(entry_label(contents[0], Container::zip, source), files, make_stamp(source, Container::zip));
+    return cached_dataset(source, Container::zip, location_base(source), cache);
 }
 
 Dataset open_local_directory(const std::string& source) {
@@ -257,16 +233,33 @@ json::Value parse_collection(const std::string& text, const std::string& source)
     }
 }
 
+// <id>-<version>-<container>-<origin>: what people see in the cache.
+std::string entry_label(const std::string& collection, Container container, const std::string& source) {
+    const json::Value root = parse_collection(collection, source);
+    const json::Value* id = root.find("id");
+    const json::Value* version = root.find("dataset_version");
+    return cache_label(id && id->is_string() ? id->string : "dataset") + "-" +
+           cache_label(version && version->is_string() ? version->string : "0") + "-" + container_name(container) +
+           "-" + cache_origin(source);
+}
+
 // Object stores cannot list directories reliably. The Parquet files come from
 // the levels declared in COLLECTION.json, and taco:sources marks a TACOCAT.
 Dataset open_uri_directory(const std::string& source, const std::string& cache_root) {
     const std::string directory = trim_trailing_slashes(without_query(source));
     const std::string location = remote_directory(directory);
-    Dataset dataset;
-    dataset.source = directory;
-    dataset.collection = read_object(child_path(directory, collection_name), collection_limit, "COLLECTION.json");
+    CacheEntry cache(cache_root, location);
+    if (const auto stamp = cache.find({std::string(collection_name)}, "")) {
+        const auto container = parse_container(stamp->container);
+        if (container && *container != Container::zip)
+            return cached_dataset(directory, *container,
+                                  *container == Container::tacocat ? parent_path(location) : location, cache);
+    }
 
-    const json::Value root = parse_collection(dataset.collection, directory);
+    // COLLECTION.json is the directory index: it declares every metadata
+    // level, so opening an object-store dataset never requires listing it.
+    const std::string collection = read_object(child_path(directory, collection_name), collection_limit, "COLLECTION.json");
+    const json::Value root = parse_collection(collection, directory);
     const json::Value* metadata = root.find("taco:metadata");
     if (!metadata || !metadata->is_object())
         fail("COLLECTION.json has no valid taco:metadata object: " + directory);
@@ -275,8 +268,7 @@ Dataset open_uri_directory(const std::string& source, const std::string& cache_r
         fail("COLLECTION.json has an invalid taco:sources object: " + directory);
 
     const bool tacocat = sources != nullptr;
-    dataset.container = tacocat ? Container::tacocat : Container::folder;
-    dataset.location_base = tacocat ? parent_path(location) : location;
+    const Container container = tacocat ? Container::tacocat : Container::folder;
     const std::string parquet_directory = tacocat ? directory : child_path(directory, "METADATA");
 
     std::vector<Level> levels;
@@ -284,23 +276,37 @@ Dataset open_uri_directory(const std::string& source, const std::string& cache_r
         levels.push_back(Level{name, child_path(parquet_directory, level_to_file(name))});
     sort_and_validate(levels, directory);
 
-    std::string key = "directory " + hex64(fnv1a64(dataset.collection));
-    std::vector<std::string> files;
     std::vector<Range> ranges;
-    for (const auto& level : levels) {
-        const std::uint64_t size = object_size(level.origin);
-        key += " " + std::to_string(size);
-        files.push_back(level_to_file(level.name));
-        ranges.push_back(Range{level.origin, 0, size});
+    for (const auto& level : levels)
+        ranges.push_back(Range{level.origin, 0, object_size(level.origin)});
+    const auto contents = download(ranges, metadata_phase(directory));
+    std::vector<std::pair<std::string, std::string>> files = {{std::string(collection_name), collection}};
+    for (std::size_t i = 0; i < levels.size(); ++i)
+        files.emplace_back(std::string(metadata_prefix) + level_to_file(levels[i].name), contents[i]);
+    cache.store(entry_label(collection, container, directory), files, make_stamp(directory, container));
+    return cached_dataset(directory, container, tacocat ? parent_path(location) : location, cache);
+}
+
+// A URI whose entry is already stored opens without a request, whatever
+// container it turned out to be.
+std::optional<Dataset> cached_uri_dataset(const std::string& source, const std::string& cache_root) {
+    const std::string directory = trim_trailing_slashes(without_query(source));
+    const std::string location = remote_directory(directory);
+    // An archive is filed under its own URI, a directory under its location.
+    for (const std::string& identity : {cache_identity(source), location}) {
+        CacheEntry entry(cache_root, identity);
+        const auto stamp = entry.find({std::string(collection_name)}, "");
+        if (!stamp)
+            continue;
+        const auto container = parse_container(stamp->container);
+        if (!container)
+            continue;
+        if (*container == Container::zip)
+            return cached_dataset(source, Container::zip, location_base(source), entry);
+        return cached_dataset(directory, *container,
+                              *container == Container::tacocat ? parent_path(location) : location, entry);
     }
-    const Cache cache(cache_root, location, key, files);
-    if (!cache.complete())
-        cache.store(read_ranges(ranges));
-    for (const auto& level : levels) {
-        dataset.level_names.push_back(level.name);
-        dataset.level_paths.push_back(cache.path(level_to_file(level.name)));
-    }
-    return dataset;
+    return std::nullopt;
 }
 
 bool is_remote_cozip(const std::string& source) {
@@ -454,6 +460,12 @@ Dataset open_dataset(const std::string& source, const std::string& cache_dir) {
     Dataset dataset;
     std::error_code error;
     if (has_uri_scheme(source)) {
+        // A complete cache entry settles the container type without network
+        // access. Otherwise use URI shape first and probe only ambiguous URLs.
+        if (auto cached = cached_uri_dataset(source, cache_root)) {
+            cached->contract = read_contract(*cached);
+            return *cached;
+        }
         if (is_zip_name(source)) {
             dataset = open_zip(source, cache_root);
         } else if (is_explicit_remote_directory(source)) {
@@ -464,6 +476,9 @@ Dataset open_dataset(const std::string& source, const std::string& cache_dir) {
             try {
                 archive = is_remote_cozip(source);
             } catch (const Error& probe_error) {
+                // Some object stores answer 403 when an object key is absent.
+                // Try the directory form, but retain the authentication error
+                // if that interpretation fails too.
                 if (probe_error.transport() != KARU_ERR_AUTH)
                     throw;
                 const auto original = std::current_exception();

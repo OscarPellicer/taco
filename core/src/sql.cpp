@@ -56,6 +56,19 @@ Leaf parse_leaf(const std::string& declaration) {
     return leaf;
 }
 
+std::string output_name(const Leaf& leaf) {
+    auto name = leaf.variable ? leaf.prefix : leaf.declaration;
+    std::string out;
+    out.reserve(name.size());
+    for (const char c : name) {
+        if (c == '/')
+            out += "__";
+        else
+            out += c;
+    }
+    return out;
+}
+
 class QueryBuilder {
   public:
     QueryBuilder(const Dataset& dataset, const ReadOptions& options)
@@ -73,6 +86,8 @@ class QueryBuilder {
         std::string out = "SELECT " + sql_identifier(id_current) + " AS sample_id";
         if (tacocat_)
             out += ", " + sql_identifier(id_source) + " AS source_file";
+        if (!options_.pivot)
+            out += ", NULL::VARCHAR AS path";
         if (options_.location)
             out += ", " + location_expression(0) + " AS " + sql_identifier(location_column);
         out += ", *" + exclude_list(0);
@@ -93,15 +108,16 @@ class QueryBuilder {
 
     [[nodiscard]] std::string pivot_query() const {
         const auto leaves = selected_leaves();
+        // Metadata-only reads stop at sample.parquet. Placeholder columns keep
+        // the wide schema stable without touching any child level.
         if (!options_.location) {
             std::string out = "SELECT " + alias(0) + "." + sql_identifier(id_current) + " AS sample_id";
             if (tacocat_)
                 out += ", " + alias(0) + "." + sql_identifier(id_source) + " AS source_file";
             out += ", " + alias(0) + ".*" + exclude_list(0);
             for (const auto& leaf : leaves) {
-                const auto& name = leaf.variable ? leaf.prefix : leaf.declaration;
                 out += leaf.variable ? ", NULL::VARCHAR[] AS " : ", NULL::VARCHAR AS ";
-                out += sql_identifier(name);
+                out += sql_identifier(output_name(leaf));
             }
             out += " FROM (SELECT " + metadata_projection() + " FROM read_parquet(" +
                    sql_literal(dataset_.level_paths[0]) + ")) AS " + alias(0);
@@ -111,6 +127,9 @@ class QueryBuilder {
             return out;
         }
 
+        // Build the file relation once, pivot its locations by contract leaf,
+        // then attach those values to every sample. The LEFT JOIN preserves
+        // samples whose optional files are absent.
         std::string out = common_table_expressions();
         out += ", flat AS (\n" + flat_branches(true, options_.has_files ? &leaves : nullptr) + "\n)";
         out += ", pivoted AS (SELECT sample_id";
@@ -124,10 +143,10 @@ class QueryBuilder {
                 out += ", list(" + sql_identifier(location_column) +
                        " ORDER BY TRY_CAST(regexp_extract(path, " + sql_literal(pattern) +
                        ", 1) AS BIGINT)) FILTER (WHERE regexp_matches(path, " + sql_literal(pattern) +
-                       ")) AS " + sql_identifier(leaf.prefix);
+                       ")) AS " + sql_identifier(output_name(leaf));
             } else {
                 out += ", MAX(CASE WHEN path = " + sql_literal(leaf.declaration) + " THEN " +
-                       sql_identifier(location_column) + " END) AS " + sql_identifier(leaf.declaration);
+                       sql_identifier(location_column) + " END) AS " + sql_identifier(output_name(leaf));
             }
         }
         out += " FROM flat GROUP BY ALL)";
@@ -137,7 +156,7 @@ class QueryBuilder {
             out += ", " + alias(0) + "." + sql_identifier(id_source) + " AS source_file";
         out += ", " + alias(0) + ".*" + exclude_list(0);
         for (const auto& leaf : leaves) {
-            const auto& name = leaf.variable ? leaf.prefix : leaf.declaration;
+            const auto name = output_name(leaf);
             if (leaf.variable)
                 out += ", COALESCE(p." + sql_identifier(name) + ", []::VARCHAR[]) AS " + sql_identifier(name);
             else
@@ -331,6 +350,8 @@ class QueryBuilder {
     }
 
     [[nodiscard]] std::string common_table_expressions() const {
+        // Naming every level once keeps the generated joins readable and lets
+        // DuckDB plan all Parquet scans as one statement.
         std::string out = "WITH ";
         for (std::size_t i = 0; i < dataset_.level_paths.size(); ++i) {
             out += (i ? ", " : "") + alias(i) + " AS (SELECT " + metadata_projection() + " FROM read_parquet(" +
@@ -342,6 +363,8 @@ class QueryBuilder {
     // One row per data file, columns aligned across levels by name.
     [[nodiscard]] std::string flat_branches(bool identity_only, const std::vector<Leaf>* selected = nullptr) const {
         std::string out;
+        // Level zero is sample metadata. Payload files begin at child levels;
+        // a null structure takes the separate null_structure_query path.
         for (std::size_t level = 1; level < dataset_.level_names.size(); ++level) {
             if (!out.empty())
                 out += "\nUNION ALL BY NAME\n";

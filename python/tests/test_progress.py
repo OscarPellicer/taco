@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 import taco
@@ -45,7 +43,7 @@ def test_writer_progress(
         bars.append(bar)
         return bar
 
-    monkeypatch.setattr(progress, "import_module", lambda _: SimpleNamespace(tqdm=tqdm))
+    monkeypatch.setattr(progress, "tqdm", tqdm)
     with taco.open_writer(collection, tmp_path / name, progress=True, **options) as writer:
         writer.extend(make_sample(index) for index in range(samples))
         writer.run()
@@ -55,10 +53,20 @@ def test_writer_progress(
     assert all(bar.closed for bar in bars)
 
 
-def test_progress_requires_tqdm(monkeypatch) -> None:
-    def missing(_: str):
-        raise ModuleNotFoundError(name="tqdm")
+def test_progress_hides_outside_a_terminal(monkeypatch) -> None:
+    seen: list[dict[str, object]] = []
 
-    monkeypatch.setattr(progress, "import_module", missing)
-    with pytest.raises(ImportError, match=r"taco-eo\[progress\]"):
-        progress.Progress(True, 1, "writing")
+    def tqdm(**options: object) -> _Bar:
+        seen.append(options)
+        return _Bar(options)
+
+    monkeypatch.setattr(progress, "tqdm", tqdm)
+    with progress.Progress(True, 1, "writing") as bar:
+        bar.update()
+    # disable=None leaves the decision to tqdm, which checks stderr.
+    assert seen[0]["disable"] is None
+
+    seen.clear()
+    with progress.Progress(False, 1, "writing") as bar:
+        bar.update()
+    assert seen == []

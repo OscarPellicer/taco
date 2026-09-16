@@ -33,6 +33,17 @@ end
 end
 
 
+@testset "file URI without versioned manifest" begin
+    mktempdir() do directory
+        path = replace(abspath(directory), '\\' => '/')
+        uri = "file://" * (Sys.iswindows() ? "/" : "") * path
+        resolution = Taco._resolve_dataset(uri)
+        @test resolution.sources == [uri]
+        @test resolution.manifest === nothing
+    end
+end
+
+
 function write_manifest(root, manifest=versioned_manifest())
     mkpath(root)
     path = joinpath(root, "taco.json")

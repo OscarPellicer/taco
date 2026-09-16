@@ -36,6 +36,33 @@ SEXP taco_r_shutdown(void) {
     return R_NilValue;
 }
 
+// The R function that draws progress, kept alive while it is registered.
+static SEXP progress_handler = NULL;
+
+static void report_progress(const char* phase, uint64_t done, uint64_t total, void* user) {
+    (void)user;
+    if (!progress_handler)
+        return;
+    SEXP text = PROTECT(scalar_utf8(phase));
+    SEXP done_value = PROTECT(Rf_ScalarReal((double)done));
+    SEXP total_value = PROTECT(Rf_ScalarReal((double)total));
+    SEXP call = PROTECT(Rf_lang4(progress_handler, text, done_value, total_value));
+    // A failing bar must not unwind through the core, so errors are dropped.
+    int failed = 0;
+    R_tryEvalSilent(call, R_GlobalEnv, &failed);
+    UNPROTECT(4);
+}
+
+SEXP taco_r_set_progress(SEXP handler) {
+    if (progress_handler)
+        R_ReleaseObject(progress_handler);
+    progress_handler = Rf_isNull(handler) ? NULL : handler;
+    if (progress_handler)
+        R_PreserveObject(progress_handler);
+    taco_set_progress(progress_handler ? report_progress : NULL, NULL);
+    return R_NilValue;
+}
+
 static void close_dataset(SEXP pointer) {
     taco_dataset* dataset = R_ExternalPtrAddr(pointer);
     if (dataset) {
@@ -152,6 +179,11 @@ SEXP taco_r_shutdown(void) {
     return R_NilValue;
 }
 
+SEXP taco_r_set_progress(SEXP handler) {
+    (void)handler;
+    return R_NilValue;
+}
+
 SEXP taco_r_open(SEXP source) {
     (void)source;
     return wasm_unavailable();
@@ -196,6 +228,7 @@ SEXP taco_r_resolve(SEXP source) {
 
 static const R_CallMethodDef methods[] = {
     {"taco_r_shutdown", (DL_FUNC)&taco_r_shutdown, 0},
+    {"taco_r_set_progress", (DL_FUNC)&taco_r_set_progress, 1},
     {"taco_r_open", (DL_FUNC)&taco_r_open, 1},
     {"taco_r_dataset", (DL_FUNC)&taco_r_dataset, 1},
     {"taco_r_sql", (DL_FUNC)&taco_r_sql, 6},

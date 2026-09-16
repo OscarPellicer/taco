@@ -16,6 +16,7 @@ SystemRequirements: C++23, libcurl (>= 7.83.0), OpenSSL (>= 3.0)
 Depends:
     R (>= 4.3)
 Imports:
+    cli (>= 3.0.0),
     duckdb (>= 1.5.5),
     DBI,
     jsonlite,

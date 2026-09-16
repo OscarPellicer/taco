@@ -2,10 +2,17 @@
 
 #include "error.hpp"
 #include "paths.hpp"
+#include "progress.hpp"
 
 #include <karu/karu.h>
 
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <memory>
+
+namespace fs = std::filesystem;
 
 namespace taco {
 namespace {
@@ -118,6 +125,88 @@ std::string read_object(const std::string& uri, std::uint64_t limit, const std::
         fail(what + " is larger than " + std::to_string(limit / (1024 * 1024)) +
              " MiB, refusing to read it: " + redact_uri(uri));
     return std::move(read_ranges({Range{uri, 0, size}}).front());
+}
+
+// Reads ranges in pieces of chunk_bytes, eight pieces per karu batch, handing
+// each piece to sink in range order and reporting the bytes done under phase.
+void read_in_batches(const std::vector<Range>& ranges, std::uint64_t chunk_bytes, const std::string& phase,
+                     const std::function<void(std::size_t, std::string_view)>& sink) {
+    if (chunk_bytes == 0)
+        fail("read chunk size must be positive");
+    struct Piece {
+        std::size_t range;
+        std::uint64_t offset;
+        std::uint64_t length;
+    };
+    std::vector<Piece> pieces;
+    std::uint64_t total = 0;
+    for (std::size_t i = 0; i < ranges.size(); ++i) {
+        total += ranges[i].length;
+        for (std::uint64_t at = 0; at < ranges[i].length; at += chunk_bytes)
+            pieces.push_back(Piece{i, ranges[i].offset + at, std::min(chunk_bytes, ranges[i].length - at)});
+    }
+    if (total == 0)
+        return;
+    const std::uint64_t batch_bytes = 8 * chunk_bytes;
+    std::uint64_t done = 0;
+    report_progress(phase, done, total);
+    for (std::size_t start = 0; start < pieces.size();) {
+        std::size_t stop = start;
+        std::uint64_t bytes = 0;
+        do {
+            bytes += pieces[stop].length;
+            ++stop;
+        } while (stop < pieces.size() && bytes + pieces[stop].length <= batch_bytes);
+
+        std::vector<Range> batch;
+        for (std::size_t i = start; i < stop; ++i)
+            batch.push_back(Range{ranges[pieces[i].range].uri, pieces[i].offset, pieces[i].length});
+        const auto buffers = read_ranges(batch);
+        for (std::size_t i = start; i < stop; ++i)
+            sink(pieces[i].range, buffers[i - start]);
+        done += bytes;
+        report_progress(phase, done, total);
+        start = stop;
+    }
+}
+
+std::vector<std::string> download(const std::vector<Range>& ranges, const std::string& phase) {
+    std::vector<std::string> buffers(ranges.size());
+    for (std::size_t i = 0; i < ranges.size(); ++i)
+        buffers[i].reserve(ranges[i].length);
+    read_in_batches(ranges, fetch_chunk_bytes, phase,
+                    [&](std::size_t range, std::string_view bytes) { buffers[range].append(bytes); });
+    return buffers;
+}
+
+void fetch_files(const std::vector<Fetch>& fetches, std::uint64_t chunk_bytes) {
+    std::vector<Range> ranges;
+    for (const Fetch& fetch : fetches) {
+        std::uint64_t length = fetch.length;
+        if (length == 0) {
+            const std::uint64_t size = object_size(fetch.uri);
+            if (fetch.offset > size)
+                fail("fetch offset " + std::to_string(fetch.offset) + " is past the end of " + redact_uri(fetch.uri));
+            length = size - fetch.offset;
+        }
+        ranges.push_back(Range{fetch.uri, fetch.offset, length});
+
+        const fs::path target = local_path(fetch.path);
+        std::error_code error;
+        fs::create_directories(target.parent_path(), error);
+        if (!std::ofstream(target, std::ios::binary | std::ios::trunc))
+            throw Error(TACO_ERR_IO, "could not write " + fetch.path);
+    }
+
+    // Pieces arrive in file order, so each file is appended from start to end.
+    const std::string phase = "downloading " + std::to_string(fetches.size()) + (fetches.size() == 1 ? " file" : " files");
+    read_in_batches(ranges, chunk_bytes, phase, [&](std::size_t index, std::string_view bytes) {
+        const std::string& path = fetches[index].path;
+        std::ofstream stream(local_path(path), std::ios::binary | std::ios::app);
+        stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (!stream)
+            throw Error(TACO_ERR_IO, "could not write " + path);
+    });
 }
 
 void shutdown_transport() noexcept {

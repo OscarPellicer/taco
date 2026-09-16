@@ -16,6 +16,10 @@ import taco
 
 samples = taco.read("dataset.zip")
 parts = taco.read(["part-0.zip", "part-1.zip"])
+
+dataset = taco.open_dataset("dataset.zip")
+targets = dataset.read(files="target.tif")
+train = dataset.sql("SELECT * FROM data WHERE \"ml:split\" = 'train'")
 ```
 
 Versioned dataset roots select their declared default release without listing
@@ -29,18 +33,28 @@ print(dataset.versions)
 previous = taco.open_dataset("https://data.source.coop/major-tom/core-dem/1.0.0/")
 ```
 
-`export()` writes a smaller dataset with the same contract. `where` filters the
-rows returned by `read()`, and the subset needs its own id and description.
+`export()` writes a smaller dataset with the same contract. `samples` is a
+PyArrow-compatible table, normally selected from the `data` SQL relation.
+Keyword arguments replace fields of the collection, such
+as `id` or `description`; the rest is inherited. For a remote source, metadata
+is cached and only the payload files belonging to the selected samples are
+downloaded. Pass `overwrite=True` to replace an existing TACO output.
 
 ```python
+source = "https://data.source.coop/major-tom/core-dem/"
+dataset = taco.open_dataset(source)
+rows = dataset.sql("SELECT * FROM data ORDER BY sample_id LIMIT 10")
 taco.export(
-    "dataset.zip",
-    "test.zip",
-    where="\"ml:split\" = 'test'",
-    id="dataset-test",
-    description="Test split of the dataset",
+    source,
+    "core-dem-sample.zip",
+    samples=rows,
+    id="core-dem-sample",
+    description="Ten samples from Core-DEM",
 )
 ```
+
+Remote reads and exports show download progress in interactive terminals.
+Writers show their build progress when opened with `progress=True`.
 
 ## Examples
 

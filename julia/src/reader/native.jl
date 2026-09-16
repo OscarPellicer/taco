@@ -1,6 +1,7 @@
 import JSON3
 import Libdl
 using LazyArtifacts
+using ProgressMeter: Progress, ProgressUnknown, update!, finish!
 
 
 const _LIBRARY_ENV = "TACO_LIB"
@@ -12,6 +13,7 @@ const _CORE_FUNCTIONS = (
     :taco_api_version,
     :taco_last_error,
     :taco_free,
+    :taco_set_progress,
     :taco_open,
     :taco_close,
     :taco_dataset_collection,
@@ -55,6 +57,29 @@ function _library_path()
 end
 
 
+const _BARS = Dict{String,Any}()
+
+
+# Native download progress, grouped by phase. C callbacks must not throw.
+function _progress(phase::Cstring, done::UInt64, total::UInt64, user::Ptr{Cvoid})::Cvoid
+    try
+        name = unsafe_string(phase)
+        enabled = stderr isa Base.TTY
+        bar = get!(_BARS, name) do
+            total > 0 ? Progress(Int(total); desc = name * " ", enabled = enabled) :
+            ProgressUnknown(; desc = name * " ", enabled = enabled)
+        end
+        update!(bar, Int(done))
+        if total > 0 && done >= total
+            finish!(bar)
+            delete!(_BARS, name)
+        end
+    catch
+    end
+    return nothing
+end
+
+
 function _load_core()
     lock(_LIBRARY_LOCK) do
         _HANDLE[] == C_NULL || return
@@ -73,6 +98,8 @@ function _load_core()
         version = ccall(_SYMBOLS[:taco_api_version], Cint, ())
         version == _API_VERSION ||
             error("taco: the TACO core at $path has C API $version, expected $_API_VERSION")
+        callback = @cfunction(_progress, Cvoid, (Cstring, UInt64, UInt64, Ptr{Cvoid}))
+        ccall(_SYMBOLS[:taco_set_progress], Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}), callback, C_NULL)
         # Published last, so a reader never sees a handle without its symbols.
         _HANDLE[] = handle
     end

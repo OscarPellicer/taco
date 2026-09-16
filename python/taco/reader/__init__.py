@@ -1,10 +1,11 @@
 """Read TACO datasets and inspect their contracts."""
 
-from .api import Dataset, Layout, open_dataset, read
+from . import inspect
+from .api import Dataset, open_dataset, read
 
 __all__ = [
     "Dataset",
-    "Layout",
+    "inspect",
     "open_dataset",
     "read",
 ]

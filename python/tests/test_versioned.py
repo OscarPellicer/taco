@@ -9,11 +9,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-import pyarrow as pa
 import pytest
 
 import taco
-import taco.reader.api as reader_api
 import taco.reader.dataset as dataset_module
 from taco.errors import ContainerError
 
@@ -124,6 +122,44 @@ def test_open_http_root_reads_only_manifest(trailing_slash: bool, collection: ta
     assert set(Handler.requests) == {"/dataset/taco.json"}
 
 
+def test_remote_root_sees_a_new_default(collection: taco.Collection, tmp_path: Path) -> None:
+    path = write_manifest(tmp_path / "dataset", manifest(collection))
+
+    with server(tmp_path) as base:
+        first = taco.open_dataset(f"{base}/dataset")
+        assert first.version == "2.0.0"
+
+        updated = manifest(collection)
+        third = collection.replace(dataset_version="3.0.0").to_dict()
+        updated["taco:versions"]["3.0.0"] = {"href": "3.0.0/", "collection": third}
+        updated["taco:default_version"] = "3.0.0"
+        path.write_text(json.dumps(updated), encoding="utf-8")
+
+        Handler.requests.clear()
+        second = taco.open_dataset(f"{base}/dataset")
+        assert second.version == "3.0.0"
+        assert first.version == "2.0.0"
+        assert set(Handler.requests) == {"/dataset/taco.json"}
+
+
+def test_missing_remote_manifest_is_not_remembered(
+    collection: taco.Collection, folder_dataset: Path, tmp_path: Path
+) -> None:
+    root = tmp_path / "dataset"
+    shutil.copytree(folder_dataset, root)
+
+    with server(tmp_path) as base:
+        first = taco.open_dataset(f"{base}/dataset")
+        assert first.manifest is None
+
+        (root / "taco.json").write_text(json.dumps(manifest(collection)), encoding="utf-8")
+        Handler.requests.clear()
+        second = taco.open_dataset(f"{base}/dataset")
+
+        assert second.version == "2.0.0"
+        assert "/dataset/taco.json" in Handler.requests
+
+
 def test_open_http_root_with_dotted_name_is_discovered(collection: taco.Collection, tmp_path: Path) -> None:
     write_manifest(tmp_path / "dataset.v3", manifest(collection))
 
@@ -161,23 +197,16 @@ def test_explicit_remote_containers_skip_discovery(
     assert Handler.requests == []
 
 
-def test_read_resolves_versioned_root(
-    monkeypatch: pytest.MonkeyPatch, collection: taco.Collection, tmp_path: Path
-) -> None:
+def test_read_resolves_versioned_root(collection: taco.Collection, make_sample, tmp_path: Path) -> None:
     root = tmp_path / "dataset"
     write_manifest(root, manifest(collection))
-    captured: list[object] = []
+    with taco.open_writer(collection.replace(dataset_version="2.0.0"), root / "2.0.0") as writer:
+        writer.add(make_sample(0))
+        writer.run()
 
-    def fake_read(source, **options):
-        captured.append((source, options))
-        return pa.table({"value": [1]})
+    table = taco.read(root)
 
-    monkeypatch.setattr(reader_api, "read_table", fake_read)
-
-    result = taco.read(root, idx=3)
-
-    assert result.num_rows == 1
-    assert captured[0][0] == ((root / "2.0.0").resolve(),)
+    assert table.column("sample_id").to_pylist() == [0]
 
 
 def test_absolute_href_is_preserved(collection: taco.Collection, tmp_path: Path) -> None:
@@ -246,10 +275,7 @@ def test_http_errors_other_than_not_found_do_not_fall_back(tmp_path: Path) -> No
         taco.open_dataset(f"{base}/unavailable/")
 
 
-def test_forbidden_object_probe_falls_back_to_directory(tmp_path: Path) -> None:
-    fixture = Path(__file__).parents[2] / "core/tests/data/taco_folder"
-    shutil.copytree(fixture, tmp_path / "folder")
-
+def test_forbidden_object_probe_falls_back_to_directory(folder_dataset: Path, tmp_path: Path) -> None:
     with server(tmp_path) as base:
         dataset = taco.open_dataset(f"{base}/folder")
 

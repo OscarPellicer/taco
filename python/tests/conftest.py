@@ -11,6 +11,13 @@ from pydantic import BaseModel, Field
 import taco
 
 
+@pytest.fixture(autouse=True)
+def isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TACO_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv("TACO_CACHE_REFRESH", raising=False)
+    monkeypatch.delenv("TACO_CACHE_SIZE", raising=False)
+
+
 class ML(BaseModel):
     split: str = Field(description="Dataset split")
     cloud_cover: float | None = Field(default=None, description="Cloud cover")
