@@ -354,8 +354,8 @@ jobs:
           python -m pip install wheelhouse/*.whl
           cp core/tests/data/taco_flat.zip "${RUNNER_TEMP}/taco.zip"
           cd "${RUNNER_TEMP}"
-          python -c "import taco; table = taco.read('taco.zip', location=False); assert table.num_rows > 0; print(taco.__version__)"
-          python -c "import taco; sources = ('hf://datasets/asterisk-labs/taco-api-fixtures/data/04-change-detection/single-zip/dataset.zip', 'source://asterisk-labs/taco-api-fixtures/data/04-change-detection/by-split/.tacocat'); assert all(taco.read(source, idx=0, location=False).num_rows > 0 for source in sources)"
+          python -c "import taco; table = taco.read('taco.zip'); assert table.num_rows > 0; print(taco.__version__)"
+          python -c "import taco; sources = ('hf://datasets/asterisk-labs/taco-api-fixtures/data/04-change-detection/single-zip/dataset.zip', 'source://asterisk-labs/taco-api-fixtures/data/04-change-detection/by-split/.tacocat'); assert all(taco.read(source).num_rows > 0 for source in sources)"
 
       - name: Test installed wheel (Windows)
         if: runner.os == 'Windows'
@@ -365,8 +365,8 @@ jobs:
           Copy-Item core\tests\data\taco_flat.zip "$env:RUNNER_TEMP\taco.zip"
           Push-Location $env:RUNNER_TEMP
           try {
-            python -c "import taco; table = taco.read('taco.zip', location=False); assert table.num_rows > 0; print(taco.__version__)"
-            python -c "import taco; sources = ('hf://datasets/asterisk-labs/taco-api-fixtures/data/04-change-detection/single-zip/dataset.zip', 'source://asterisk-labs/taco-api-fixtures/data/04-change-detection/by-split/.tacocat'); assert all(taco.read(source, idx=0, location=False).num_rows > 0 for source in sources)"
+            python -c "import taco; table = taco.read('taco.zip'); assert table.num_rows > 0; print(taco.__version__)"
+            python -c "import taco; sources = ('hf://datasets/asterisk-labs/taco-api-fixtures/data/04-change-detection/single-zip/dataset.zip', 'source://asterisk-labs/taco-api-fixtures/data/04-change-detection/by-split/.tacocat'); assert all(taco.read(source).num_rows > 0 for source in sources)"
           } finally { Pop-Location }
 
       - uses: actions/upload-artifact@v7
@@ -404,7 +404,7 @@ jobs:
           python -m pip install sdist-wheel/*.whl
           cp core/tests/data/taco_flat.zip "${RUNNER_TEMP}/taco.zip"
           cd "${RUNNER_TEMP}"
-          python -c "import taco; assert taco.read('taco.zip', location=False).num_rows > 0"
+          python -c "import taco; assert taco.read('taco.zip').num_rows > 0"
 
       - uses: actions/upload-artifact@v7
         with:
