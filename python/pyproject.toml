@@ -9,7 +9,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "taco-eo"
-version = "0.7.0"
+version = "0.8.0"
 description = "Read and write TACO datasets in Python."
 readme = "README.md"
 license = "MIT"
@@ -76,7 +76,7 @@ artifacts = ["taco/_lib/*"]
 path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["taco/**", "tests/**", "examples/**", "hatch_build.py", "LICENSE", "README.md", "CHANGELOG.md", "pyproject.toml"]
+include = ["taco/**", "tests/**", "examples/**", "hatch_build.py", "LICENSE", "README.md", "pyproject.toml"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "../r/inst/conformance/reader-resolution.json" = "tests/data/reader-resolution.json"

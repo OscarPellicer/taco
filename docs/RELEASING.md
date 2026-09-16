@@ -9,6 +9,8 @@ Keep the native version synchronized in `core/CMakeLists.txt`,
 `core/vcpkg.json`, `python/pyproject.toml`, `r/DESCRIPTION`, `r/configure.ac`,
 and `julia/Project.toml`. Keep the JavaScript version synchronized only between
 `javascript/package.json` and `javascript/package-lock.json`.
+Move the pending entries in the root `CHANGELOG.md` under the version being
+released before creating either tag.
 
 ## Native and package tags
 

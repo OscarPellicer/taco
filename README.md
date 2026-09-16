@@ -40,6 +40,9 @@ TACO/Rumi fixtures.
 See the [TACO v3 specification](docs/spec/SPEC.md) for the contract, metadata model, and
 container formats.
 
+Release history for the core and all language packages is recorded in the
+[changelog](CHANGELOG.md).
+
 ## License
 
 MIT.

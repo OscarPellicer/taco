@@ -1,34 +1,98 @@
 # Changelog
 
-All notable changes to `taco` are documented here. The format follows
+All notable changes across the TACO core, language bindings, writer, and
+JavaScript reader are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## 0.8.0 - Unreleased
 
 ### Added
 
-- `open_dataset()` and `read()` resolve versioned dataset roots through one
-  `taco.json` read, select the declared default, and use the embedded collection
-  without fetching a second collection document. Immutable versions remain
-  directly addressable through their own URLs.
-- `export()` writes the samples selected with `where` or `idx` from a local ZIP,
-  FOLDER, or TACOCAT as a new dataset. The subset keeps the contract, needs its
-  own id and description, and recomputes its extent. Without a selection it
-  converts a FOLDER to ZIP or merges a TACOCAT into one dataset.
+- `Dataset.read(files=...)` provides the complete wide sample table, while
+  `Dataset.sql(query)` provides partial access through `data`, `files`, and
+  named raw level relations.
+- `export()` writes the samples of a ZIP, FOLDER, or TACOCAT, local or remote,
+  as a new dataset. `samples` is a PyArrow-compatible table, normally selected
+  from the `data` SQL relation. Keyword arguments replace fields of the
+  collection, such as `id` or `description`; the rest is inherited. The subset
+  keeps the contract and recomputes its extent. Without `samples` it
+  converts a FOLDER to ZIP or merges a TACOCAT into one dataset. The data is
+  copied through Karu, so a small dataset can be cut from a large one on
+  Hugging Face, S3, or Source Cooperative while downloading only the payload
+  files belonging to its selected samples.
+- Remote reads and exports report download progress in interactive terminals.
+  Python exports also report copy progress, and writers retain their explicit
+  `progress=True` option.
+- The metadata cache has readable dataset-based entry names, a configurable
+  `TACO_CACHE_SIZE` limit, and least-recently-opened eviction.
 
 ### Changed
 
-- Reading no longer loads the `cozip` DuckDB extension. A C++ core shared with
-  the R and Julia packages reads `COLLECTION.json` and the metadata Parquet
-  through Karu, caches them once per dataset version in the user cache
-  directory (`TACO_CACHE_DIR` overrides it), and generates the SQL that the
-  package's own DuckDB runs. Local paths, HTTP, S3, GCS, Azure, Hugging Face,
-  and Source Cooperative share the same API.
-- `read(layout="long", files=...)` keeps only the selected files.
+- Concrete remote datasets trust their cached metadata until
+  `TACO_CACHE_REFRESH=1` is set, while mutable version manifests are read again
+  so changes to `taco:default_version` remain visible. Local archives are
+  invalidated by size and modification time.
+- Wide columns replace `/` in structural paths with the reversible `__`
+  separator, for example `before/B02.tif` becomes `before__B02.tif`.
+- Python `read()` now accepts only `source` and `files`; row filtering and raw
+  level access use `Dataset.sql()`.
+- Python `read()` orders rows by their sample key and aggregates file locations
+  before joining the sample metadata.
+- The low-level SQL inspector is named `taco.reader.inspect.native_sql()`;
+  the unused legacy `read_table()` helper was removed.
+
+### Fixed
+
+- `export()` rejects sample keys that do not exist and refuses unsafe
+  `internal:relative_path` or `internal:source_file` values before using them
+  as paths.
+- `files` includes a nullable `path` column for datasets whose structure is
+  null, and empty native transfers no longer leave progress bars open.
+- Writers accept a collection version such as `2.0.0` as a FOLDER directory,
+  `export(overwrite=True)` replaces an existing TACO output, and trailing SQL
+  line comments no longer break `Dataset.sql()` query wrapping.
+- `taco.reader.inspect` is available directly after `import taco` instead of
+  depending on another module having imported it first.
+
+## 0.7.0 - 2026-09-15
+
+### Added
+
+- A C++ reader core shared by Python, R, and Julia opens local and remote ZIP,
+  FOLDER, and TACOCAT datasets through Karu and generates DuckDB SQL for their
+  metadata.
+- Versioned dataset roots resolve `taco.json` in one read, use its embedded
+  collection, select the declared default version, and expose immutable
+  releases directly.
+- Python `export()` can write selected samples from a local ZIP, FOLDER, or
+  TACOCAT while preserving the contract and recomputing collection summaries.
+- The JavaScript reader recognizes suffixless CoZIP archives and preserves
+  transport errors while probing ambiguous URLs.
+
+### Changed
+
+- Python, R, and Julia use the native reader instead of loading the published
+  `cozip` DuckDB extension. HTTP, S3, GCS, Azure, Hugging Face, and Source
+  Cooperative use the same transport path.
+- The R source package carries synchronized TACO and Karu source trees rather
+  than depending on a source checkout at build time.
+- Native archives, Python wheels, Julia artifacts, and R packages are built by
+  the cross-platform release workflow.
+- `read(layout="long", files=...)` keeps only the selected structural files.
+
+### Fixed
+
+- Remote directory probes preserve authentication, TLS, server, and network
+  errors instead of reporting every failure as a missing collection.
+- Windows builds use the system certificate store, keep DLL permissions, and
+  normalize manifest paths in R and Julia.
+- R stops the native transport before unloading, avoiding process-exit hangs
+  on Windows toolchains.
 
 ### Removed
 
-- The `COZIP_EXTENSION` environment variable.
+- The `COZIP_EXTENSION` environment variable; the native core owns container
+  access in every binding.
 
 ## 0.6.3 - 2026-09-13
 
