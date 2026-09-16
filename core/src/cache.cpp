@@ -11,6 +11,7 @@
 #include <ctime>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <sstream>
 #include <thread>
 
@@ -26,18 +27,31 @@ constexpr std::string_view cachedir_tag =
     "# This directory holds metadata that taco can download again.\n"
     "# See https://bford.info/cachedir/\n";
 
+std::string environment(const char* name) {
+#if defined(_WIN32)
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0)
+        return {};
+    const std::unique_ptr<char, decltype(&std::free)> owned(value, &std::free);
+    return owned ? std::string(owned.get()) : std::string();
+#else
+    const char* value = std::getenv(name);
+    return value ? std::string(value) : std::string();
+#endif
+}
+
 bool refreshing() {
-    const char* value = std::getenv("TACO_CACHE_REFRESH");
-    return value && *value;
+    return !environment("TACO_CACHE_REFRESH").empty();
 }
 
 std::uint64_t cache_size_cap() {
-    const char* value = std::getenv("TACO_CACHE_SIZE");
-    if (!value || !*value)
+    const std::string value = environment("TACO_CACHE_SIZE");
+    if (value.empty())
         return default_cache_size;
     char* end = nullptr;
-    const auto parsed = std::strtoull(value, &end, 10);
-    if (end == value || *end != '\0')
+    const auto parsed = std::strtoull(value.c_str(), &end, 10);
+    if (end == value.c_str() || *end != '\0')
         fail(std::string("TACO_CACHE_SIZE must be a number of bytes, got ") + value);
     return parsed;
 }
