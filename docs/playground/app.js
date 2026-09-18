@@ -11,11 +11,15 @@ const DESKTOP_POINT_LIMIT = 100_000;
 const DESKTOP_POINT_STEP = 50_000;
 const MOBILE_POINT_LIMIT = 25_000;
 const MOBILE_POINT_STEP = 25_000;
+const GROUND_CELL_FILL = .72;
+const GROUND_CELL_SHRINK = .8;
+const GROUND_CELL_MIN_FILL = .3;
+const DENSE_RADIUS_LIMIT = 6;
 const requestedUrl = new URL(window.location.href).searchParams.get("url");
 
 const element = Object.fromEntries(
   [
-    "fixtureSelect", "datasetUrl", "plotField", "plotMode", "plotLegend", "loadDataset", "status", "message",
+    "fixtureSelect", "datasetUrl", "plotPanel", "plotField", "plotMode", "plotLegend", "loadDataset", "status", "message",
     "metadataPanel", "pointPosition", "pointTitle", "pointCoordinates", "metadataBody", "closeMetadata",
     "metadataPath", "metadataSource", "metadataCount", "loading", "loadingLabel",
     "downloadProgress", "downloadBar", "downloadPercent", "downloadBytes",
@@ -320,6 +324,7 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   state.parquetCachePromise = null;
   state.changingPointCount = false;
   element.sampleDisplay.hidden = true;
+  element.plotPanel.hidden = true;
   setStatus("loading", "Reading TACO");
   disableDatasetNavigation(true);
   element.fixtureSelect.value = String(index);
@@ -580,11 +585,9 @@ async function renderPoints() {
     type: "circle",
     source: POINT_SOURCE,
     paint: {
-      "circle-radius": pointRadiusExpression(state.points.length, state.pointBaseZoom),
+      ...pointPaint(),
       "circle-color": categoricalColorExpression(),
-      "circle-opacity": state.points.length > 5_000 ? .6 : .84,
       "circle-stroke-color": ["case", ["boolean", ["feature-state", "selected"], false], "#20251f", "#ffffff"],
-      "circle-stroke-width": ["case", ["boolean", ["feature-state", "selected"], false], 2, state.points.length > 10_000 ? 0 : 1],
     },
   });
 }
@@ -598,13 +601,7 @@ async function updateRenderedPoints() {
   }
   state.pointData = pointFeatureCollection();
   await source.setData(state.pointData);
-  map.setPaintProperty(POINT_LAYER, "circle-radius", pointRadiusExpression(state.points.length, state.pointBaseZoom));
-  map.setPaintProperty(POINT_LAYER, "circle-opacity", state.points.length > 5_000 ? .6 : .84);
-  map.setPaintProperty(
-    POINT_LAYER,
-    "circle-stroke-width",
-    ["case", ["boolean", ["feature-state", "selected"], false], 2, state.points.length > 10_000 ? 0 : 1],
-  );
+  for (const [property, value] of Object.entries(pointPaint())) map.setPaintProperty(POINT_LAYER, property, value);
 }
 
 function pointFeatureCollection() {
@@ -637,9 +634,10 @@ function populatePlotFields(sampleFields) {
   state.plotMode = "auto";
   element.plotField.value = "";
   element.plotMode.value = "auto";
-  element.plotMode.disabled = true;
+  element.plotMode.hidden = true;
   element.plotLegend.hidden = true;
-  element.plotField.disabled = fields.length === 0;
+  element.plotField.disabled = false;
+  element.plotPanel.hidden = fields.length === 0;
 }
 
 function colorIndex(value) {
@@ -672,6 +670,7 @@ async function loadPlotField(field) {
   state.plotField = field;
   element.plotField.disabled = true;
   element.plotMode.disabled = true;
+  element.plotMode.hidden = !field;
   try {
     let analysis = null;
     if (!field) {
@@ -704,7 +703,7 @@ async function loadPlotField(field) {
   } finally {
     if (token === state.plotToken) {
       element.plotField.disabled = false;
-      element.plotMode.disabled = !state.plotField;
+      element.plotMode.disabled = false;
     }
   }
 }
@@ -869,6 +868,97 @@ function pointRadiusExpression(count, baseZoom) {
     stops.push([baseZoom + step, ["case", selected, Math.max(6, radius + 2), radius]]);
   }
   return ["interpolate", ["linear"], ["zoom"], ...stops.flat()];
+}
+
+/**
+ * Paint for the point layer. Dense datasets such as regular sampling grids are
+ * drawn as ground-sized cells so neighbours stay in contact at every zoom;
+ * sparse datasets keep screen-sized markers.
+ */
+function pointPaint() {
+  const count = state.points.length;
+  const selected = ["boolean", ["feature-state", "selected"], false];
+  const spacing = estimatePointSpacing(state.points);
+  const cellRadius = spacing && ((zoom) => (spacing.meters * GROUND_CELL_FILL) / metersPerPixel(zoom, spacing.latitude));
+  if (cellRadius && cellRadius(state.pointBaseZoom) <= DENSE_RADIUS_LIMIT) {
+    const base = pointRadiusBase(count);
+    const stops = [];
+    for (let zoom = 0; zoom <= map.getMaxZoom(); zoom += 1) {
+      // Cells touch when zoomed out and separate into dots as the view zooms in.
+      const levels = Math.max(0, zoom - Math.ceil(state.pointBaseZoom) - 1);
+      const shrink = Math.max(GROUND_CELL_MIN_FILL / GROUND_CELL_FILL, GROUND_CELL_SHRINK ** levels);
+      const radius = Math.max(base, cellRadius(zoom) * shrink);
+      stops.push(zoom, ["case", selected, Math.max(6, radius + 2), radius]);
+    }
+    return {
+      "circle-radius": ["interpolate", ["exponential", 2], ["zoom"], ...stops],
+      "circle-opacity": .9,
+      "circle-stroke-width": ["case", selected, 2, 0],
+    };
+  }
+  return {
+    "circle-radius": pointRadiusExpression(count, state.pointBaseZoom),
+    "circle-opacity": count > 5_000 ? .6 : .84,
+    "circle-stroke-width": ["case", selected, 2, count > 10_000 ? 0 : 1],
+  };
+}
+
+/**
+ * Median nearest-neighbour distance of the displayed points, in meters.
+ * Returns null when there are too few points to describe a density.
+ */
+function estimatePointSpacing(points) {
+  if (points.length < 50) return null;
+  let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity;
+  for (const point of points) {
+    west = Math.min(west, point.longitude);
+    east = Math.max(east, point.longitude);
+    south = Math.min(south, point.latitude);
+    north = Math.max(north, point.latitude);
+  }
+  const cell = Math.max(1e-6, Math.sqrt(((east - west) * (north - south)) / points.length) * 2);
+  const buckets = new Map();
+  points.forEach((point) => {
+    const key = `${Math.floor(point.longitude / cell)},${Math.floor(point.latitude / cell)}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(point);
+  });
+
+  const stride = Math.max(1, Math.floor(points.length / 1000));
+  const distances = [];
+  const latitudes = [];
+  for (let index = 0; index < points.length; index += stride) {
+    const probe = points[index];
+    const column = Math.floor(probe.longitude / cell);
+    const row = Math.floor(probe.latitude / cell);
+    const scale = Math.cos((probe.latitude * Math.PI) / 180);
+    let nearest = Infinity;
+    for (let ring = 1; ring <= 3 && nearest === Infinity; ring += 1) {
+      for (let x = column - ring; x <= column + ring; x += 1) {
+        for (let y = row - ring; y <= row + ring; y += 1) {
+          for (const other of buckets.get(`${x},${y}`) ?? []) {
+            const dx = (other.longitude - probe.longitude) * scale * 111_320;
+            const dy = (other.latitude - probe.latitude) * 110_540;
+            const distance = Math.hypot(dx, dy);
+            if (distance > 0 && distance < nearest) nearest = distance;
+          }
+        }
+      }
+    }
+    if (nearest !== Infinity) {
+      distances.push(nearest);
+      latitudes.push(probe.latitude);
+    }
+  }
+  if (distances.length < 25) return null;
+  distances.sort((left, right) => left - right);
+  latitudes.sort((left, right) => left - right);
+  return { meters: distances[distances.length >> 1], latitude: latitudes[latitudes.length >> 1] };
+}
+
+function metersPerPixel(zoom, latitude) {
+  const scale = Math.max(.1, Math.cos((latitude * Math.PI) / 180));
+  return (40_075_016.686 * scale) / (512 * (2 ** zoom));
 }
 
 function selectPoint(index) {
@@ -1528,8 +1618,8 @@ function disableDatasetNavigation(disabled) {
     element.plotMode.disabled = true;
   }
   else if (state.dataset) {
-    element.plotField.disabled = element.plotField.options.length <= 1;
-    element.plotMode.disabled = !state.plotField;
+    element.plotField.disabled = false;
+    element.plotMode.disabled = false;
   }
 }
 
