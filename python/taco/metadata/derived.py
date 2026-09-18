@@ -134,7 +134,7 @@ class MajorTOM(DerivedMetadata):
             indexes[indexes < 0] = row_lons.size - 1
             column_indexes[selected] = indexes
 
-        distance = f"{int(self.dist_km):04d}km"
+        distance = f"MT{int(self.dist_km)}km"
         codes = [
             self.sep.join(
                 (

@@ -70,7 +70,7 @@ def test_extension_dependencies_ignore_declaration_order(tmp_path: Path) -> None
     row = open_view(tmp_path / "dataset").level("sample").to_pylist()[0]
     assert row["stac:centroid"] == point(0, 0)
     assert row["stac:time_middle"] == datetime(2024, 1, 2, tzinfo=timezone.utc)
-    assert row["majortom:code"].startswith("0010km_")
+    assert row["majortom:code"].startswith("MT10km_")
 
 
 def test_spatial_is_regular_only_and_composes_with_majortom(tmp_path: Path) -> None:
@@ -91,7 +91,7 @@ def test_spatial_is_regular_only_and_composes_with_majortom(tmp_path: Path) -> N
     dataset = open_view(tmp_path / "dataset")
     row = dataset.level("sample").to_pylist()[0]
     assert row["spatial:centroid"] == point(0, 0)
-    assert row["majortom:code"].startswith("0100km_")
+    assert row["majortom:code"].startswith("MT100km_")
     assert not any(name.startswith(("stac:", "temporal:")) for name in row)
     assert dataset.collection.extent == taco.contract.Extent((0, 0, 0, 0))
 

@@ -8,6 +8,7 @@ JavaScript reader are documented here. The format follows
 
 ### Changed
 
+- `MajorTOM` codes start with `MT`, for example `MT10km_0770U_0395R`.
 - `GeoEnrich` writes physical units (mm per year, degrees Celsius, soil scale
   factors applied) and returns `null` where the source has no data instead of
   zero. Population comes from GPW v4.11 in people per km2 and is 0 over water

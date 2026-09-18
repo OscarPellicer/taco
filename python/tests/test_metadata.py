@@ -217,7 +217,7 @@ def test_major_tom_vector_batch() -> None:
     result = extension.compute({"stac:centroid": [point(-76, -12), point(0, 0), point(100, 40)]})
     codes = result["code"]
     assert len(codes) == 3
-    assert all(code.startswith("0100km_") for code in codes)
+    assert all(code.startswith("MT100km_") for code in codes)
     assert len(set(codes)) == 3
 
 
