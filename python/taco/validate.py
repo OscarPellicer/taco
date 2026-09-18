@@ -123,7 +123,7 @@ def _check_collection(dataset: DatasetView, collector: _Collector) -> None:
     collection = dataset.collection
     if dataset.container != "tacocat" and collection.sources is not None:
         collector.error("sources", "taco:sources is only valid in TACOCAT")
-    unknown = [task for task in collection.tasks if task not in KNOWN_TASKS]
+    unknown = [task for task in collection.tasks or () if task not in KNOWN_TASKS]
     if unknown:
         collector.warning("tasks", f"unrecognized task types {unknown}")
 

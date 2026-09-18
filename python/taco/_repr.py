@@ -224,10 +224,11 @@ def _collection(dataset: Dataset) -> str:
     rows: list[tuple[str, Any]] = [
         ("id", collection.id),
         ("version", collection.dataset_version),
-        ("tasks", list(collection.tasks)),
         ("licenses", list(collection.licenses)),
         ("providers", [provider.name for provider in collection.providers]),
     ]
+    if collection.tasks is not None:
+        rows.insert(2, ("tasks", list(collection.tasks)))
     if collection.extent is not None:
         rows.append(("extent", collection.extent.to_dict()))
     if collection.metadata is not None:

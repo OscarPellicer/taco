@@ -63,6 +63,13 @@ def test_dataset_version_must_be_semver(collection: taco.Collection, version: st
         collection.replace(dataset_version=version)
 
 
+def test_tasks_are_optional(collection: taco.Collection) -> None:
+    untasked = collection.replace(tasks=None)
+    data = untasked.to_dict()
+    assert "tasks" not in data
+    assert taco.Collection.from_dict(json.loads(json.dumps(data))).tasks is None
+
+
 def test_reader_rejects_wrong_spec_version(collection: taco.Collection) -> None:
     data = collection.to_dict()
     data["taco:version"] = "2.0.0"

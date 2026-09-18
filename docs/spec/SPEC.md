@@ -350,7 +350,7 @@ When statistics are enabled, the extension also stores `rumi:stats` as one list 
 
 `COLLECTION.json` describes the dataset, stores its contract, and carries metadata that applies to the collection as a whole. Samples do not have string identifiers. Their position in a FOLDER or ZIP partition is their identity, starting at 0.
 
-For this specification, `taco:version` MUST equal `3.0.0`. The `id` and `description` MUST be non-empty. The `licenses`, `providers`, and `tasks` lists MUST each contain at least one entry.
+For this specification, `taco:version` MUST equal `3.0.0`. The `id` and `description` MUST be non-empty. The `licenses` and `providers` lists MUST each contain at least one entry. `tasks` MAY be omitted; when present it MUST contain at least one entry.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -360,7 +360,7 @@ For this specification, `taco:version` MUST equal `3.0.0`. The `id` and `descrip
 | `description` | string | MUST | Dataset description |
 | `licenses` | list[string] | MUST | License identifiers (e.g. `CC-BY-4.0`) |
 | `providers` | list[object] | MUST | Dataset providers with name and roles |
-| `tasks` | list[string] | MUST | ML task types (e.g. `segmentation`, `classification`) |
+| `tasks` | list[string] | MAY | ML task types (e.g. `segmentation`, `classification`) |
 | `taco:structure` | list or null | MUST | Sample structure |
 | `taco:metadata` | object | MUST | Tabular metadata schema |
 | `title` | string | MAY | Human-readable title |

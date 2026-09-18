@@ -270,7 +270,7 @@ class Collection:
     description: str
     licenses: tuple[str, ...]
     providers: tuple[Provider, ...]
-    tasks: tuple[str, ...]
+    tasks: tuple[str, ...] | None = None
     metadata: CollectionMetadata | None = None
     title: str | None = None
     curators: tuple[Curator, ...] | None = None
@@ -288,7 +288,8 @@ class Collection:
         if not isinstance(self.description, str) or not self.description.strip():
             raise CollectionError("collection description is required")
         object.__setattr__(self, "licenses", _string_list(self.licenses, name="licenses", required=True))
-        object.__setattr__(self, "tasks", _string_list(self.tasks, name="tasks", required=True))
+        if self.tasks is not None:
+            object.__setattr__(self, "tasks", _string_list(self.tasks, name="tasks", required=True))
         if isinstance(self.providers, (str, Mapping, Provider)) or not isinstance(self.providers, Sequence):
             raise CollectionError("providers must be a list")
         if not self.providers:
@@ -324,9 +325,10 @@ class Collection:
             "description": self.description,
             "licenses": list(self.licenses),
             "providers": [provider.to_dict() for provider in self.providers],
-            "tasks": list(self.tasks),
             **self.contract.to_dict(),
         }
+        if self.tasks is not None:
+            data["tasks"] = list(self.tasks)
         if self.title is not None:
             data["title"] = self.title
         if self.curators is not None:
@@ -356,7 +358,6 @@ class Collection:
             "description",
             "licenses",
             "providers",
-            "tasks",
             "taco:structure",
             "taco:metadata",
         )
@@ -389,7 +390,7 @@ class Collection:
             description=data["description"],
             licenses=data["licenses"],
             providers=tuple(Provider.from_any(value) for value in providers),
-            tasks=data["tasks"],
+            tasks=data.get("tasks"),
             metadata=CollectionMetadata.from_flat(extra) if extra else None,
             title=data.get("title"),
             curators=None if curators is None else tuple(Curator.from_any(value) for value in curators),

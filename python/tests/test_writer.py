@@ -201,6 +201,26 @@ def test_single_file_dataset(tmp_path: Path) -> None:
     assert zipfile.ZipFile(output).read("DATA/0") == b"one"
 
 
+def test_collection_without_tasks_round_trips(tmp_path: Path) -> None:
+    collection = taco.Collection(
+        contract=taco.Contract(structure=None, metadata=taco.MetadataSchema(taco.Level("sample"))),
+        id="untasked",
+        dataset_version="1.0.0",
+        description="No tasks",
+        licenses=["MIT"],
+        providers=["me"],
+    )
+    output = tmp_path / "untasked.zip"
+    with taco.open_writer(collection, output) as writer:
+        writer.add(taco.Sample(assets=b"one"))
+        writer.run()
+    assert "tasks" not in json.loads(zipfile.ZipFile(output).read("COLLECTION.json"))
+    assert taco.validate(output).ok
+    dataset = taco.open_dataset(str(output))
+    assert dataset.collection.tasks is None
+    assert ">tasks<" not in dataset._repr_html_()
+
+
 def test_stac_generates_extent(tmp_path: Path) -> None:
     contract = taco.Contract(
         structure=None,

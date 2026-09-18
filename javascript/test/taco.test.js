@@ -2,6 +2,7 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { openDataset, read, SUPPORTED_TACO_VERSION, TacoError } from "../src/index.js";
 import { arrayBuffer } from "../src/container/http.js";
+import { parseCollection } from "../src/contract/collection.js";
 import { fixtureServer } from "./server.js";
 
 let fixture;
@@ -214,4 +215,19 @@ test("validates source and read options", async () => {
   await assert.rejects(() => dataset.read({ idx: [-1, 2] }), /idx must be an integer/);
   await assert.rejects(() => dataset.read({ files: ["unknown.bin"] }), /unknown structure leaves/);
   await assert.rejects(() => dataset.readLevel("missing"), /unknown metadata level/);
+});
+
+test("tasks is optional but cannot be empty", () => {
+  const collection = {
+    "taco:version": SUPPORTED_TACO_VERSION,
+    id: "no-tasks",
+    dataset_version: "1.0.0",
+    description: "No tasks",
+    licenses: ["MIT"],
+    providers: [{ name: "Asterisk Labs" }],
+    "taco:structure": null,
+    "taco:metadata": { sample: {} },
+  };
+  assert.equal(parseCollection(collection).collection.tasks, undefined);
+  assert.throws(() => parseCollection({ ...collection, tasks: [] }), /tasks must be a non-empty list/);
 });

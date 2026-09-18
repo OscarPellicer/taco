@@ -8,6 +8,9 @@ JavaScript reader are documented here. The format follows
 
 ### Changed
 
+- `tasks` is optional in `COLLECTION.json`. When present it must still list at
+  least one task. `Collection(tasks=...)` defaults to `None`, and the core,
+  Python, R, Julia, and JavaScript readers accept collections without it.
 - `MajorTOM` codes start with `MT`, for example `MT10km_0770U_0395R`.
 - `GeoEnrich` writes physical units (mm per year, degrees Celsius, soil scale
   factors applied) and returns `null` where the source has no data instead of

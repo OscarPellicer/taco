@@ -66,7 +66,7 @@ void validate_collection(const json::Value& collection, const std::string& versi
     const std::string prefix = "version '" + version + "' embeds an invalid collection: ";
     std::string missing;
     for (const char* key : {"taco:version", "id", "dataset_version", "description", "licenses", "providers",
-                            "tasks", "taco:structure", "taco:metadata"}) {
+                            "taco:structure", "taco:metadata"}) {
         if (!collection.find(key))
             missing += (missing.empty() ? "" : ", ") + std::string(key);
     }

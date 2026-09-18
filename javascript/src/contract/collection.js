@@ -45,6 +45,7 @@ export function parseCollection(value) {
     }
   }
   for (const name of ["licenses", "providers", "tasks"]) {
+    if (name === "tasks" && collection.tasks === undefined) continue;
     if (!Array.isArray(collection[name]) || collection[name].length === 0) {
       fail("INVALID_COLLECTION", `${name} must be a non-empty list`);
     }

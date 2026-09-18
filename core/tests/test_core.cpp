@@ -431,6 +431,10 @@ void test_manifest() {
         write_file(root / "taco.json", text);
         CHECK_THROWS(taco::resolve_dataset((root / "taco.json").string()), message);
     }
+    const std::string no_tasks = "\"tasks\":[\"other\"],";
+    write_file(root / "taco.json",
+               manifest_json(replace(collection_json("1.0.0"), no_tasks, ""), replace(collection_json("2.0.0"), no_tasks, "")));
+    CHECK(taco::json::parse(taco::resolve_dataset((root / "taco.json").string())).find("version")->string == "2.0.0");
     CHECK_THROWS(taco::resolve_dataset((root / "missing" / "taco.json").string()), "does not exist");
     CHECK_THROWS(taco::resolve_dataset("file://" + (root / "missing" / "taco.json").generic_string()),
                  "does not exist");
