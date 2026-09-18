@@ -4,6 +4,23 @@ All notable changes across the TACO core, language bindings, writer, and
 JavaScript reader are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- `GeoEnrich` writes physical units (mm per year, degrees Celsius, soil scale
+  factors applied) and returns `null` where the source has no data instead of
+  zero. Population comes from GPW v4.11 in people per km2 and is 0 over water
+  and Antarctica.
+
+### Fixed
+
+- `GeoEnrich` samples on a fixed EPSG:4326 grid, so a value no longer depends
+  on which other variables are requested with it.
+- `GeoEnrich` descriptions name the real sources and units, the 2020 human
+  modification epoch is read directly, and failed Earth Engine requests are
+  retried.
+
 ## 0.8.0 - 2026-09-15
 
 ### Added

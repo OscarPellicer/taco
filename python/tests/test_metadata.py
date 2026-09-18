@@ -241,8 +241,8 @@ def test_major_tom_rejects_non_point() -> None:
 
 
 class FakeImage:
-    calls: list[tuple[str, int, float]] = []
-    unmask_values: list[int] = []
+    calls: list[tuple[str, int, float, str]] = []
+    unmask_values: list[float] = []
 
     def __init__(self, path) -> None:
         self.names = [image.names[0] for image in path] if isinstance(path, list) else [str(path)]
@@ -257,12 +257,12 @@ class FakeImage:
         self.names = [name]
         return self
 
-    def unmask(self, value: int) -> FakeImage:
+    def unmask(self, value: float) -> FakeImage:
         self.unmask_values.append(value)
         return self
 
-    def reduceRegions(self, *, collection, reducer, scale):
-        self.calls.append((reducer, len(collection), scale))
+    def reduceRegions(self, *, collection, reducer, scale, crs):
+        self.calls.append((reducer, len(collection), scale, crs))
 
         def properties(feature):
             values = {"taco_index": feature["index"]}
@@ -277,10 +277,8 @@ class FakeImage:
         )
 
 
-def test_geoenrich_batches_requests(monkeypatch: pytest.MonkeyPatch) -> None:
-    FakeImage.calls.clear()
-    FakeImage.unmask_values.clear()
-    fake = SimpleNamespace(
+def fake_earth_engine() -> SimpleNamespace:
+    return SimpleNamespace(
         Feature=lambda geometry, values: {"index": values["taco_index"]},
         Geometry=SimpleNamespace(Point=lambda lon, lat: (lon, lat)),
         FeatureCollection=lambda values: values,
@@ -288,7 +286,12 @@ def test_geoenrich_batches_requests(monkeypatch: pytest.MonkeyPatch) -> None:
         ImageCollection=FakeImage,
         Reducer=SimpleNamespace(mean=lambda: "mean", mode=lambda: "mode"),
     )
-    monkeypatch.setitem(sys.modules, "ee", fake)
+
+
+def test_geoenrich_batches_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeImage.calls.clear()
+    FakeImage.unmask_values.clear()
+    monkeypatch.setitem(sys.modules, "ee", fake_earth_engine())
     extension = taco.metadata.sample.GeoEnrich(["elevation", "admin_countries"], batch_size=1, max_concurrency=1)
     result = extension.compute({"stac:centroid": [point(0, 0), point(1, 1)]})
     assert result == {
@@ -296,28 +299,20 @@ def test_geoenrich_batches_requests(monkeypatch: pytest.MonkeyPatch) -> None:
         "admin_countries": ["Afghanistan", "Ocean/Sea/Lakes"],
     }
     assert all(type(value) is float for value in result["elevation"])
-    assert FakeImage.unmask_values == [0, 65535]
+    assert FakeImage.unmask_values == [65535]
     assert FakeImage.calls == [
-        ("mean", 1, 5120.0),
-        ("mode", 1, 5120.0),
-        ("mean", 1, 5120.0),
-        ("mode", 1, 5120.0),
+        ("mean", 1, 5120.0, "EPSG:4326"),
+        ("mode", 1, 5120.0, "EPSG:4326"),
+        ("mean", 1, 5120.0, "EPSG:4326"),
+        ("mode", 1, 5120.0, "EPSG:4326"),
     ]
 
 
 def test_geoenrich_replaces_missing_admin_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = SimpleNamespace(
-        Feature=lambda geometry, values: {"index": values["taco_index"]},
-        Geometry=SimpleNamespace(Point=lambda lon, lat: (lon, lat)),
-        FeatureCollection=lambda values: values,
-        Image=FakeImage,
-        ImageCollection=FakeImage,
-        Reducer=SimpleNamespace(mean=lambda: "mean", mode=lambda: "mode"),
-    )
-    monkeypatch.setitem(sys.modules, "ee", fake)
+    monkeypatch.setitem(sys.modules, "ee", fake_earth_engine())
     monkeypatch.setattr(taco.metadata.derived, "_admin_names", lambda level: {0: "Afghanistan", 53343: None})
 
-    def reduce_regions(self, *, collection, reducer, scale):
+    def reduce_regions(self, *, collection, reducer, scale, crs):
         return SimpleNamespace(
             getInfo=lambda: {
                 "features": [{"properties": {"taco_index": feature["index"], "mode": 53343}} for feature in collection]
@@ -329,6 +324,54 @@ def test_geoenrich_replaces_missing_admin_name(monkeypatch: pytest.MonkeyPatch) 
     result = extension.compute({"stac:centroid": [point(63.794370059438705, 36.06268468013294)]})
 
     assert result == {"admin_districts": ["Unknown"]}
+
+
+def test_geoenrich_converts_units_and_keeps_missing_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "ee", fake_earth_engine())
+    FakeImage.unmask_values.clear()
+    raw = {
+        0: {"temperature": 300.0, "soil_ph": 65, "population": 1250.5},
+        1: {"population": 0.0},
+    }
+
+    def reduce_regions(self, *, collection, reducer, scale, crs):
+        return SimpleNamespace(
+            getInfo=lambda: {
+                "features": [
+                    {"properties": {"taco_index": feature["index"], **raw[feature["index"]]}} for feature in collection
+                ]
+            }
+        )
+
+    monkeypatch.setattr(FakeImage, "reduceRegions", reduce_regions)
+    extension = taco.metadata.sample.GeoEnrich(["temperature", "soil_ph", "population"])
+    result = extension.compute({"stac:centroid": [point(0, 0), point(1, 1)]})
+
+    assert result["temperature"] == [pytest.approx(26.85, abs=1e-5), None]
+    assert result["soil_ph"] == [6.5, None]
+    assert result["population"] == [1250.5, 0.0]
+    assert FakeImage.unmask_values == [0.0]
+
+
+def test_geoenrich_retries_failed_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "ee", fake_earth_engine())
+    delays: list[int] = []
+    monkeypatch.setattr(taco.metadata.derived.time, "sleep", delays.append)
+    failures = [RuntimeError("Too many concurrent aggregations")]
+
+    def reduce_regions(self, *, collection, reducer, scale, crs):
+        def get_info():
+            if failures:
+                raise failures.pop()
+            return {"features": [{"properties": {"taco_index": 0, "elevation": 12.0}}]}
+
+        return SimpleNamespace(getInfo=get_info)
+
+    monkeypatch.setattr(FakeImage, "reduceRegions", reduce_regions)
+    result = taco.metadata.sample.GeoEnrich(["elevation"]).compute({"stac:centroid": [point(0, 0)]})
+
+    assert result == {"elevation": [12.0]}
+    assert delays == [1]
 
 
 def test_geoenrich_configuration() -> None:
@@ -352,7 +395,8 @@ def test_geoenrich_configuration() -> None:
     fields = taco.metadata.sample.GeoEnrich(["gdp", "admin_countries"]).fields
     assert fields.field("gdp").type == pa.float32()
     assert fields.field("admin_countries").type == pa.string()
-    assert not fields.field("gdp").nullable
+    assert fields.field("gdp").nullable
+    assert not fields.field("admin_countries").nullable
     assert fields.field("admin_countries").metadata[b"description"]
 
 

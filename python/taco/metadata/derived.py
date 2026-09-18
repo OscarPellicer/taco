@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -172,6 +173,35 @@ def _admin_names(level: int) -> dict[int, str]:
     return dict(zip(codes.to_pylist(), names.to_pylist(), strict=True))
 
 
+_OCEAN_CODE = 65535
+
+
+@dataclass(frozen=True)
+class _Product:
+    asset: str
+    description: str
+    band: str | None = None
+    mosaic: bool = False
+    reducer: str = "mean"
+    scale: float = 1.0
+    offset: float = 0.0
+    fill: float | None = None
+
+    def convert(self, value: Any) -> float | None:
+        if value is None:
+            return None
+        return float(value) * self.scale + self.offset
+
+
+def _get_info(request: Any) -> Any:
+    for delay in (1, 2, 4, 8):
+        try:
+            return request.getInfo()
+        except Exception:
+            time.sleep(delay)
+    return request.getInfo()
+
+
 @dataclass(frozen=True, init=False)
 class GeoEnrich(DerivedMetadata):
     """Fetch selected Earth Engine variables and resolve administrative names."""
@@ -184,51 +214,91 @@ class GeoEnrich(DerivedMetadata):
     batch_size: int
     max_concurrency: int
     centroid: str
-    _PRODUCTS: ClassVar[dict[str, tuple[str, str | None, bool, str, int]]] = {
-        "elevation": ("projects/sat-io/open-datasets/GLO-30", None, True, "mean", 0),
-        "cisi": ("projects/sat-io/open-datasets/CISI/global_CISI", None, False, "mean", 0),
-        "precipitation": ("projects/ee-csaybar-real/assets/precipitation", None, False, "mean", 0),
-        "temperature": ("projects/ee-csaybar-real/assets/temperature", None, False, "mean", 0),
-        "soil_clay": ("OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02", "b0", False, "mean", 0),
-        "soil_sand": ("OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02", "b0", False, "mean", 0),
-        "soil_carbon": ("OpenLandMap/SOL/SOL_ORGANIC-CARBON_USDA-6A1C_M/v02", "b0", False, "mean", 0),
-        "soil_bulk_density": ("OpenLandMap/SOL/SOL_BULKDENS-FINEEARTH_USDA-4A1H_M/v02", "b0", False, "mean", 0),
-        "soil_ph": ("OpenLandMap/SOL/SOL_PH-H2O_USDA-4C1A2A_M/v02", "b0", False, "mean", 0),
-        "gdp": (
+    _PRODUCTS: ClassVar[dict[str, _Product]] = {
+        "elevation": _Product(
+            "projects/sat-io/open-datasets/GLO-30",
+            "Elevation in metres (Copernicus GLO-30 DEM)",
+            mosaic=True,
+        ),
+        "cisi": _Product(
+            "projects/sat-io/open-datasets/CISI/global_CISI",
+            "Critical Infrastructure Spatial Index, 0 to 1 (Nirandjan et al. 2022)",
+        ),
+        # ERA5 monthly climatologies for 1979-01 to 2020-06, precomputed once and stored in metres and kelvin.
+        "precipitation": _Product(
+            "projects/ee-csaybar-real/assets/precipitation",
+            "Mean annual precipitation in mm per year (ERA5, 1979 to 2020)",
+            scale=1000.0,
+        ),
+        "temperature": _Product(
+            "projects/ee-csaybar-real/assets/temperature",
+            "Mean annual 2 m air temperature in degrees Celsius (ERA5, 1979 to 2020)",
+            offset=-273.15,
+        ),
+        # OpenLandMap stores scaled integers; the factors are gee:scale in the catalog.
+        "soil_clay": _Product(
+            "OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02",
+            "Clay content at 0 cm depth in percent by weight (OpenLandMap)",
+            band="b0",
+        ),
+        "soil_sand": _Product(
+            "OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02",
+            "Sand content at 0 cm depth in percent by weight (OpenLandMap)",
+            band="b0",
+        ),
+        "soil_carbon": _Product(
+            "OpenLandMap/SOL/SOL_ORGANIC-CARBON_USDA-6A1C_M/v02",
+            "Soil organic carbon at 0 cm depth in g/kg (OpenLandMap)",
+            band="b0",
+            scale=5.0,
+        ),
+        "soil_bulk_density": _Product(
+            "OpenLandMap/SOL/SOL_BULKDENS-FINEEARTH_USDA-4A1H_M/v02",
+            "Fine earth bulk density at 0 cm depth in kg/m3 (OpenLandMap)",
+            band="b0",
+            scale=10.0,
+        ),
+        "soil_ph": _Product(
+            "OpenLandMap/SOL/SOL_PH-H2O_USDA-4C1A2A_M/v02",
+            "Soil pH in water at 0 cm depth (OpenLandMap)",
+            band="b0",
+            scale=0.1,
+        ),
+        "gdp": _Product(
             "projects/sat-io/open-datasets/GRIDDED_HDI_GDP/total_gdp_perCapita_1990_2022_5arcmin",
-            "PPP_2022",
-            False,
-            "mean",
-            0,
+            "Total GDP for 2022 in 2017 international dollars, PPP (Kummu et al. 2025)",
+            band="PPP_2022",
         ),
-        "human_modification": (
-            "projects/sat-io/open-datasets/GHM/HM_1990_2020_OVERALL_300M",
-            "constant",
-            True,
-            "mean",
-            0,
+        "human_modification": _Product(
+            "projects/sat-io/open-datasets/GHM/HM_1990_2020_OVERALL_300M/HMv20240801_2020c_AA_300",
+            "Human modification index for 2020, 0 to 1 (GHM v3, Theobald et al. 2025)",
+            band="constant",
         ),
-        "population": ("projects/sat-io/open-datasets/hrsl/hrslpop", None, True, "mean", 0),
-        "admin_countries": ("projects/ee-csaybar-real/assets/admin0", None, False, "mode", 65535),
-        "admin_states": ("projects/ee-csaybar-real/assets/admin1", None, False, "mode", 65535),
-        "admin_districts": ("projects/ee-csaybar-real/assets/admin2", None, False, "mode", 65535),
-    }
-    _DESCRIPTIONS: ClassVar[dict[str, str]] = {
-        "elevation": "Mean elevation in metres (GLO-30 DEM)",
-        "cisi": "Mean Critical Infrastructure Spatial Index",
-        "precipitation": "Mean annual precipitation in millimetres",
-        "temperature": "Mean annual temperature in degrees Celsius",
-        "soil_clay": "Surface soil clay content",
-        "soil_sand": "Surface soil sand content",
-        "soil_carbon": "Surface soil organic carbon content",
-        "soil_bulk_density": "Surface soil bulk density",
-        "soil_ph": "Surface soil pH",
-        "gdp": "GDP per capita in PPP 2022 USD",
-        "human_modification": "Global human modification index",
-        "population": "Population density from HRSL",
-        "admin_countries": "Country name at the centroid",
-        "admin_states": "State or province name at the centroid",
-        "admin_districts": "District or county name at the centroid",
+        # GPW masks water and Antarctica. Nobody lives there, so masked pixels become 0 rather than null.
+        "population": _Product(
+            "CIESIN/GPWv411/GPW_Population_Density/gpw_v4_population_density_rev11_2020_30_sec",
+            "Population density in people per km2, 0 over water and Antarctica (GPW v4.11, 2020)",
+            band="population_density",
+            fill=0.0,
+        ),
+        "admin_countries": _Product(
+            "projects/ee-csaybar-real/assets/admin0",
+            "Country name at the centroid, or Ocean/Sea/Lakes",
+            reducer="mode",
+            fill=_OCEAN_CODE,
+        ),
+        "admin_states": _Product(
+            "projects/ee-csaybar-real/assets/admin1",
+            "State or province name at the centroid",
+            reducer="mode",
+            fill=_OCEAN_CODE,
+        ),
+        "admin_districts": _Product(
+            "projects/ee-csaybar-real/assets/admin2",
+            "District or county name at the centroid",
+            reducer="mode",
+            fill=_OCEAN_CODE,
+        ),
     }
 
     def __init__(
@@ -272,8 +342,8 @@ class GeoEnrich(DerivedMetadata):
             pa.field(
                 name,
                 pa.string() if name.startswith("admin_") else pa.float32(),
-                nullable=False,
-                metadata={b"description": self._DESCRIPTIONS[name].encode()},
+                nullable=not name.startswith("admin_"),
+                metadata={b"description": self._PRODUCTS[name].description.encode()},
             )
             for name in self.variables
         )
@@ -306,16 +376,17 @@ class GeoEnrich(DerivedMetadata):
         points.sort(key=lambda point: _morton_key(point[1], point[2]))
         groups: dict[str, list[tuple[str, Any]]] = {"mean": [], "mode": []}
         for name in self.variables:
-            path, band, image_collection, reducer, unmask = self._PRODUCTS[name]
-            image = ee.ImageCollection(path).mosaic() if image_collection else ee.Image(path)
-            image = image.unmask(unmask)
-            if band is not None:
-                image = image.select(band)
-            groups[reducer].append((name, image.rename(name)))
+            product = self._PRODUCTS[name]
+            image = ee.ImageCollection(product.asset).mosaic() if product.mosaic else ee.Image(product.asset)
+            if product.fill is not None:
+                image = image.unmask(product.fill)
+            if product.band is not None:
+                image = image.select(product.band)
+            groups[product.reducer].append((name, image.rename(name)))
         groups = {name: products for name, products in groups.items() if products}
         chunks = [points[start : start + self.batch_size] for start in range(0, count, self.batch_size)]
         result: dict[str, list[Any]] = {
-            name: (["Ocean/Sea/Lakes"] * count if name.startswith("admin_") else [0.0] * count)
+            name: (["Ocean/Sea/Lakes"] * count if name.startswith("admin_") else [None] * count)
             for name in self.variables
         }
 
@@ -326,7 +397,10 @@ class GeoEnrich(DerivedMetadata):
             for reducer, products in groups.items():
                 image = ee.Image([product[1] for product in products])
                 operation = ee.Reducer.mean() if reducer == "mean" else ee.Reducer.mode()
-                response = image.reduceRegions(collection=collection, reducer=operation, scale=self.scale_m).getInfo()
+                # A fixed grid keeps each value independent of which other variables are requested.
+                response = _get_info(
+                    image.reduceRegions(collection=collection, reducer=operation, scale=self.scale_m, crs="EPSG:4326")
+                )
                 for feature in response.get("features", []):
                     properties = feature.get("properties", {})
                     index = properties.get("taco_index")
@@ -347,7 +421,8 @@ class GeoEnrich(DerivedMetadata):
                                 "Ocean/Sea/Lakes" if value is None else _admin_names(level).get(int(value)) or "Unknown"
                             )
                         else:
-                            result[name][index] = float(np.float32(0 if value is None else value))
+                            converted = self._PRODUCTS[name].convert(value)
+                            result[name][index] = None if converted is None else float(np.float32(converted))
         return result
 
 
