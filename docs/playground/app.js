@@ -15,7 +15,22 @@ const GROUND_CELL_FILL = .72;
 const GROUND_CELL_SHRINK = .8;
 const GROUND_CELL_MIN_FILL = .3;
 const DENSE_RADIUS_LIMIT = 6;
-const LEVELS_EXPLORED_KEY = "taco-viewer:levels-explored";
+const CODE_LANGUAGE_KEY = "taco-viewer:code-language";
+const CODE_LANGUAGES = [["python", "Python"], ["r", "R"], ["julia", "Julia"]];
+const PREVIEW_SOURCE = "taco-preview";
+const PREVIEW_LAYER = "taco-preview";
+const PROJ4_URL = "https://cdn.jsdelivr.net/npm/proj4@2.15.0/+esm";
+const LANGUAGE_ICONS = {
+  python: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#3776AB" d="M11.9 2c-4.6 0-4.3 2-4.3 2v2.1h4.4v.6H5.8S3 6.4 3 11s2.5 4.4 2.5 4.4H7v-2.1s-.1-2.5 2.5-2.5h4.3s2.4 0 2.4-2.3V4.6S16.6 2 11.9 2zM9.5 3.4a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6z"/><path fill="#FFD43B" d="M12.1 22c4.6 0 4.3-2 4.3-2v-2.1H12v-.6h6.2S21 17.6 21 13s-2.5-4.4-2.5-4.4H17v2.1s.1 2.5-2.5 2.5h-4.3s-2.4 0-2.4 2.3v3.9S7.4 22 12.1 22zm2.4-1.4a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6z"/></svg>',
+  r: '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="11" cy="10" rx="9.5" ry="6.2" fill="none" stroke="#9aa3ad" stroke-width="2.6"/><text x="14" y="20" fill="#276DC3" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="900" text-anchor="middle">R</text></svg>',
+  julia: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="6.6" r="4.3" fill="#389826"/><circle cx="6.6" cy="16" r="4.3" fill="#CB3C33"/><circle cx="17.4" cy="16" r="4.3" fill="#9558B2"/></svg>',
+};
+const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>';
+const PLOT_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M3 16l5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.5"/></svg>';
+const PREVIEW_SIZE = 256;
+const PLACEHOLDER_EMOJIS = ["🌮", "🌍", "🛰️", "🌋", "🏔️", "🌊", "🌵", "🌲", "🌾", "🏝️", "🌪️", "🔥", "🐢", "🦙", "🐙", "🦜", "🌻", "🍄", "❄️", "🌈"];
+const COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V5.5A1.5 1.5 0 0 1 6.5 4H15"/></svg>';
+const CHECK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 const requestedUrl = new URL(window.location.href).searchParams.get("url");
 
 const element = Object.fromEntries(
@@ -871,11 +886,6 @@ function pointRadiusExpression(count, baseZoom) {
   return ["interpolate", ["linear"], ["zoom"], ...stops.flat()];
 }
 
-/**
- * Paint for the point layer. Dense datasets such as regular sampling grids are
- * drawn as ground-sized cells so neighbours stay in contact at every zoom;
- * sparse datasets keep screen-sized markers.
- */
 function pointPaint() {
   const count = state.points.length;
   const selected = ["boolean", ["feature-state", "selected"], false];
@@ -885,7 +895,6 @@ function pointPaint() {
     const base = pointRadiusBase(count);
     const stops = [];
     for (let zoom = 0; zoom <= map.getMaxZoom(); zoom += 1) {
-      // Cells touch when zoomed out and separate into dots as the view zooms in.
       const levels = Math.max(0, zoom - Math.ceil(state.pointBaseZoom) - 1);
       const shrink = Math.max(GROUND_CELL_MIN_FILL / GROUND_CELL_FILL, GROUND_CELL_SHRINK ** levels);
       const radius = Math.max(base, cellRadius(zoom) * shrink);
@@ -904,10 +913,6 @@ function pointPaint() {
   };
 }
 
-/**
- * Median nearest-neighbour distance of the displayed points, in meters.
- * Returns null when there are too few points to describe a density.
- */
 function estimatePointSpacing(points) {
   if (points.length < 50) return null;
   let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity;
@@ -1070,13 +1075,18 @@ function metadataParentFilter(parents, sourceFile) {
 function metadataLocation(row) {
   const offset = row["internal:offset"];
   const size = row["internal:size"];
-  const source = row["internal:source_file"] || state.dataset.url;
   if (offset !== undefined && size !== undefined) {
+    const sourceFile = row["internal:source_file"];
+    const source = sourceFile ? new URL(encodePath(sourceFile), new URL("../", state.dataset.url)).href : state.dataset.url;
     return `/vsisubfile/${offset}_${size},/vsicurl/${source}`;
   }
   const path = row["internal:relative_path"];
   if (!path) return null;
-  return new URL(path, source.endsWith("/") ? source : `${source}/`).href;
+  return new URL(`DATA/${encodePath(path)}`, state.dataset.url).href;
+}
+
+function encodePath(path) {
+  return String(path).split("/").map(encodeURIComponent).join("/");
 }
 
 function parquetPage(level, rows, locations) {
@@ -1108,7 +1118,6 @@ function parquetPage(level, rows, locations) {
 
 function renderMetadataNavigation() {
   element.metadataPath.replaceChildren();
-  if (state.metadataPageIndex > 0) markLevelsExplored();
   state.metadataPages.forEach((page, index) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1126,29 +1135,13 @@ function renderMetadataNavigation() {
       renderMetadataPage();
     });
     if (index === state.metadataPageIndex) button.classList.add("active");
-    else if (index === 1 && !levelsExplored()) {
+    else if (index === 1 && state.metadataPageIndex === 0) {
       button.classList.add("explore");
       button.title = "Open the metadata of the files inside this sample";
     }
     element.metadataPath.append(button);
   });
   element.metadataPath.querySelector("button.active")?.scrollIntoView({ block: "nearest", inline: "center" });
-}
-
-function levelsExplored() {
-  try {
-    return window.localStorage.getItem(LEVELS_EXPLORED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function markLevelsExplored() {
-  try {
-    window.localStorage.setItem(LEVELS_EXPLORED_KEY, "1");
-  } catch {
-    // Storage can be unavailable; the hint then keeps pulsing for this page view.
-  }
 }
 
 function renderMetadataPage() {
@@ -1193,7 +1186,11 @@ function appendMetadataRecord(record) {
     const detail = document.createElement("dd");
     if (name === "taco:location") {
       wrapper.classList.add("location-row");
-      appendLocation(detail, String(value), String(record.values.path || record.title));
+      appendLocation(detail, String(value), String(record.values.path || record.title), rumiHeaderBytes(record.values["rumi:header"]));
+    } else if (name === "rumi:header" && rumiHeaderBytes(value)) {
+      wrapper.classList.add("location-row");
+      const bytes = rumiHeaderBytes(value);
+      detail.append(codeBlock(headerSummary(bytes), () => headerLiteral(bytes), "Copy header bytes"));
     } else {
       detail.textContent = formatValue(value);
     }
@@ -1204,23 +1201,32 @@ function appendMetadataRecord(record) {
   element.metadataBody.append(section);
 }
 
-function appendLocation(parent, location, filename) {
-  const code = document.createElement("code");
-  code.className = "location-value";
-  code.textContent = location;
+function appendLocation(parent, location, filename, header) {
   const actions = document.createElement("div");
   actions.className = "file-actions";
   const result = document.createElement("span");
   result.className = "asset-result";
+  const preview = document.createElement("div");
+  preview.className = "rumi-preview";
 
-  const copy = fileAction("Copy location", result, async (button) => {
-    await copyText(location);
-    button.textContent = "Copied";
-    result.textContent = "Location copied to clipboard.";
-    window.setTimeout(() => { button.textContent = "Copy location"; }, 1600);
-  });
-  const download = fileAction("Download", result, async (button) => {
-    button.textContent = "Preparing…";
+  if (/\.rumi$/i.test(filename) && header) {
+    const languages = document.createElement("div");
+    languages.className = "language-copy";
+    for (const [language, name] of CODE_LANGUAGES) {
+      languages.append(iconAction(LANGUAGE_ICONS[language], `Copy rumi.read for ${name}`, result, async (button) => {
+        rememberCodeLanguage(language);
+        await copyText(rumiReadCall(location, header, language));
+        flashCopied(button);
+        result.textContent = `${name} rumi.read copied.`;
+      }));
+    }
+    actions.append(languages);
+  }
+
+  const tools = document.createElement("div");
+  tools.className = "asset-tools";
+  tools.append(iconAction(DOWNLOAD_ICON, "Download file", result, async () => {
+    result.textContent = "Preparing download…";
     const resolved = state.dataset.resolveAsset(location);
     const blob = await resolved.blob(contentType(filename));
     const objectUrl = URL.createObjectURL(blob);
@@ -1232,30 +1238,26 @@ function appendLocation(parent, location, filename) {
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     result.textContent = `${anchor.download} · ${formatBytes(blob.size)}`;
-    button.textContent = "Download";
-  });
-  actions.append(copy, download);
-
-  if (/\.rumi$/i.test(filename)) {
-    const read = fileAction("Read Rumi", result, async (button) => {
-      button.textContent = "Reading…";
-      const resolved = state.dataset.resolveAsset(location);
-      const bytes = new Uint8Array(await resolved.arrayBuffer());
-      const magic = new TextDecoder("ascii").decode(bytes.subarray(0, 4));
-      result.textContent = `${magic} · ${formatBytes(bytes.length)} · ${resolved.offset === null ? "direct" : `offset ${resolved.offset}`}`;
-      button.textContent = "Read again";
+  }));
+  if (/\.rumi$/i.test(filename) && header) {
+    const plot = iconAction(PLOT_ICON, "Plot", result, async (button) => {
+      await plotRumi(preview, state.dataset.resolveAsset(location), header, button);
     });
-    actions.append(read);
+    plot.classList.add("plot-action");
+    tools.append(plot);
   }
+  actions.append(tools);
 
-  parent.append(code, actions, result);
+  parent.append(codeBlock(location, location, "Copy location"), actions, result, preview);
 }
 
-function fileAction(label, result, action) {
+function iconAction(icon, label, result, action) {
   const button = document.createElement("button");
-  button.className = "file-action";
   button.type = "button";
-  button.textContent = label;
+  button.className = "icon-action";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.innerHTML = icon;
   button.addEventListener("click", async () => {
     button.disabled = true;
     result.textContent = "";
@@ -1263,12 +1265,261 @@ function fileAction(label, result, action) {
       await action(button);
     } catch (error) {
       result.textContent = messageOf(error);
-      button.textContent = label;
     } finally {
       button.disabled = false;
     }
   });
   return button;
+}
+
+function flashCopied(button) {
+  button.classList.add("copied");
+  window.setTimeout(() => button.classList.remove("copied"), 1200);
+}
+
+function codeBlock(text, copyValue, label) {
+  const block = document.createElement("div");
+  block.className = "code-block";
+  const code = document.createElement("code");
+  code.className = "location-value";
+  code.textContent = text;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "copy-icon";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.innerHTML = COPY_ICON;
+  button.addEventListener("click", async () => {
+    try {
+      await copyText(typeof copyValue === "function" ? copyValue() : copyValue);
+      button.innerHTML = CHECK_ICON;
+      button.classList.add("copied");
+    } catch (error) {
+      showMessage(messageOf(error));
+      return;
+    }
+    window.setTimeout(() => {
+      button.innerHTML = COPY_ICON;
+      button.classList.remove("copied");
+    }, 1400);
+  });
+  block.append(code, button);
+  return block;
+}
+
+function rumiHeaderBytes(value) {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  return null;
+}
+
+function rumiMagic(bytes) {
+  return new TextDecoder("ascii").decode(bytes.subarray(0, 4));
+}
+
+function headerSummary(bytes) {
+  const hex = [...bytes.subarray(4, 10)].map((byte) => byte.toString(16).padStart(2, "0")).join(" ");
+  return `${rumiMagic(bytes)} · ${formatBytes(bytes.length)} · ${hex} …`;
+}
+
+function codeLanguage() {
+  try {
+    const stored = window.localStorage.getItem(CODE_LANGUAGE_KEY);
+    if (CODE_LANGUAGES.some(([id]) => id === stored)) return stored;
+  } catch {}
+  return "python";
+}
+
+function rememberCodeLanguage(language) {
+  try {
+    window.localStorage.setItem(CODE_LANGUAGE_KEY, language);
+  } catch {}
+}
+
+function headerLiteral(bytes, language = codeLanguage()) {
+  if (language === "r") {
+    return `as.raw(c(${[...bytes].map((byte) => `0x${byte.toString(16).padStart(2, "0")}`).join(", ")}))`;
+  }
+  let text = "";
+  for (const byte of bytes) {
+    const escaped = byte === 0x22 || byte === 0x5c;
+    if (byte >= 0x20 && byte <= 0x7e && !escaped) text += String.fromCharCode(byte);
+    else if (escaped) text += `\\${String.fromCharCode(byte)}`;
+    else text += `\\x${byte.toString(16).padStart(2, "0")}`;
+  }
+  return `b"${text}"`;
+}
+
+function rumiReadCall(location, header, language = codeLanguage()) {
+  const source = JSON.stringify(location);
+  const bytes = headerLiteral(header, language);
+  if (language === "r") return `rumi::read(${source}, header = ${bytes})`;
+  if (language === "julia") return `Rumi.read(${source.replaceAll("$", "\\$")}; header = ${bytes})`;
+  return `rumi.read(${source}, header=${bytes})`;
+}
+
+function parseRumiHeader(bytes) {
+  if (bytes.length < 32 || rumiMagic(bytes) !== "LOVE") throw new Error("This is not a Rumi header.");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const bits = view.getUint8(24);
+  const format = ({ 1: "uint", 2: "int", 3: "float" })[view.getUint8(25)] ?? "unknown";
+  return {
+    version: view.getUint16(4, true),
+    width: view.getUint32(6, true),
+    height: view.getUint32(10, true),
+    time: view.getUint32(14, true),
+    tile: [view.getUint16(20, true), view.getUint16(18, true)],
+    bands: view.getUint16(22, true),
+    dtype: `${format}${bits}`,
+  };
+}
+
+async function plotRumi(container, asset, headerBytes, button) {
+  if (button.classList.contains("active")) {
+    clearPreview();
+    return;
+  }
+  const header = parseRumiHeader(headerBytes);
+  const raster = decodeRumi(asset, header);
+  const canvas = document.createElement("canvas");
+  canvas.width = raster.width;
+  canvas.height = raster.height;
+  canvas.getContext("2d").putImageData(colorizeRaster(stretchRaster(raster)), 0, 0);
+  const time = header.time > 1 ? ` · ${header.time} times` : "";
+  const summary = `${header.width}×${header.height} · ${header.bands} ${header.bands === 1 ? "band" : "bands"}${time} · ${header.dtype} · placeholder until geozl 0.3`;
+
+  clearPreview();
+  const caption = document.createElement("small");
+  const corners = window.matchMedia("(max-width: 760px)").matches ? null : await sampleFootprint(header);
+  if (corners) {
+    showPreviewOnMap(canvas, corners);
+    caption.textContent = `On the map · ${summary}`;
+    container.replaceChildren(caption);
+  } else {
+    caption.textContent = summary;
+    container.replaceChildren(canvas, caption);
+  }
+  button.classList.add("active");
+}
+
+function clearPreview() {
+  if (map.getLayer(PREVIEW_LAYER)) map.removeLayer(PREVIEW_LAYER);
+  if (map.getSource(PREVIEW_SOURCE)) map.removeSource(PREVIEW_SOURCE);
+  document.querySelectorAll(".plot-action.active").forEach((button) => button.classList.remove("active"));
+  document.querySelectorAll(".rumi-preview").forEach((preview) => preview.replaceChildren());
+}
+
+function showPreviewOnMap(canvas, corners) {
+  map.addSource(PREVIEW_SOURCE, { type: "image", url: canvas.toDataURL(), coordinates: corners });
+  map.addLayer({
+    id: PREVIEW_LAYER,
+    type: "raster",
+    source: PREVIEW_SOURCE,
+    paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 450 }, "raster-fade-duration": 0 },
+  });
+  requestAnimationFrame(() => map.setPaintProperty(PREVIEW_LAYER, "raster-opacity", .95));
+  const bounds = new maplibregl.LngLatBounds();
+  corners.forEach((corner) => bounds.extend(corner));
+  const panel = element.metadataPanel.getBoundingClientRect().width;
+  map.fitBounds(bounds, { padding: { top: 60, bottom: 60, left: 60, right: panel + 60 }, maxZoom: 14, duration: 900 });
+}
+
+async function sampleFootprint(header) {
+  const values = state.metadataPages[0]?.records?.[0]?.values ?? {};
+  const prefix = ["stac", "spatial"].find((name) => values[`${name}:crs`] && values[`${name}:geotransform`]);
+  if (!prefix) return null;
+  const epsg = Number(String(values[`${prefix}:crs`]).match(/EPSG:(\d+)/i)?.[1]);
+  const transform = Array.from(values[`${prefix}:geotransform`], Number);
+  if (!epsg || transform.length !== 6) return null;
+  const toLonLat = await lonLatProjection(epsg);
+  if (!toLonLat) return null;
+  const [x0, dx, rx, y0, ry, dy] = transform;
+  return [[0, 0], [header.width, 0], [header.width, header.height], [0, header.height]]
+    .map(([column, row]) => toLonLat([x0 + column * dx + row * rx, y0 + column * ry + row * dy]));
+}
+
+async function lonLatProjection(epsg) {
+  if (epsg === 4326) return (point) => point;
+  if (epsg === 3857) {
+    return ([x, y]) => [(x / 6378137) * (180 / Math.PI), (2 * Math.atan(Math.exp(y / 6378137)) - Math.PI / 2) * (180 / Math.PI)];
+  }
+  const zone = epsg - (epsg >= 32701 ? 32700 : 32600);
+  if (!((epsg >= 32601 && epsg <= 32660) || (epsg >= 32701 && epsg <= 32760))) return null;
+  const proj4 = (await import(PROJ4_URL)).default;
+  const definition = `+proj=utm +zone=${zone}${epsg >= 32701 ? " +south" : ""} +datum=WGS84 +units=m +no_defs`;
+  return (point) => proj4(definition, "EPSG:4326", point);
+}
+
+function decodeRumi(_asset, header) {
+  // TODO: decode with geozl once it ships WASM (0.3)
+  const scale = Math.min(1, PREVIEW_SIZE / Math.max(header.width, header.height));
+  const width = Math.max(1, Math.round(header.width * scale));
+  const height = Math.max(1, Math.round(header.height * scale));
+  const bands = Math.max(1, header.bands);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.font = `${Math.round(Math.min(width, height) * .78)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+  context.fillText(PLACEHOLDER_EMOJIS[Math.floor(Math.random() * PLACEHOLDER_EMOJIS.length)], width / 2, height / 2);
+  const pixels = context.getImageData(0, 0, width, height).data;
+
+  const data = new Float32Array(bands * width * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixel = y * width + x;
+      const alpha = pixels[pixel * 4 + 3] / 255;
+      const background = .12 + .22 * ((x / width + y / height) / 2);
+      const channel = (index) => background * (1 - alpha) + (pixels[pixel * 4 + index] / 255) * alpha;
+      const brightness = (channel(0) + channel(1) + channel(2)) / 3;
+      for (let band = 0; band < bands; band += 1) {
+        data[band * width * height + pixel] = bands >= 3 && band < 3 ? channel(band) : brightness;
+      }
+    }
+  }
+  return { width, height, bands, data };
+}
+
+function stretchRaster({ width, height, bands, data }) {
+  const pixels = width * height;
+  const stretched = new Float32Array(data.length);
+  for (let band = 0; band < bands; band += 1) {
+    let low = Infinity;
+    let high = -Infinity;
+    for (let index = band * pixels; index < (band + 1) * pixels; index += 1) {
+      if (!Number.isFinite(data[index])) continue;
+      low = Math.min(low, data[index]);
+      high = Math.max(high, data[index]);
+    }
+    const span = high > low ? high - low : 1;
+    for (let index = band * pixels; index < (band + 1) * pixels; index += 1) {
+      stretched[index] = Number.isFinite(data[index]) ? (data[index] - low) / span : NaN;
+    }
+  }
+  return { width, height, bands, data: stretched };
+}
+
+function colorizeRaster({ width, height, bands, data }) {
+  const pixels = width * height;
+  const image = new ImageData(width, height);
+  for (let index = 0; index < pixels; index += 1) {
+    const rgb = bands >= 3
+      ? [data[index], data[pixels + index], data[2 * pixels + index]].map((value) => Math.round(value * 255))
+      : viridis(data[index]);
+    image.data.set([...rgb, Number.isFinite(data[index]) ? 255 : 0], index * 4);
+  }
+  return image;
+}
+
+function viridis(value) {
+  const stops = [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]];
+  const position = Math.max(0, Math.min(1, value)) * (stops.length - 1);
+  const lower = Math.min(stops.length - 2, Math.floor(position));
+  const fraction = position - lower;
+  return stops[lower].map((channel, index) => Math.round(channel + (stops[lower + 1][index] - channel) * fraction));
 }
 
 function showDatasetMetadata() {
@@ -1441,6 +1692,7 @@ function clearSelectedPoint() {
 }
 
 function clearMarkers() {
+  clearPreview();
   if (map.getLayer(POINT_LAYER)) map.removeLayer(POINT_LAYER);
   if (map.getSource(POINT_SOURCE)) map.removeSource(POINT_SOURCE);
   state.pointData = null;
