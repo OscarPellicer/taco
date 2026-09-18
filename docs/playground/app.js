@@ -15,6 +15,7 @@ const GROUND_CELL_FILL = .72;
 const GROUND_CELL_SHRINK = .8;
 const GROUND_CELL_MIN_FILL = .3;
 const DENSE_RADIUS_LIMIT = 6;
+const LEVELS_EXPLORED_KEY = "taco-viewer:levels-explored";
 const requestedUrl = new URL(window.location.href).searchParams.get("url");
 
 const element = Object.fromEntries(
@@ -978,10 +979,12 @@ function selectPoint(index) {
   element.pointTitle.textContent = pointName(point);
   element.pointCoordinates.textContent = `${formatLatitude(point.latitude)}, ${formatLongitude(point.longitude)}`;
   element.metadataPanel.setAttribute("aria-hidden", "false");
-  state.metadataPages = [samplePageFromMemory(point)];
+  state.metadataPages = [
+    samplePageFromMemory(point),
+    ...state.dataset.levels.slice(1).map((level) => ({ label: levelFilename(level), depth: metadataLevelDepth(level), records: null })),
+  ];
   state.metadataPageIndex = 0;
   renderMetadataNavigation();
-  appendFileMetadataButton(point, token, normalized);
   renderMetadataPage();
   if (firstOpen) {
     requestAnimationFrame(() => {
@@ -995,15 +998,11 @@ function selectPoint(index) {
 
 async function hydrateSampleMetadata(point, token, selectedIndex) {
   try {
-    await state.parquetCachePromise;
-    const sourceFile = point.row.source_file;
-    const sampleId = Number(point.row.sample_id);
-    const rows = await state.dataset.readLevel("sample", {
-      filter: metadataSampleFilter(sampleId, sourceFile),
-    });
+    const pages = await metadataPagesForPoint(point);
     if (token !== state.metadataToken || selectedIndex !== state.selectedPoint) return;
-    state.metadataPages[0] = parquetPage("sample", rows, new Map());
-    if (state.metadataPageIndex === 0) renderMetadataPage();
+    state.metadataPages = pages;
+    renderMetadataNavigation();
+    renderMetadataPage();
   } catch (error) {
     if (token === state.metadataToken && selectedIndex === state.selectedPoint) showMessage(messageOf(error));
   }
@@ -1018,32 +1017,6 @@ function samplePageFromMemory(point) {
       values: compactObject(point.row),
     }],
   };
-}
-
-function appendFileMetadataButton(point, token, selectedIndex) {
-  if (state.dataset.levels.length < 2) return;
-  const button = document.createElement("button");
-  button.type = "button";
-  button.textContent = "Load file metadata";
-  button.style.setProperty("--depth", "1");
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    button.textContent = "Reading file metadata…";
-    try {
-      const pages = await metadataPagesForPoint(point);
-      if (token !== state.metadataToken || selectedIndex !== state.selectedPoint) return;
-      state.metadataPages = pages;
-      state.metadataPageIndex = Math.min(1, pages.length - 1);
-      renderMetadataNavigation();
-      renderMetadataPage();
-    } catch (error) {
-      if (token !== state.metadataToken) return;
-      button.disabled = false;
-      button.textContent = "Retry file metadata";
-      showMessage(messageOf(error));
-    }
-  });
-  element.metadataPath.append(button);
 }
 
 async function metadataPagesForPoint(point) {
@@ -1135,10 +1108,16 @@ function parquetPage(level, rows, locations) {
 
 function renderMetadataNavigation() {
   element.metadataPath.replaceChildren();
+  if (state.metadataPageIndex > 0) markLevelsExplored();
   state.metadataPages.forEach((page, index) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = page.label;
+    const label = document.createElement("span");
+    label.textContent = page.label;
+    const count = document.createElement("span");
+    count.className = "level-count";
+    count.textContent = page.records === null ? "…" : `${page.records.length} ${page.records.length === 1 ? "row" : "rows"}`;
+    button.append(label, count);
     button.style.setProperty("--depth", String(page.depth));
     button.setAttribute("aria-current", index === state.metadataPageIndex ? "page" : "false");
     button.addEventListener("click", () => {
@@ -1147,15 +1126,40 @@ function renderMetadataNavigation() {
       renderMetadataPage();
     });
     if (index === state.metadataPageIndex) button.classList.add("active");
+    else if (index === 1 && !levelsExplored()) {
+      button.classList.add("explore");
+      button.title = "Open the metadata of the files inside this sample";
+    }
     element.metadataPath.append(button);
   });
   element.metadataPath.querySelector("button.active")?.scrollIntoView({ block: "nearest", inline: "center" });
+}
+
+function levelsExplored() {
+  try {
+    return window.localStorage.getItem(LEVELS_EXPLORED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markLevelsExplored() {
+  try {
+    window.localStorage.setItem(LEVELS_EXPLORED_KEY, "1");
+  } catch {
+    // Storage can be unavailable; the hint then keeps pulsing for this page view.
+  }
 }
 
 function renderMetadataPage() {
   const page = state.metadataPages[state.metadataPageIndex];
   if (!page) return;
   element.metadataSource.textContent = page.label;
+  if (page.records === null) {
+    element.metadataCount.textContent = "reading";
+    element.metadataBody.replaceChildren(metadataMessage("Reading this level from the cached metadata…"));
+    return;
+  }
   element.metadataCount.textContent = `${page.records.length} ${page.records.length === 1 ? "row" : "rows"}`;
   element.metadataBody.replaceChildren();
   if (!page.records.length) {
