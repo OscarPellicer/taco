@@ -1,12 +1,11 @@
 Package: taco
 Type: Package
-Title: Read TACO Datasets
-Version: 0.8.1
+Title: TACO - AI-Ready Earth Observation Datasets
+Version: 0.8.2
 Authors@R: person("Cesar", "Aybar", email = "cesar@asterisk.coop",
     role = c("aut", "cre"))
-Description: Read TACO v3 datasets through the native TACO core. The core
-    resolves ZIP, FOLDER, and TACOCAT containers, local or remote, and the
-    package reads their metadata with DuckDB through one API.
+Description: R bindings to libtaco, the reference library for the TACO
+    format.
 License: MIT + file LICENSE
 URL: https://github.com/asterisk-labs/taco
 BugReports: https://github.com/asterisk-labs/taco/issues

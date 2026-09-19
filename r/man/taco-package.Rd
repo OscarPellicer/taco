@@ -4,9 +4,9 @@
 \name{taco-package}
 \alias{taco}
 \alias{taco-package}
-\title{taco: Read TACO Datasets}
+\title{taco: TACO - AI-Ready Earth Observation Datasets}
 \description{
-Read TACO v3 datasets through the native TACO core. The core resolves ZIP, FOLDER, and TACOCAT containers, local or remote, and the package reads their metadata with DuckDB through one API.
+R bindings to libtaco, the reference library for the TACO format.
 }
 \seealso{
 Useful links:

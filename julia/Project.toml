@@ -1,8 +1,8 @@
 name = "Taco"
 uuid = "3d6f1a92-7b48-4e05-9c31-6a2f8d5b7e14"
-version = "0.8.1"
+version = "0.8.2"
 authors = ["Cesar Aybar <cesar@asterisk.coop>"]
-description = "Read TACO datasets in Julia."
+description = "Julia bindings to libtaco, the reference library for the TACO format."
 
 [deps]
 DBInterface = "a10d1c49-ce27-4219-8d33-6db1a4562965"

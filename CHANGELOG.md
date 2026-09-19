@@ -4,6 +4,13 @@ All notable changes across the TACO core, language bindings, writer, and
 JavaScript reader are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.8.2 - 2026-09-18
+
+### Changed
+
+- Package descriptions use one wording across the core, Python, R, Julia, and
+  JavaScript packages.
+
 ## 0.8.1 - 2026-09-18
 
 ### Changed
