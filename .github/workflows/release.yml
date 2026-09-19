@@ -746,4 +746,10 @@ jobs:
             echo "$package@$version is already published; skipping npm publish"
             exit 0
           fi
-          npm publish --access public --tag latest
+          # Trusted publishing cannot move latest back to a lower version.
+          latest=$(npm view "$package" dist-tags.latest 2>/dev/null || true)
+          tag=latest
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$version" "$latest" | sort -V | tail -1)" != "$version" ]; then
+            tag=next
+          fi
+          npm publish --access public --tag "$tag"
