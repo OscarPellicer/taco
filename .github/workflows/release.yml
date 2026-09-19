@@ -52,6 +52,7 @@ jobs:
               "R": r,
               "R configure": r_configure,
               "Julia": julia,
+              "JavaScript": javascript,
           }
           if len(set(versions.values())) != 1:
               raise SystemExit(f"package versions disagree: {versions}")

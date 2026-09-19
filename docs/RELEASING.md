@@ -1,14 +1,10 @@
 # Releasing TACO
 
-TACO has two independent package versions:
-
-- the native core and the Python, R, and Julia bindings share one version;
-- `@asterisk-labs/taco` has its own npm version.
-
-Keep the native version synchronized in `core/CMakeLists.txt`,
-`core/vcpkg.json`, `python/pyproject.toml`, `r/DESCRIPTION`, `r/configure.ac`,
-and `julia/Project.toml`. Keep the JavaScript version synchronized only between
-`javascript/package.json` and `javascript/package-lock.json`.
+The native core and the Python, R, Julia, and JavaScript packages share one
+version. Keep it synchronized in `core/CMakeLists.txt`, `core/vcpkg.json`,
+`python/pyproject.toml`, `r/DESCRIPTION`, `r/configure.ac`,
+`julia/Project.toml`, `javascript/package.json`, and
+`javascript/package-lock.json`.
 Move the pending entries in the root `CHANGELOG.md` under the version being
 released before creating either tag.
 

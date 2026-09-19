@@ -10,6 +10,8 @@ JavaScript reader are documented here. The format follows
 
 - Package descriptions use one wording across the core, Python, R, Julia, and
   JavaScript packages.
+- `@asterisk-labs/taco` follows the TACO version, starting at 0.8.2, and
+  replaces the npm 1.0.0 release.
 
 ## 0.8.1 - 2026-09-18
 
@@ -18,8 +20,7 @@ JavaScript reader are documented here. The format follows
 - Wide reads now use `{file}::location` for calculated file locations and
   `{file}::header` for Rumi headers. The second colon keeps these names separate
   from regular metadata such as `image:location`. Nested paths use `__` in the
-  JavaScript reader too, matching the other readers. The JavaScript package is
-  now 2.0.0 because these public column names have changed.
+  JavaScript reader too, matching the other readers.
 - `tasks` is optional in `COLLECTION.json`. When present it must still list at
   least one task. `Collection(tasks=...)` defaults to `None`, and the core,
   Python, R, Julia, and JavaScript readers accept collections without it.
