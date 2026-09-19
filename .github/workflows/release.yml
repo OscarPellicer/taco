@@ -717,7 +717,7 @@ jobs:
 
   publish-npm:
     name: Publish to npm
-    needs: [python-wheel, python-sdist, r-package, julia-package, javascript-package, github-release]
+    needs: [python-wheel, python-sdist, r-package, julia-package, javascript-package]
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     environment: npm
