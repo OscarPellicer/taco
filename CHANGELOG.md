@@ -8,11 +8,11 @@ JavaScript reader are documented here. The format follows
 
 ### Changed
 
-- Wide reads now suffix file columns with `:location`. Files with
-  `rumi:header` metadata also get a matching `:header` column; sequences use
-  aligned lists for both. These columns are calculated by the reader and are
-  not stored in the dataset. JavaScript now replaces `/` with `__` in wide
-  column names, matching the other readers.
+- Wide reads now use `{file}::location` for calculated file locations and
+  `{file}::header` for Rumi headers. The second colon keeps these names separate
+  from regular metadata such as `image:location`. Nested paths use `__` in the
+  JavaScript reader too, matching the other readers. The JavaScript package is
+  now 2.0.0 because these public column names have changed.
 - `tasks` is optional in `COLLECTION.json`. When present it must still list at
   least one task. `Collection(tasks=...)` defaults to `None`, and the core,
   Python, R, Julia, and JavaScript readers accept collections without it.

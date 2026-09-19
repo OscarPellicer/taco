@@ -187,10 +187,10 @@ class QueryBuilder {
   private:
     static std::string alias(std::size_t level) { return "l" + std::to_string(level); }
 
-    // Wide columns are the leaf name qualified by what they hold. ':' is not
-    // allowed in structure names, so the split stays unambiguous.
-    static std::string location_name(const Leaf& leaf) { return output_name(leaf) + ":location"; }
-    static std::string header_name(const Leaf& leaf) { return output_name(leaf) + ":header"; }
+    // Metadata fields contain exactly one ':'. The double separator keeps
+    // generated columns outside that namespace without hiding the leaf name.
+    static std::string location_name(const Leaf& leaf) { return output_name(leaf) + "::location"; }
+    static std::string header_name(const Leaf& leaf) { return output_name(leaf) + "::header"; }
 
     [[nodiscard]] bool has_header(const Leaf& leaf) const {
         const auto* fields = dataset_.contract.fields_of(leaf_level(leaf));

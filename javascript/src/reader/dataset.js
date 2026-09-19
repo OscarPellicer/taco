@@ -310,8 +310,8 @@ export class Dataset {
   }
 
   /**
-   * Wide column names of one leaf. ':' is not allowed in structure names, so
-   * qualifying the leaf name keeps every column unambiguous. Rumi assets are
+   * Wide column names of one leaf. Metadata fields contain exactly one ':', so
+   * the double separator cannot collide with user metadata. Rumi assets are
    * read statelessly with their header, so it travels next to the location.
    *
    * @param {TacoLeaf} leaf
@@ -322,7 +322,7 @@ export class Dataset {
     const slash = leaf.key.lastIndexOf("/");
     const level = slash < 0 ? "children" : `children/${leaf.key.slice(0, slash)}`;
     const fields = this.contract.metadata[level] ?? {};
-    return { location: `${name}:location`, header: HEADER_FIELD in fields ? `${name}:header` : null };
+    return { location: `${name}::location`, header: HEADER_FIELD in fields ? `${name}::header` : null };
   }
 
   /**

@@ -27,6 +27,10 @@ class Raster(BaseModel):
     resolution: Annotated[int, pa.int32()]
 
 
+class LocationMetadata(BaseModel):
+    location: str
+
+
 def payload(tag: str, index: int) -> bytes:
     return f"{tag}-{index}:".encode() * 40
 
@@ -184,16 +188,42 @@ def test_wide_rows_have_a_location_per_leaf(data: Path) -> None:
     assert table.num_rows == 3
     assert table.column("sample_id").to_pylist() == [0, 1, 2]
     row = by_sample(table)[0]
-    assert row["before__B02.bin:location"].startswith("/vsisubfile/")
-    assert row["before__B02.bin:location"].endswith(str((data / "nested.zip").resolve()))
-    assert "change.bin:location" not in taco.open_dataset(data / "nested.zip").sql("SELECT * FROM data").column_names
+    assert row["before__B02.bin::location"].startswith("/vsisubfile/")
+    assert row["before__B02.bin::location"].endswith(str((data / "nested.zip").resolve()))
+    assert "change.bin::location" not in taco.open_dataset(data / "nested.zip").sql("SELECT * FROM data").column_names
+
+
+def test_generated_columns_do_not_collide_with_metadata(tmp_path: Path) -> None:
+    from taco.reader import engine
+    from taco.reader.inspect import native_sql
+
+    contract = taco.Contract(
+        structure=["image"],
+        metadata=taco.MetadataSchema(taco.Level("sample", image=LocationMetadata)),
+    )
+    output = write(
+        "column-collision",
+        contract,
+        [
+            taco.Sample(
+                assets=taco.Asset(b"payload", path="image"),
+                metadata=taco.Metadata(image=LocationMetadata(location="metadata-value")),
+            )
+        ],
+        tmp_path / "collision.zip",
+    )
+
+    for table in (taco.read(output), engine.open_reader().execute(native_sql(output)).to_arrow_table()):
+        assert table.column_names.count("image:location") == 1
+        assert table.column("image:location").to_pylist() == ["metadata-value"]
+        assert table.column("image::location")[0].as_py().startswith("/vsisubfile/")
 
 
 def test_files_and_sql_relations(data: Path) -> None:
     path = data / "nested.zip"
     dataset = taco.open_dataset(path)
-    assert taco.read(path, files=["change.bin"]).column_names[-1] == "change.bin:location"
-    assert "before__B02.bin:location" not in taco.read(path, files=["change.bin"]).column_names
+    assert taco.read(path, files=["change.bin"]).column_names[-1] == "change.bin::location"
+    assert "before__B02.bin::location" not in taco.read(path, files=["change.bin"]).column_names
     assert set(dataset.sql("SELECT path FROM files WHERE path = 'change.bin'").column("path").to_pylist()) == {
         "change.bin"
     }
@@ -210,17 +240,17 @@ def test_files_and_sql_relations(data: Path) -> None:
 def test_variable_leaves_are_ordered_lists(data: Path) -> None:
     path = data / "variable.zip"
     rows = by_sample(taco.read(path))
-    assert [(row["ml:n_images"], len(row["img:location"])) for row in rows] == [(0, 0), (1, 1), (2, 2)]
+    assert [(row["ml:n_images"], len(row["img::location"])) for row in rows] == [(0, 0), (1, 1), (2, 2)]
     long = taco.open_dataset(path).sql("SELECT * FROM files")
     first_image = next(
         row["taco:location"] for row in long.to_pylist() if row["sample_id"] == 2 and row["path"] == "img0.bin"
     )
-    assert rows[2]["img:location"][0] == first_image
-    assert "img:location" not in taco.open_dataset(path).sql("SELECT * FROM data").column_names
+    assert rows[2]["img::location"][0] == first_image
+    assert "img::location" not in taco.open_dataset(path).sql("SELECT * FROM data").column_names
 
     nested = taco.read(data / "nested-variable.zip")
-    assert nested.column_names == ["sample_id", "before__img:location"]
-    assert len(nested.column("before__img:location")[0].as_py()) == 2
+    assert nested.column_names == ["sample_id", "before__img::location"]
+    assert len(nested.column("before__img::location")[0].as_py()) == 2
 
 
 def test_a_redeclared_field_takes_the_deepest_value(data: Path) -> None:
@@ -255,13 +285,13 @@ def test_single_file_samples(data: Path) -> None:
 
 def test_folder_and_catalog_locations(data: Path) -> None:
     folder = by_sample(taco.read(data / "nested"))
-    assert folder[0]["change.bin:location"] == f"{(data / 'nested').resolve()}/DATA/0/change.bin"
+    assert folder[0]["change.bin::location"] == f"{(data / 'nested').resolve()}/DATA/0/change.bin"
     assert taco.open_dataset(data / "nested").sql("SELECT * FROM files").num_rows == 12
 
     catalog = taco.read(data / "catalog" / ".tacocat")
     assert catalog.num_rows == 3
     assert set(catalog.column("source_file").to_pylist()) == {"part_train.zip", "part_val.zip"}
-    locations = catalog.column("change.bin:location").to_pylist()
+    locations = catalog.column("change.bin::location").to_pylist()
     assert all(value.split(",", 1)[1].startswith(str((data / "catalog").resolve()) + "/part_") for value in locations)
 
 

@@ -40,12 +40,12 @@ def _has_header(contract: Contract, leaf: Leaf) -> bool:
 
 
 def _wide_columns(contract: Contract, leaf: Leaf) -> list[tuple[str, str]]:
-    # ':' is not allowed in structure names, so qualifying the leaf name keeps
-    # every wide column unambiguous.
+    # Metadata fields contain exactly one ':', so the double separator cannot
+    # collide with user metadata.
     name = _output_name(leaf.declaration, variable=leaf.variable)
-    columns = [("taco:location", f"{name}:location")]
+    columns = [("taco:location", f"{name}::location")]
     if _has_header(contract, leaf):
-        columns.append((_HEADER_FIELD, f"{name}:header"))
+        columns.append((_HEADER_FIELD, f"{name}::header"))
     return columns
 
 
