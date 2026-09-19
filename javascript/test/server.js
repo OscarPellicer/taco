@@ -8,6 +8,17 @@ export async function fixtureServer() {
   const archive = new Uint8Array(await readFile(fixturePath));
   const entries = storedEntries(archive);
   const collection = JSON.parse(new TextDecoder().decode(entries.get("COLLECTION.json")));
+  const collisionCollection = new TextEncoder().encode(JSON.stringify({
+    ...collection,
+    "taco:structure": ["image_bin", "mask.bin"],
+    "taco:metadata": {
+      ...collection["taco:metadata"],
+      sample: {
+        ...collection["taco:metadata"].sample,
+        "image_bin:location": { type: "string", nullable: false, description: "" },
+      },
+    },
+  }));
   const versionedCollection = { ...collection, dataset_version: "2.0.0" };
   const manifest = new TextEncoder().encode(JSON.stringify({
     "taco:container": "versioned",
@@ -43,6 +54,14 @@ export async function fixtureServer() {
       const bytes = archive.slice();
       bytes[bytes.length - 100] ^= 1;
       return serve(response, bytes, request.headers.range);
+    }
+    if (path === "/collision/COLLECTION.json") {
+      return serve(response, collisionCollection, request.headers.range);
+    }
+    if (path.startsWith("/collision/")) {
+      const name = decodeURIComponent(path.slice("/collision/".length));
+      const bytes = entries.get(name);
+      if (bytes) return serve(response, bytes, request.headers.range);
     }
     if (path === "/versioned/taco.json") return serve(response, manifest, request.headers.range);
     if (path.startsWith("/versioned/1.0.0/") || path.startsWith("/versioned/2.0.0/")) {

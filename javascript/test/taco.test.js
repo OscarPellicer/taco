@@ -145,18 +145,25 @@ test("reads wide and long views with calculated TACO locations", async () => {
 });
 
 test("generated columns do not overwrite qualified metadata", async () => {
-  const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
+  const dataset = await openDataset(`${fixture.baseUrl}/collision`);
   const readLevel = dataset.readLevel.bind(dataset);
   dataset.readLevel = async (level, options) => {
     const rows = await readLevel(level, options);
-    return level === "sample"
-      ? rows.map((row) => ({ ...row, "image.bin:location": "metadata-value" }))
-      : rows;
+    if (level === "sample") {
+      return rows.map((row) => ({ ...row, "image_bin:location": "metadata-value" }));
+    }
+    if (level === "children") {
+      return rows.map((row) => ({
+        ...row,
+        "internal:relative_path": row["internal:relative_path"].replace(/\/image\.bin$/, "/image_bin"),
+      }));
+    }
+    return rows;
   };
 
-  const [row] = await dataset.read({ idx: 0, files: ["image.bin"] });
-  assert.equal(row["image.bin:location"], "metadata-value");
-  assert.match(row["image.bin::location"], /^\/vsisubfile\//);
+  const [row] = await dataset.read({ idx: 0, files: ["image_bin"] });
+  assert.equal(row["image_bin:location"], "metadata-value");
+  assert.match(row["image_bin::location"], /^\/vsicurl\//);
 });
 
 test("supports idx, files, semantic filters, and location opt-out", async () => {
