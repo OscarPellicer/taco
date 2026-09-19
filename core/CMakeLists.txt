@@ -8,7 +8,7 @@ if(NOT TACO_API_VERSION_LINE)
 endif()
 
 project(taco
-    VERSION     0.8.0
+    VERSION     0.8.1
     DESCRIPTION "Native TACO reader shared by the Python, R and Julia packages"
     LANGUAGES   CXX C
 )
