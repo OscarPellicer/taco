@@ -1082,7 +1082,7 @@ function metadataLocation(row) {
   }
   const path = row["internal:relative_path"];
   if (!path) return null;
-  return new URL(`DATA/${encodePath(path)}`, state.dataset.url).href;
+  return `/vsicurl/${new URL(`DATA/${encodePath(path)}`, state.dataset.url).href}`;
 }
 
 function encodePath(path) {

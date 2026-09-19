@@ -60,7 +60,7 @@ class FolderSource extends Source {
   /** @param {Record<string, any>} row */
   location(row) {
     const path = relativePath(row["internal:relative_path"], "internal:relative_path");
-    return new URL(`DATA/${encodeRelativePath(path)}`, this.url).href;
+    return `/vsicurl/${new URL(`DATA/${encodeRelativePath(path)}`, this.url).href}`;
   }
 }
 

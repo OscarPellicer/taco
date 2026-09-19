@@ -19,6 +19,8 @@ JavaScript reader are documented here. The format follows
 
 ### Fixed
 
+- The JavaScript reader prefixes remote FOLDER file locations with `/vsicurl/`,
+  matching the core reader.
 - `GeoEnrich` samples on a fixed EPSG:4326 grid, so a value no longer depends
   on which other variables are requested with it.
 - `GeoEnrich` descriptions name the real sources and units, the 2020 human

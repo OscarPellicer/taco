@@ -33,7 +33,7 @@ export class TacoAsset {
       return;
     }
 
-    this.url = httpUrl(location);
+    this.url = httpUrl(location.replace(/^\/vsicurl\/(?=https?:\/\/)/, ""));
     this.offset = null;
     this.size = null;
   }

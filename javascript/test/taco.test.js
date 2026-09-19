@@ -174,7 +174,7 @@ test("opens a FOLDER without using ZIP offsets", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/folder`);
   assert.equal(dataset.container, "folder");
   const row = (await dataset.read({ idx: 1 }))[0];
-  assert.equal(row["image.bin"], `${fixture.baseUrl}/folder/DATA/1/image.bin`);
+  assert.equal(row["image.bin"], `/vsicurl/${fixture.baseUrl}/folder/DATA/1/image.bin`);
   const asset = dataset.resolveAsset(row["mask.bin"]);
   assert.equal(asset.offset, null);
   assert.equal(asset.size, null);
