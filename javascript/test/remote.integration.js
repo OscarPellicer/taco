@@ -23,6 +23,25 @@ test("opens all 50 published fixtures", { timeout: 180_000 }, async () => {
   }
 });
 
+test("wide reads carry the Rumi header next to each location", { timeout: 120_000 }, async () => {
+  const variable = await openDataset(`${ROOT}/data/06-variable-sequence/single-zip/dataset.zip`);
+  const [row] = await variable.read({ idx: 0 });
+  const sequence = Object.keys(row).find((name) => name.endsWith(":location") && Array.isArray(row[name]));
+  assert.ok(sequence, "the variable fixture has a sequence column");
+  const headers = row[sequence.replace(/:location$/, ":header")];
+  assert.equal(headers.length, row[sequence].length);
+  assert.ok(headers.every((header) => header instanceof Uint8Array));
+
+  const nested = await openDataset(`${ROOT}/data/04-change-detection/folder`);
+  const [first] = await nested.read({ idx: 0 });
+  const pairs = Object.keys(first).filter((name) => name.endsWith(":header"));
+  assert.ok(pairs.some((name) => name.includes("__")), "nested headers use __ in their names");
+  for (const name of pairs) {
+    assert.ok(first[name] instanceof Uint8Array);
+    assert.equal(typeof first[name.replace(/:header$/, ":location")], "string");
+  }
+});
+
 test("reads nested, variable, and TACOCAT locations and fetches Rumi", { timeout: 120_000 }, async () => {
   const cases = [
     "data/04-change-detection/folder",

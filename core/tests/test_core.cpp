@@ -291,8 +291,23 @@ void test_sql() {
     CHECK(contains(wide, "read_parquet(" + taco::sql_literal(nested.level_paths[0]) + ")"));
     CHECK(contains(wide, "'/vsisubfile/'"));
     CHECK(contains(wide, taco::sql_literal(data("taco_nested.zip"))));
-    CHECK(contains(wide, "\"before__B02.bin\""));
-    CHECK(!contains(wide, "AS \"before/B02.bin\""));
+    CHECK(contains(wide, "\"before__B02.bin:location\""));
+    CHECK(!contains(wide, "AS \"before/B02.bin"));
+    CHECK(!contains(wide, ":header"));
+
+    // A level that declares rumi:header carries it next to every location.
+    auto rumi = nested;
+    for (auto& [name, fields] : rumi.contract.fields) {
+        if (name == "children/before")
+            fields.push_back("rumi:header");
+    }
+    const auto rumi_wide = taco::build_sql(rumi, taco::ReadOptions{});
+    CHECK(contains(rumi_wide, "AS \"before__B02.bin:header\""));
+    CHECK(contains(rumi_wide, "AS \"before__B02.bin:location\""));
+    CHECK(!contains(rumi_wide, "AS \"change.bin:header\""));
+    taco::ReadOptions rumi_quiet;
+    rumi_quiet.location = false;
+    CHECK(contains(taco::build_sql(rumi, rumi_quiet), "NULL::BLOB AS \"before__B02.bin:header\""));
 
     taco::ReadOptions long_quiet;
     long_quiet.pivot = false;

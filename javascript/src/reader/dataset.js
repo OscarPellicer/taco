@@ -12,6 +12,7 @@ const ID_PATH = "internal:relative_path";
 const ID_OFFSET = "internal:offset";
 const ID_SIZE = "internal:size";
 const ID_SOURCE = "internal:source_file";
+const HEADER_FIELD = "rumi:header";
 
 /**
  * @typedef {Record<string, any>} Row
@@ -21,6 +22,10 @@ const ID_SOURCE = "internal:source_file";
  * @property {string} level
  * @property {Node | null} parent
  * @property {Node} sample
+ *
+ * @typedef {object} WideColumns
+ * @property {string} location
+ * @property {string | null} header
  *
  * @typedef {object} ReadLevelOptions
  * @property {string[]} [columns]
@@ -245,11 +250,16 @@ export class Dataset {
     if (!leaves) throw new Error("taco: internal null-structure mismatch");
     // Seed every sample before reading children. This keeps samples with
     // missing optional files and gives variable leaves an empty-list default.
+    const columns = new Map(leaves.map((leaf) => [leaf, this.#wideColumns(leaf)]));
     const outputs = new Map();
     for (const sample of samples) {
       const output = this.#sampleIdentity(sample);
       copyUserMetadata(output, sample);
-      for (const leaf of leaves) output[leaf.key] = location ? (leaf.variable ? [] : null) : null;
+      for (const leaf of leaves) {
+        for (const name of Object.values(/** @type {WideColumns} */ (columns.get(leaf)))) {
+          if (name) output[name] = location && leaf.variable ? [] : null;
+        }
+      }
       outputs.set(this.#identity(sample), output);
     }
     if (!location || samples.length === 0) return [...outputs.values()];
@@ -257,7 +267,7 @@ export class Dataset {
     const files = await this.#fileNodes(samples, leaves, true);
     // Variable leaves are collected with their numeric index and sorted only
     // after the hierarchy has been walked.
-    /** @type {Map<string, Map<string, Array<{ index: number, location: string }>>>} */
+    /** @type {Map<string, Map<TacoLeaf, Array<{ index: number, location: string, header: any }>>>} */
     const sequences = new Map();
     for (const node of files) {
       const path = contractPath(requirePath(node.row));
@@ -266,9 +276,12 @@ export class Dataset {
       const sampleKey = this.#identity(node.sample.row);
       const output = outputs.get(sampleKey);
       if (!output) continue;
+      const names = /** @type {WideColumns} */ (columns.get(leaf));
       const value = this.#source.location(node.row);
+      const header = node.row[HEADER_FIELD] ?? null;
       if (!leaf.variable) {
-        output[leaf.key] = value;
+        output[names.location] = value;
+        if (names.header) output[names.header] = header;
         continue;
       }
       let sampleSequences = sequences.get(sampleKey);
@@ -276,21 +289,40 @@ export class Dataset {
         sampleSequences = new Map();
         sequences.set(sampleKey, sampleSequences);
       }
-      let values = sampleSequences.get(leaf.key);
+      let values = sampleSequences.get(leaf);
       if (!values) {
         values = [];
-        sampleSequences.set(leaf.key, values);
+        sampleSequences.set(leaf, values);
       }
-      values.push({ index: /** @type {number} */ (matchLeaf(leaf, path)), location: value });
+      values.push({ index: /** @type {number} */ (matchLeaf(leaf, path)), location: value, header });
     }
     for (const [sampleKey, sampleSequences] of sequences) {
       const output = outputs.get(sampleKey);
       if (!output) continue;
-      for (const [name, values] of sampleSequences) {
-        output[name] = values.sort((left, right) => left.index - right.index).map((item) => item.location);
+      for (const [leaf, values] of sampleSequences) {
+        const names = /** @type {WideColumns} */ (columns.get(leaf));
+        values.sort((left, right) => left.index - right.index);
+        output[names.location] = values.map((item) => item.location);
+        if (names.header) output[names.header] = values.map((item) => item.header);
       }
     }
     return [...outputs.values()];
+  }
+
+  /**
+   * Wide column names of one leaf. ':' is not allowed in structure names, so
+   * qualifying the leaf name keeps every column unambiguous. Rumi assets are
+   * read statelessly with their header, so it travels next to the location.
+   *
+   * @param {TacoLeaf} leaf
+   * @returns {WideColumns}
+   */
+  #wideColumns(leaf) {
+    const name = leaf.key.replaceAll("/", "__");
+    const slash = leaf.key.lastIndexOf("/");
+    const level = slash < 0 ? "children" : `children/${leaf.key.slice(0, slash)}`;
+    const fields = this.contract.metadata[level] ?? {};
+    return { location: `${name}:location`, header: HEADER_FIELD in fields ? `${name}:header` : null };
   }
 
   /**
@@ -353,6 +385,7 @@ export class Dataset {
             ID_PATH,
             ...(this.container === "folder" ? [] : [ID_OFFSET, ID_SIZE]),
             ...(this.container === "tacocat" ? [ID_SOURCE] : []),
+            ...(HEADER_FIELD in (this.contract.metadata[level] ?? {}) ? [HEADER_FIELD] : []),
           ]
         : undefined;
       const rows = await this.readLevel(level, {

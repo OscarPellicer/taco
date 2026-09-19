@@ -128,8 +128,8 @@ test("reads wide and long views with calculated TACO locations", async () => {
     {
       sample_id: 0,
       "ml:split": "train",
-      "image.bin": `/vsisubfile/225_64,/vsicurl/${fixture.baseUrl}/dataset.zip`,
-      "mask.bin": `/vsisubfile/334_32,/vsicurl/${fixture.baseUrl}/dataset.zip`,
+      "image.bin:location": `/vsisubfile/225_64,/vsicurl/${fixture.baseUrl}/dataset.zip`,
+      "mask.bin:location": `/vsisubfile/334_32,/vsicurl/${fixture.baseUrl}/dataset.zip`,
     },
   ]);
 
@@ -152,7 +152,7 @@ test("supports idx, files, semantic filters, and location opt-out", async () => 
     location: false,
     filter: { "ml:split": { $eq: "test" } },
   });
-  assert.deepEqual(rows, [{ sample_id: 2, "ml:split": "test", "mask.bin": null }]);
+  assert.deepEqual(rows, [{ sample_id: 2, "ml:split": "test", "mask.bin:location": null }]);
 
   const long = await dataset.read({ idx: [0, 2], layout: "long", files: ["image.bin"] });
   assert.deepEqual(long.map((row) => row.path), ["image.bin", "image.bin"]);
@@ -161,7 +161,7 @@ test("supports idx, files, semantic filters, and location opt-out", async () => 
 test("resolves a VSI location and fetches only the payload range", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
   const row = (await dataset.read({ idx: 0 }))[0];
-  const asset = dataset.resolveAsset(row["image.bin"]);
+  const asset = dataset.resolveAsset(row["image.bin:location"]);
   assert.equal(asset.url, `${fixture.baseUrl}/dataset.zip`);
   assert.equal(asset.offset, 225);
   assert.equal(asset.size, 64);
@@ -174,8 +174,8 @@ test("opens a FOLDER without using ZIP offsets", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/folder`);
   assert.equal(dataset.container, "folder");
   const row = (await dataset.read({ idx: 1 }))[0];
-  assert.equal(row["image.bin"], `/vsicurl/${fixture.baseUrl}/folder/DATA/1/image.bin`);
-  const asset = dataset.resolveAsset(row["mask.bin"]);
+  assert.equal(row["image.bin:location"], `/vsicurl/${fixture.baseUrl}/folder/DATA/1/image.bin`);
+  const asset = dataset.resolveAsset(row["mask.bin:location"]);
   assert.equal(asset.offset, null);
   assert.equal(asset.size, null);
   assert.deepEqual(
@@ -187,7 +187,7 @@ test("opens a FOLDER without using ZIP offsets", async () => {
 test("works when a server ignores byte ranges", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/full.zip`);
   const rows = await dataset.read({ idx: 2, files: ["mask.bin"] });
-  assert.equal(rows[0]["mask.bin"], `/vsisubfile/708_32,/vsicurl/${fixture.baseUrl}/full.zip`);
+  assert.equal(rows[0]["mask.bin:location"], `/vsisubfile/708_32,/vsicurl/${fixture.baseUrl}/full.zip`);
 });
 
 test("top-level read() opens and materializes a source", async () => {

@@ -20,6 +20,9 @@ constexpr const char* id_size = "internal:size";
 constexpr const char* id_source = "internal:source_file";
 constexpr const char* location_column = "taco:location";
 constexpr const char* flat_location_column = "cozip:location";
+// Rumi assets are read statelessly with their header, so a wide read carries
+// it next to the location of every leaf whose level declares it.
+constexpr const char* header_field = "rumi:header";
 constexpr const char* data_directory = "DATA";
 
 std::string regex_escape(std::string_view value) {
@@ -54,6 +57,13 @@ Leaf parse_leaf(const std::string& declaration) {
     leaf.prefix = declaration.substr(0, star);
     leaf.suffix = declaration.substr(close + 1);
     return leaf;
+}
+
+// The metadata level that holds the rows of a leaf: its folder under children.
+std::string leaf_level(const Leaf& leaf) {
+    const auto& path = leaf.variable ? leaf.prefix : leaf.declaration;
+    const auto slash = path.rfind('/');
+    return slash == std::string::npos ? "children" : "children/" + path.substr(0, slash);
 }
 
 std::string output_name(const Leaf& leaf) {
@@ -117,7 +127,11 @@ class QueryBuilder {
             out += ", " + alias(0) + ".*" + exclude_list(0);
             for (const auto& leaf : leaves) {
                 out += leaf.variable ? ", NULL::VARCHAR[] AS " : ", NULL::VARCHAR AS ";
-                out += sql_identifier(output_name(leaf));
+                out += sql_identifier(location_name(leaf));
+                if (has_header(leaf)) {
+                    out += leaf.variable ? ", NULL::BLOB[] AS " : ", NULL::BLOB AS ";
+                    out += sql_identifier(header_name(leaf));
+                }
             }
             out += " FROM (SELECT " + metadata_projection() + " FROM read_parquet(" +
                    sql_literal(dataset_.level_paths[0]) + ")) AS " + alias(0);
@@ -136,18 +150,9 @@ class QueryBuilder {
         if (tacocat_)
             out += ", source_file";
         for (const auto& leaf : leaves) {
-            if (leaf.variable) {
-                // TACO spec 5.2: the index has no leading zeros, so img01.tif is
-                // not an instance of img*[a,b].tif.
-                const auto pattern = variable_pattern(leaf);
-                out += ", list(" + sql_identifier(location_column) +
-                       " ORDER BY TRY_CAST(regexp_extract(path, " + sql_literal(pattern) +
-                       ", 1) AS BIGINT)) FILTER (WHERE regexp_matches(path, " + sql_literal(pattern) +
-                       ")) AS " + sql_identifier(output_name(leaf));
-            } else {
-                out += ", MAX(CASE WHEN path = " + sql_literal(leaf.declaration) + " THEN " +
-                       sql_identifier(location_column) + " END) AS " + sql_identifier(output_name(leaf));
-            }
+            out += pivot_column(leaf, location_column, location_name(leaf));
+            if (has_header(leaf))
+                out += pivot_column(leaf, header_field, header_name(leaf));
         }
         out += " FROM flat GROUP BY ALL)";
 
@@ -156,11 +161,18 @@ class QueryBuilder {
             out += ", " + alias(0) + "." + sql_identifier(id_source) + " AS source_file";
         out += ", " + alias(0) + ".*" + exclude_list(0);
         for (const auto& leaf : leaves) {
-            const auto name = output_name(leaf);
+            const auto location = location_name(leaf);
             if (leaf.variable)
-                out += ", COALESCE(p." + sql_identifier(name) + ", []::VARCHAR[]) AS " + sql_identifier(name);
+                out += ", COALESCE(p." + sql_identifier(location) + ", []::VARCHAR[]) AS " + sql_identifier(location);
             else
-                out += ", p." + sql_identifier(name);
+                out += ", p." + sql_identifier(location);
+            if (!has_header(leaf))
+                continue;
+            const auto header = header_name(leaf);
+            if (leaf.variable)
+                out += ", COALESCE(p." + sql_identifier(header) + ", []::BLOB[]) AS " + sql_identifier(header);
+            else
+                out += ", p." + sql_identifier(header);
         }
         out += " FROM " + alias(0) + " LEFT JOIN pivoted p ON p.sample_id = " + alias(0) + "." +
                sql_identifier(id_current);
@@ -174,6 +186,31 @@ class QueryBuilder {
 
   private:
     static std::string alias(std::size_t level) { return "l" + std::to_string(level); }
+
+    // Wide columns are the leaf name qualified by what they hold. ':' is not
+    // allowed in structure names, so the split stays unambiguous.
+    static std::string location_name(const Leaf& leaf) { return output_name(leaf) + ":location"; }
+    static std::string header_name(const Leaf& leaf) { return output_name(leaf) + ":header"; }
+
+    [[nodiscard]] bool has_header(const Leaf& leaf) const {
+        const auto* fields = dataset_.contract.fields_of(leaf_level(leaf));
+        return fields && std::find(fields->begin(), fields->end(), header_field) != fields->end();
+    }
+
+    // One pivoted value of a leaf: the value itself, or the list of a
+    // variable sequence ordered by its numeric index.
+    static std::string pivot_column(const Leaf& leaf, const std::string& column, const std::string& name) {
+        if (!leaf.variable) {
+            return ", MAX(CASE WHEN path = " + sql_literal(leaf.declaration) + " THEN " + sql_identifier(column) +
+                   " END) AS " + sql_identifier(name);
+        }
+        // TACO spec 5.2: the index has no leading zeros, so img01.tif is not an
+        // instance of img*[a,b].tif.
+        const auto pattern = variable_pattern(leaf);
+        return ", list(" + sql_identifier(column) + " ORDER BY TRY_CAST(regexp_extract(path, " + sql_literal(pattern) +
+               ", 1) AS BIGINT)) FILTER (WHERE regexp_matches(path, " + sql_literal(pattern) + ")) AS " +
+               sql_identifier(name);
+    }
 
     static std::string metadata_projection() {
         return "COLUMNS(lambda c: c != " + sql_literal(flat_location_column) + " AND c != " +
@@ -374,6 +411,11 @@ class QueryBuilder {
             out += ", " + path_expression(level) + " AS path";
             if (identity_only || options_.location)
                 out += ", " + location_expression(level) + " AS " + sql_identifier(location_column);
+            if (identity_only) {
+                const auto* fields = dataset_.contract.fields_of(dataset_.level_names[level]);
+                if (fields && std::find(fields->begin(), fields->end(), header_field) != fields->end())
+                    out += ", " + alias(level) + "." + sql_identifier(header_field);
+            }
             if (!identity_only)
                 out += ancestor_projection(level);
             out += " FROM " + alias(level) + join_chain(level);

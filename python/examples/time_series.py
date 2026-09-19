@@ -59,7 +59,9 @@ with taco.open_writer(collection, "time-series.zip", overwrite=True) as writer:
 
 dataset = taco.open_dataset("time-series.zip")
 table = taco.read(dataset)
-lengths = dict(zip(table.column("sample_id").to_pylist(), map(len, table.column("image").to_pylist()), strict=True))
+lengths = dict(
+    zip(table.column("sample_id").to_pylist(), map(len, table.column("image:location").to_pylist()), strict=True)
+)
 assert lengths == {0: 3, 1: 5}
 assert dataset.sql("SELECT * FROM files").num_rows == 8
 assert taco.validate("time-series.zip").ok

@@ -194,3 +194,45 @@ def test_rumi_extension_reads_a_real_rumi_file(tmp_path: Path) -> None:
     assert row["rumi:header"] == expected_header
     assert row["rumi:stats"][0]["valid_count"] == 16
     assert row["rumi:stats"][0]["mean"] == 7.5
+
+
+def test_wide_reads_carry_rumi_headers_next_to_locations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from taco.reader import engine
+    from taco.reader.inspect import native_sql
+
+    fake = SimpleNamespace(info=lambda *, source: SimpleNamespace(header=Path(source).name.encode()))
+    monkeypatch.setitem(sys.modules, "rumi", fake)
+    for name in ("optical.rumi", "img0.rumi", "img1.rumi", "mask.bin"):
+        (tmp_path / name).write_bytes(name.encode())
+    contract = taco.Contract(
+        structure=["scene/optical.rumi", "scene/img*[0,2].rumi", "mask.bin"],
+        metadata=taco.MetadataSchema(taco.Level("children/scene", rumi=taco.extensions.Rumi())),
+    )
+    output = tmp_path / "rumi.zip"
+    with taco.open_writer(collection(contract), output) as writer:
+        writer.add(
+            taco.Sample(
+                assets=[
+                    taco.Asset(tmp_path / "optical.rumi", path="scene/optical.rumi"),
+                    taco.Asset(tmp_path / "img1.rumi", path="scene/img1.rumi"),
+                    taco.Asset(tmp_path / "img0.rumi", path="scene/img0.rumi"),
+                    taco.Asset(tmp_path / "mask.bin", path="mask.bin"),
+                ],
+            )
+        )
+        writer.run()
+
+    # Python builds its own pivot; R and Julia run the core query directly.
+    core = engine.open_reader().execute(native_sql(output)).to_arrow_table()
+    for table in (taco.read(output), core):
+        row = table.to_pylist()[0]
+        assert row["scene__optical.rumi:location"].startswith("/vsisubfile/")
+        assert row["scene__optical.rumi:header"] == b"optical.rumi"
+        assert row["scene__img:header"] == [b"img0.rumi", b"img1.rumi"]
+        assert len(row["scene__img:location"]) == 2
+        assert row["mask.bin:location"].startswith("/vsisubfile/")
+        assert "mask.bin:header" not in row
+
+    quiet = engine.open_reader().execute(native_sql(output, location=False)).to_arrow_table().to_pylist()[0]
+    assert quiet["scene__optical.rumi:header"] is None
+    assert "scene__optical.rumi:header" not in taco.open_dataset(output).sql("SELECT * FROM data").column_names

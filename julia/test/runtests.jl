@@ -44,7 +44,7 @@ const FIXTURE = joinpath(@__DIR__, "data", "taco.zip")
 
         wide = Taco.read(FIXTURE)
         @test size(wide, 1) == 3
-        @test issubset(["sample_id", "ml:split", "image.bin", "mask.bin"], names(wide))
+        @test issubset(["sample_id", "ml:split", "image.bin:location", "mask.bin:location"], names(wide))
         @test wide[!, "ml:split"] == ["train", "train", "test"]
 
         long = Taco.read(FIXTURE; layout="long")
@@ -59,8 +59,8 @@ const FIXTURE = joinpath(@__DIR__, "data", "taco.zip")
         @test size(Taco.read(FIXTURE; idx=(0, 2)), 1) == 2
 
         narrowed = Taco.read(FIXTURE; files=["mask.bin"])
-        @test "mask.bin" in names(narrowed)
-        @test !("image.bin" in names(narrowed))
+        @test "mask.bin:location" in names(narrowed)
+        @test !("image.bin:location" in names(narrowed))
 
         long_narrowed = Taco.read(FIXTURE; layout="long", files=["mask.bin"])
         @test size(long_narrowed, 1) == 3

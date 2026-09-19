@@ -167,7 +167,7 @@ def test_dataset_reads_folder(folder_dataset: Path) -> None:
 
 
 def test_file_selection_accepts_one_name(archive: Path) -> None:
-    assert taco.read(archive, files="mask.tif").column_names[-1] == "mask.tif"
+    assert taco.read(archive, files="mask.tif").column_names[-1] == "mask.tif:location"
     assert inspect_module.native_sql(archive, files="mask.tif") == inspect_module.native_sql(
         archive, files=["mask.tif"]
     )
@@ -176,8 +176,8 @@ def test_file_selection_accepts_one_name(archive: Path) -> None:
 def test_sql_relations_and_nested_wide_names(archive: Path) -> None:
     dataset = taco.open_dataset(archive)
 
-    assert "before__B02.tif" in dataset.read().column_names
-    assert "before/B02.tif" not in dataset.read().column_names
+    assert "before__B02.tif:location" in dataset.read().column_names
+    assert not any(name.startswith("before/") for name in dataset.read().column_names)
     assert dataset.sql("SELECT count(*) AS n FROM data").column("n").to_pylist() == [4]
     files = dataset.sql(
         "SELECT sample_id, path, \"taco:location\" FROM files WHERE path = 'before/B02.tif' ORDER BY sample_id"

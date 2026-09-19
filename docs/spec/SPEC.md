@@ -790,32 +790,37 @@ Remote file locations use the VSI prefix of their storage, such as `/vsicurl/`, 
 
 **files** limits which structure declarations appear in the result. A fixed file is selected by its full contract path. A variable sequence is selected by its declaration, such as `img*[4,16].tif`. By default every declared file is returned.
 
-The result includes `sample_id`. TACOCAT also includes `source_file`, and the pair identifies a sample. File columns contain reader-calculated locations; neither `taco:location` nor `cozip:location` is stored in metadata.
+The result includes `sample_id`. TACOCAT also includes `source_file`, and the pair identifies a sample. Every selected file has a `{file}:location` column with its reader-calculated location; neither `taco:location` nor `cozip:location` is stored in metadata. A Rumi asset cannot be read from its location alone, so when the metadata level of a file declares `rumi:header`, the result also has a `{file}:header` column with that header. Both columns are computed when the dataset is read and never change it.
 
 Collection metadata is not repeated in every result row. It is available through `Dataset.collection`.
 
 ```
 taco.read("cloudsen12.zip")
-# sample_id | ml:split | quality:cloud_cover | s2_l1c.tif      | s2_l2a.tif      | target.tif
-# 0         | train    | 23.5                | /vsisubfile/... | /vsisubfile/... | /vsisubfile/...
+# sample_id | ml:split | quality:cloud_cover | s2_l1c.tif:location | s2_l2a.tif:location | target.tif:location
+# 0         | train    | 23.5                | /vsisubfile/...     | /vsisubfile/...     | /vsisubfile/...
 
 # Two selected files
 taco.read("change_detection.zip", files=["before/B02.tif", "after/B02.tif"])
-# sample_id | ml:split | before__B02.tif | after__B02.tif
+# sample_id | ml:split | before__B02.tif:location | after__B02.tif:location
+
+# Rumi assets carry their header
+taco.read("multisensor.zip")
+# sample_id | optical.rumi:location | optical.rumi:header | radar.rumi:location | radar.rumi:header
+# 0         | /vsisubfile/...       | b"LOVE..."          | /vsisubfile/...     | b"LOVE..."
 ```
 
-A `/` in a structure path becomes `__` in its wide column name. This mapping is reversible because `__` is forbidden inside path components. A variable sequence uses the path to its prefix: `before/img*[0,16].tif` becomes the `LIST(VARCHAR)` column `before__img`.
+A `/` in a structure path becomes `__` in its wide column name, followed by `:location` or `:header`. This mapping is reversible because `__` is forbidden inside path components and `:` is forbidden in folder and file names. A variable sequence uses the path to its prefix: `before/img*[0,16].tif` becomes the `LIST(VARCHAR)` column `before__img:location`, and a Rumi sequence also has the `LIST(BLOB)` column `before__img:header` in the same order.
 
 ```
 taco.read("multitemporal_s2.zip")
-# sample_id | ml:split | img
+# sample_id | ml:split | img:location
 # 0         | train    | [/vsisubfile/..., /vsisubfile/..., ...]
 # 1         | val      | [/vsisubfile/..., /vsisubfile/..., ...]
 ```
 
 The list is ordered by the numeric sequence index. A sequence with no files returns an empty list.
 
-When `taco:structure` is null, `read()` contains one reader-calculated `taco:location` column for the sample file. The `files` relation also contains a nullable `path`, whose value is `NULL` because the sample file has no structural path.
+When `taco:structure` is null, `read()` contains one reader-calculated `taco:location` column for the sample file. A `rumi:header` declared at the sample level is already part of the same row. The `files` relation also contains a nullable `path`, whose value is `NULL` because the sample file has no structural path.
 
 Python `read()` orders rows by `sample_id`, preceded by `source_file` when present. SQL results have no implicit order unless the query contains `ORDER BY`.
 

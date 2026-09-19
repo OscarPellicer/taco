@@ -6,7 +6,8 @@ from collections.abc import Sequence
 import pyarrow as pa
 
 from ..contract.collection import Collection
-from ..contract.contract import Contract
+from ..contract.contract import CHILDREN_LEVEL, Contract
+from ..contract.structure import Leaf
 from ..errors import CollectionError, ContainerError
 from . import engine, native
 from .collection import merge_collections
@@ -23,9 +24,29 @@ def _literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+# Rumi assets are read statelessly with their header, so a wide read carries it
+# next to the location of every leaf whose level declares it.
+_HEADER_FIELD = "rumi:header"
+
+
 def _output_name(declaration: str, *, variable: bool) -> str:
     name = declaration.partition("*")[0] if variable else declaration
     return name.replace("/", "__")
+
+
+def _has_header(contract: Contract, leaf: Leaf) -> bool:
+    level = "/".join((CHILDREN_LEVEL, *leaf.folder))
+    return _HEADER_FIELD in contract.metadata.get(level, {})
+
+
+def _wide_columns(contract: Contract, leaf: Leaf) -> list[tuple[str, str]]:
+    # ':' is not allowed in structure names, so qualifying the leaf name keeps
+    # every wide column unambiguous.
+    name = _output_name(leaf.declaration, variable=leaf.variable)
+    columns = [("taco:location", f"{name}:location")]
+    if _has_header(contract, leaf):
+        columns.append((_HEADER_FIELD, f"{name}:header"))
+    return columns
 
 
 class Dataset:
@@ -96,24 +117,28 @@ class Dataset:
         file_columns: list[str] = []
         filters: list[str] = []
         for leaf in leaves:
-            output = _identifier(_output_name(leaf.declaration, variable=leaf.variable))
             if leaf.variable:
                 assert leaf.prefix is not None
                 path_prefix = "/".join((*leaf.folder, leaf.prefix))
                 pattern = "^" + re.escape(path_prefix) + r"(0|[1-9][0-9]*)" + re.escape(leaf.suffix) + "$"
                 match = f"regexp_matches(f.path, {_literal(pattern)})"
                 filters.append(f"regexp_matches(path, {_literal(pattern)})")
-                aggregates.append(
-                    f'list(f."taco:location" ORDER BY '
-                    f"TRY_CAST(regexp_extract(f.path, {_literal(pattern)}, 1) AS BIGINT)) "
-                    f"FILTER (WHERE {match}) AS {output}"
-                )
-                file_columns.append(f"COALESCE(v.{output}, []::VARCHAR[]) AS {output}")
+                for source, name in _wide_columns(self.contract, leaf):
+                    output = _identifier(name)
+                    empty = "[]::BLOB[]" if source == _HEADER_FIELD else "[]::VARCHAR[]"
+                    aggregates.append(
+                        f"list(f.{_identifier(source)} ORDER BY "
+                        f"TRY_CAST(regexp_extract(f.path, {_literal(pattern)}, 1) AS BIGINT)) "
+                        f"FILTER (WHERE {match}) AS {output}"
+                    )
+                    file_columns.append(f"COALESCE(v.{output}, {empty}) AS {output}")
             else:
                 path = _literal(leaf.declaration)
                 filters.append(f"path = {path}")
-                aggregates.append(f'MAX(f."taco:location") FILTER (WHERE f.path = {path}) AS {output}')
-                file_columns.append(f"v.{output} AS {output}")
+                for source, name in _wide_columns(self.contract, leaf):
+                    output = _identifier(name)
+                    aggregates.append(f"MAX(f.{_identifier(source)}) FILTER (WHERE f.path = {path}) AS {output}")
+                    file_columns.append(f"v.{output} AS {output}")
 
         selected_files = " OR ".join(filters)
         group = ", ".join(f"f.{_identifier(name)}" for name in keys)
@@ -131,7 +156,7 @@ class Dataset:
         wide_without_locations = native.sql(opened, idx=None, level=None, pivoted=True, files=None, location=False)
         flat = native.sql(opened, idx=None, level=None, pivoted=False, files=None, location=True)
 
-        file_columns = [_output_name(leaf.declaration, variable=leaf.variable) for leaf in self.contract.leaves]
+        file_columns = [name for leaf in self.contract.leaves for _, name in _wide_columns(self.contract, leaf)]
         data = wide_without_locations
         if file_columns:
             excluded = ", ".join(_identifier(name) for name in file_columns)

@@ -28,7 +28,7 @@ describe("read a TACO dataset", {
     result <- taco::read(taco_fixture())
     expect_s3_class(result, "tbl_df")
     expect_identical(nrow(result), 3L)
-    expect_true(all(c("sample_id", "ml:split", "image.bin", "mask.bin") %in% names(result)))
+    expect_true(all(c("sample_id", "ml:split", "image.bin:location", "mask.bin:location") %in% names(result)))
     expect_identical(result[["ml:split"]], c("train", "train", "test"))
   })
 
@@ -63,8 +63,8 @@ describe("read a TACO dataset", {
 
   it("selects files", {
     wide <- taco::read(taco_fixture(), files = "mask.bin")
-    expect_true("mask.bin" %in% names(wide))
-    expect_false("image.bin" %in% names(wide))
+    expect_true("mask.bin:location" %in% names(wide))
+    expect_false("image.bin:location" %in% names(wide))
 
     long <- taco::read(taco_fixture(), layout = "long", files = "mask.bin")
     expect_identical(nrow(long), 3L)
