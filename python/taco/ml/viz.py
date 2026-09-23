@@ -336,6 +336,9 @@ def _draw_mask_set(value: SlotValue, axis) -> str:
     cover each pixel is 1 everywhere and says nothing. What distinguishes them
     is WHICH one, so the panel is an index map with each member's share of the
     frame in the legend. Overlap is reported in the title, where it exists.
+
+    The legend names a member where the slot declares a ``members_field``, and
+    falls back to its index where it does not.
     """
     import matplotlib.pyplot as plt
     from matplotlib.patches import Patch
@@ -355,9 +358,10 @@ def _draw_mask_set(value: SlotValue, axis) -> str:
     rgba[shown < 0] = (0.0, 0.0, 0.0, 0.0)
     axis.imshow(rgba, interpolation="nearest")
     shares = [float(m.mean()) for m in binary]
+    names = value.members or [str(i) for i in range(members)]
     order = sorted(range(members), key=lambda i: -shares[i])
     _legend(axis, [Patch(facecolor=colormap(i / span),
-                         label=_one_line(f"{i} ({100 * shares[i]:.3g}%)",
+                         label=_one_line(f"{names[i]} ({100 * shares[i]:.3g}%)",
                                          LEGEND_MAX_CHARS))
                    for i in order], total=members)
     axis.set_xticks([])

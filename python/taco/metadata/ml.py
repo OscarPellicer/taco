@@ -146,6 +146,9 @@ class Slot(ScopedModel):
     crs_field: str | None = Field(default=None, description="Column holding this slot's CRS")
     time_field: str | None = Field(default=None, description="Column holding acquisition times")
     counts_field: str | None = Field(default=None, description="Column holding per-object counts")
+    members_field: str | None = Field(
+        default=None,
+        description="Column naming the members of a set, one entry per member in member order")
     task_field: str | None = Field(default=None, description="Column naming the task of each record")
     frames_field: str | None = Field(default=None, description="Column holding the number of frames")
     optional: bool = Field(default=False, description="Whether samples may omit this slot")

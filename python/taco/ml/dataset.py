@@ -43,6 +43,12 @@ class SlotValue:
     ``counts_field``. Geometry is stored as one flat run of coordinates, and this
     is what divides it back into objects."""
 
+    members: list[str] | None = None
+    """What each member of a set is, where the slot declares a ``members_field``.
+    A mask set holds one mask per object referred to, and ``classes`` names the
+    pixel values rather than the members, so without this a member is only an
+    index."""
+
     @property
     def name(self) -> str:
         return self.slot.name
@@ -228,6 +234,25 @@ class Dataset:
                 return [int(n) for n in np.atleast_1d(values)]
         return None
 
+    def _members(self, slot: Slot, index: int, value: Any) -> list[str] | None:
+        """The names a set's members carry, read from the slot's `members_field`."""
+        if not slot.members_field:
+            return None
+        for column in (f"ml:{slot.members_field}", slot.members_field):
+            if column in self.table.column_names:
+                names = self.table.column(column)[index].as_py()
+                if names is None:
+                    return None
+                names = [str(name) for name in np.atleast_1d(names)]
+                members = len(value) if value is not None else len(names)
+                if len(names) != members:
+                    raise ValueError(
+                        f"slot {slot.name!r}: {slot.members_field!r} holds "
+                        f"{len(names)} names for {members} members, and it is "
+                        f"declared to hold one per member")
+                return names
+        return None
+
     def __getitem__(self, index: int) -> dict[str, SlotValue]:
         if index < 0:
             index += len(self)
@@ -241,7 +266,8 @@ class Dataset:
                 raise
             if value is not None:
                 sample[slot.name] = SlotValue(slot=slot, array=value, sample=index,
-                                              counts=self._counts(slot, index))
+                                              counts=self._counts(slot, index),
+                                              members=self._members(slot, index, value))
         return sample
 
 
