@@ -57,6 +57,14 @@ class Publications(CollectionModel):
 
 class SplitStrategy(CollectionModel):
     strategy: Literal["random", "stratified", "manual", "other", "none", "unknown"]
+    rule: str | None = Field(
+        default=None,
+        description="Versioned rule that produced `split`, as `<namespace>/<rule>-v<n>`",
+    )
+    group_key: str | None = Field(
+        default=None,
+        description="Column whose values are kept whole on one side of the split",
+    )
 
 
 __all__ = [
