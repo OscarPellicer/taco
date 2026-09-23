@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import zipfile
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -17,6 +18,11 @@ from ..metadata.ml import Calibration, MLContract, Slot, SlotKind
 
 CONTRACT_KEY = "ml:contract"
 DATA_DIR = "DATA"
+
+#: `prefix*[a,b].ext`, the spec's declaration of a leaf whose file count varies
+#: from sample to sample. The bracket is the permitted RANGE of that count, not
+#: a character class.
+VARIABLE_LEAF = re.compile(r"(?P<stem>.*?)\*\[\d+\s*,\s*\d+\](?P<ext>\.[^.]+)")
 
 
 @dataclass
@@ -148,25 +154,26 @@ class Dataset:
     def _resolve(self, index: int, pattern: str) -> list[str]:
         """Payload names for one slot of one sample.
 
-        A slot's path may be a shell-style pattern rather than a literal name,
-        which is how a slot holding a variable number of files is declared. A
-        pattern is matched against this sample's payloads and returned sorted,
-        which is the order its frames are stacked in.
+        A slot holding a variable number of files is declared `prefix*[a,b].ext`
+        (spec 5.2). The `*` is NOT a filesystem glob: it is a cardinal index, so
+        the files are `prefix0.ext`, `prefix1.ext`, ... `prefix(k-1).ext` with
+        `a <= k <= b` for this sample. Reading it as a glob matches only the
+        names whose digits happen to fall in the bracket -- `m*[3,9].tif`
+        against `m0..m7` finds one file of eight, and against `m0..m2` none.
         """
-        from fnmatch import fnmatchcase
-
         prefix = f"{index}/"
         literal = prefix + pattern
         if literal in self._payloads:
             return [literal]
-        if not any(character in pattern for character in "*?["):
+        match = VARIABLE_LEAF.fullmatch(pattern)
+        if match is None:
             return [literal]                      # let `_blob` raise with the name
-        # Zero matches is a legitimate answer: a pattern says "however many
-        # there are", and a sample may have none. The slot is then absent from
-        # the sample rather than an error, which a missing LITERAL still is.
-        return sorted(name for name in self._payloads
-                      if name.startswith(prefix)
-                      and fnmatchcase(name[len(prefix):], pattern))
+        stem, extension = match.group("stem"), match.group("ext")
+        found, position = [], 0
+        while f"{prefix}{stem}{position}{extension}" in self._payloads:
+            found.append(f"{prefix}{stem}{position}{extension}")
+            position += 1
+        return found
 
     def _blob(self, relative_path: str) -> bytes:
         where = self._payloads.get(relative_path)
@@ -198,6 +205,11 @@ class Dataset:
                   for name in self._resolve(index, pattern)]
         if not frames:
             return None
+        if slot.kind is SlotKind.MASK_SET:
+            # (N, H, W): each member is a single-band file, and the band axis
+            # would otherwise sit between the member index and the picture.
+            return np.stack([f[0] if f.ndim == 3 and f.shape[0] == 1 else f
+                             for f in frames])
         if len(frames) == 1:
             array = frames[0]
             # A mask is (H, W); a raster keeps its band axis.

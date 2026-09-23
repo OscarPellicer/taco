@@ -107,7 +107,7 @@ TEXT_ASPECT = 0.45
 def _aspect(value: SlotValue) -> float:
     """Height over width of the panel a slot draws."""
     try:
-        if value.kind not in (SlotKind.RASTER, SlotKind.MASK, *SERIES):
+        if value.kind not in (SlotKind.RASTER, SlotKind.MASK, SlotKind.MASK_SET, *SERIES):
             return TEXT_ASPECT
         shape = np.shape(value.array)
         if len(shape) < 2 or not shape[-1]:
@@ -329,8 +329,55 @@ def _panels(sample: dict[str, SlotValue], max_frames: int | None) -> list[SlotVa
     return out
 
 
+def _draw_mask_set(value: SlotValue, axis) -> str:
+    """(N, H, W) binary masks, drawn as which member covers each pixel.
+
+    Members frequently partition the frame, in which case a count of how many
+    cover each pixel is 1 everywhere and says nothing. What distinguishes them
+    is WHICH one, so the panel is an index map with each member's share of the
+    frame in the legend. Overlap is reported in the title, where it exists.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    array = np.asarray(value.array)
+    if array.ndim == 2:
+        array = array[None]
+    binary = array != 0
+    members = binary.shape[0]
+    counts = binary.sum(axis=0)
+    first = np.where(counts > 0, binary.argmax(axis=0), -1)
+    shown = _subsample(first)
+
+    span = max(members - 1, 1)
+    colormap = plt.get_cmap("tab20", max(members, 2))
+    rgba = colormap(np.clip(shown, 0, span) / span)
+    rgba[shown < 0] = (0.0, 0.0, 0.0, 0.0)
+    axis.imshow(rgba, interpolation="nearest")
+    shares = [float(m.mean()) for m in binary]
+    order = sorted(range(members), key=lambda i: -shares[i])
+    _legend(axis, [Patch(facecolor=colormap(i / span),
+                         label=_one_line(f"{i} ({100 * shares[i]:.3g}%)",
+                                         LEGEND_MAX_CHARS))
+                   for i in order], total=members)
+    axis.set_xticks([])
+    axis.set_yticks([])
+    uncovered = float((counts == 0).mean())
+    overlap = float((counts > 1).mean())
+    detail = f"{members} mask(s)"
+    if overlap:
+        detail += f", {100 * overlap:.3g}% overlapping"
+    if uncovered:
+        detail += f", {100 * uncovered:.3g}% uncovered"
+    else:
+        detail += ", partitioning the frame"
+    return detail
+
+
 def plot_slot(value: SlotValue, axis) -> str:
     """Render one slot into one axis and return the title it chose."""
+    if value.kind is SlotKind.MASK_SET:
+        return _draw_mask_set(value, axis)
     if value.kind in (SlotKind.MASK, SlotKind.INSTANCE_ID):
         return _draw_mask(value, axis)
     if value.kind is SlotKind.RASTER:
