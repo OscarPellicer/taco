@@ -623,6 +623,7 @@ Contract read_contract(const Dataset& dataset) {
         if (!value.is_object())
             fail("COLLECTION.json: metadata level must be an object: " + source);
         std::vector<std::string> names;
+        std::vector<std::string> types;
         for (const auto& member : value.members) {
             const auto suffix = rumi_file_suffix(member.first);
             if (member.first.starts_with("rumi:") && !suffix)
@@ -664,8 +665,11 @@ Contract read_contract(const Dataset& dataset) {
                 }
             }
             names.push_back(member.first);
+            const json::Value* declared = member.second.is_object() ? member.second.find("type") : nullptr;
+            types.push_back(declared && declared->is_string() ? declared->string : std::string());
         }
         contract.fields.emplace_back(level, std::move(names));
+        contract.field_types.emplace_back(level, std::move(types));
     }
     for (const auto& level : dataset.level_names) {
         if (!contract.fields_of(level))
@@ -734,6 +738,24 @@ bool is_explicit_remote_directory(std::string_view source) {
 #endif
     std::error_code error;
     return fs::is_directory(local_path(path), error);
+}
+
+bool Contract::type_conflicts(std::string_view name) const {
+    std::string seen;
+    bool found = false;
+    for (std::size_t i = 0; i < fields.size() && i < field_types.size(); ++i) {
+        const auto& names = fields[i].second;
+        const auto& types = field_types[i].second;
+        for (std::size_t j = 0; j < names.size() && j < types.size(); ++j) {
+            if (names[j] != name || types[j].empty())
+                continue;
+            if (found && types[j] != seen)
+                return true;
+            seen = types[j];
+            found = true;
+        }
+    }
+    return false;
 }
 
 const std::vector<std::string>* Contract::fields_of(std::string_view level) const {
