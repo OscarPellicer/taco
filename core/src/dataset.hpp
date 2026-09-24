@@ -18,10 +18,20 @@ struct Contract {
     std::vector<std::string> structure;
     // Every level with the user fields it declares, in COLLECTION.json order.
     std::vector<std::pair<std::string, std::vector<std::string>>> fields;
+    // The type of each field, as written in taco:metadata (for example
+    // "string" or "list<string>"). Same layout as `fields`: one entry per
+    // level, and within a level one type per field name, in the same order.
+    // An empty string means the declaration gave no type.
+    std::vector<std::pair<std::string, std::vector<std::string>>> field_types;
     bool has_derived = false;
     std::string derived;
 
     [[nodiscard]] const std::vector<std::string>* fields_of(std::string_view level) const;
+    // True when the same field name is declared at more than one level with
+    // different types, e.g. "ml:category" as a list on the sample and as a
+    // single number on each mask. Such a field cannot be merged into one
+    // column across levels, so the reader keeps each level's own values.
+    [[nodiscard]] bool type_conflicts(std::string_view name) const;
 };
 
 struct Dataset {

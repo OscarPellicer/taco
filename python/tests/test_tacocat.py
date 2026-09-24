@@ -139,3 +139,20 @@ def test_sources_shape_is_validated(tmp_path: Path, collection: taco.Collection,
     report = taco.validate(output)
     assert not report.ok
     assert any(issue.code == "sources" for issue in report.errors)
+
+
+def test_level_reads_one_level_across_partitions(tmp_path: Path, collection: taco.Collection, make_sample) -> None:
+    parts = [
+        build(tmp_path / "a.zip", collection, [make_sample(0), make_sample(1)]),
+        build(tmp_path / "b.zip", collection, [make_sample(2)]),
+    ]
+    dataset = taco.open_dataset(parts)
+    sample = dataset.level("sample")
+    assert sample.num_rows == 3
+    assert sample.column("source_file").to_pylist() == ["a.zip", "a.zip", "b.zip"]
+    assert sample.column("internal:current_id").to_pylist() == [0, 1, 0]
+    children = dataset.level("children")
+    assert "internal:offset" in children.column_names
+    assert set(children.column("source_file").to_pylist()) == {"a.zip", "b.zip"}
+    with pytest.raises(ContainerError, match="no metadata level"):
+        dataset.level("nope")

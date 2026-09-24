@@ -168,11 +168,23 @@ def single_file() -> DatasetCase:
 def flat_assets() -> DatasetCase:
     contract = taco.Contract(
         structure=["image.tif", "label.tif"],
-        metadata=taco.MetadataSchema(taco.Level("sample", ml=taco.metadata.sample.Split)),
+        metadata=taco.MetadataSchema(
+            taco.Level(
+                "sample",
+                ml=taco.metadata.sample.Split,
+            )
+        ),
     )
     samples = tuple(
         taco.Sample(
-            metadata=taco.Metadata(ml=taco.metadata.sample.Split(split="train" if index == 0 else "validation")),
+            metadata=taco.Metadata(
+                ml=taco.metadata.sample.Split(
+                    split="train" if index == 0 else "validation",
+                    split_original="train" if index == 0 else "valid",
+                    split_noleak="train" if index == 0 else "validation",
+                    split_noleak_rule="example/inherit-v1",
+                ),
+            ),
             assets=[asset("flat", index, "image.tif"), asset("flat", index, "label.tif")],
         )
         for index in range(2)

@@ -74,6 +74,25 @@ class Dataset:
         """Read all samples, optionally selecting structural file columns."""
         return self.sql(self._read_query(normalize_files(files)))
 
+    def level(self, name: str) -> pa.Table:
+        """Return the rows of one metadata level, such as ``"sample"`` or ``"children"``.
+
+        The table has that level's own columns and nothing from other levels, so
+        it works even when a field name is reused with a different type at
+        another level (a list here, a single value there).
+
+        Rows come in the order they are stored. When the dataset is split into
+        several archives, rows are grouped by archive and a ``source_file`` column
+        says which archive each row came from; this is needed because row ids
+        (``internal:current_id``) start again from 0 in every archive.
+        """
+        if name not in self.contract.levels:
+            raise ContainerError(f"taco: no metadata level {name!r}; have {list(self.contract.levels)}")
+        opened = [native.NativeDataset(source) for source in self.sources]
+        query = native.sql(opened, idx=None, level=name, pivoted=False, files=None, location=False)
+        order = ("source_file, " if len(self.sources) > 1 else "") + '"internal:current_id"'
+        return engine.open_reader().execute(f"SELECT * FROM ({query}) ORDER BY {order}").to_arrow_table()
+
     def sql(self, query: str) -> pa.Table:
         """Query the dataset's ``data``, ``files``, and metadata relations."""
         if not isinstance(query, str):

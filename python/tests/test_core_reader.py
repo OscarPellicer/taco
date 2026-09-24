@@ -339,3 +339,40 @@ def test_remote_datasets() -> None:
     location = catalog.column("taco:location")[0].as_py()
     assert ",/vsisource/asterisk-labs/taco-api-fixtures/data/04-change-detection/by-split/" in location
     assert taco.read(f"{mirror}/folder").num_rows == 6
+
+
+class Refs(BaseModel):
+    ref: list[str]
+
+
+class Ref(BaseModel):
+    ref: str
+
+
+def test_a_field_with_different_types_at_two_levels_stays_readable(tmp_path: Path) -> None:
+    # `ml:ref` is a list on the sample and a string on each mask. The files
+    # relation has one column per name, so the image row must not inherit the
+    # sample's list while the mask rows carry their own strings.
+    contract = taco.Contract(
+        structure=["image.bin", "mask/m*[0,3].bin"],
+        metadata=taco.MetadataSchema(taco.Level("sample", ml=Refs), taco.Level("children/mask", ml=Ref)),
+    )
+    samples = [
+        taco.Sample(
+            metadata=taco.Metadata(ml=Refs(ref=["a", "b"])),
+            assets=[
+                taco.Asset(payload("image", index), path="image.bin"),
+                taco.Asset(payload("m0", index), path="mask/m0.bin", metadata=taco.Metadata(ml=Ref(ref="a"))),
+                taco.Asset(payload("m1", index), path="mask/m1.bin", metadata=taco.Metadata(ml=Ref(ref="b"))),
+            ],
+        )
+        for index in range(2)
+    ]
+    dataset = taco.open_dataset(write("typed", contract, samples, tmp_path / "typed.zip"))
+    rows = by_sample(dataset.sql('SELECT sample_id, path, "ml:ref" FROM files'))
+    assert [(row["path"], row["ml:ref"]) for row in rows if row["sample_id"] == 0] == [
+        ("image.bin", None),
+        ("mask/m0.bin", "a"),
+        ("mask/m1.bin", "b"),
+    ]
+    assert dataset.sql('SELECT "ml:ref" FROM data').column("ml:ref").to_pylist() == [["a", "b"], ["a", "b"]]

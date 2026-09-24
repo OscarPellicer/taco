@@ -101,8 +101,7 @@ class QueryBuilder {
         if (options_.location)
             out += ", " + location_expression(0) + " AS " + sql_identifier(location_column);
         out += ", *" + exclude_list(0);
-        out += " FROM (SELECT " + metadata_projection() + " FROM read_parquet(" +
-               sql_literal(dataset_.level_paths[0]) + ")) AS " + alias(0);
+        out += " FROM (" + level_rows(0) + ") AS " + alias(0);
         const auto idx = idx_filter(alias(0));
         if (!idx.empty())
             out += " WHERE " + idx;
@@ -225,7 +224,7 @@ class QueryBuilder {
         std::vector<std::string> columns = {id_current, id_path};
         if (level > 0)
             columns.push_back(id_parent);
-        if (has_offsets_ && (level > 0 || dataset_.contract.null_structure)) {
+        if (level_has_offsets(level)) {
             columns.push_back(id_offset);
             columns.push_back(id_size);
         }
@@ -292,6 +291,13 @@ class QueryBuilder {
     // The user columns of level and of every ancestor, deepest first. A field
     // redeclared higher up is hidden, so the row carries the value of the
     // level it belongs to.
+    //
+    // A field inherited from an ancestor is also dropped when some other level
+    // declares the same name with a different type. The `files` relation stacks
+    // the rows of every level into one table with one column per name, so if
+    // image rows inherited a list "ml:category" from the sample while mask rows
+    // had their own number "ml:category", the column would need two types and
+    // the query would fail. Each level keeps its own value instead.
     [[nodiscard]] std::string ancestor_projection(std::size_t level) const {
         std::vector<std::size_t> chain;
         for (auto node = level; node > 0; node = dataset_.level_index(parent_level(dataset_.level_names[node])))
@@ -305,6 +311,8 @@ class QueryBuilder {
             if (const auto* declared = dataset_.contract.fields_of(dataset_.level_names[index])) {
                 for (const auto& name : *declared) {
                     if (std::find(seen.begin(), seen.end(), name) != seen.end())
+                        shadowed.push_back(name);
+                    else if (index != level && dataset_.contract.type_conflicts(name))
                         shadowed.push_back(name);
                     else
                         seen.push_back(name);
@@ -386,14 +394,33 @@ class QueryBuilder {
         return column + " >= " + std::to_string(bounds[0]) + " AND " + column + " < " + std::to_string(bounds[1]);
     }
 
+    // Whether this level's rows point at files inside an archive, and so
+    // carry internal:offset and internal:size (their position in the archive).
+    [[nodiscard]] bool level_has_offsets(std::size_t level) const {
+        return has_offsets_ && (level > 0 || dataset_.contract.null_structure);
+    }
+
+    // The SQL that reads one level's rows. A level that holds only folders has
+    // no files, so a writer may leave out internal:offset and internal:size.
+    // The rest of the reader always refers to those two columns, so when they
+    // are missing they are added here, filled with NULL. The trick: combining
+    // the level with an empty row that has both columns (UNION ALL BY NAME)
+    // adds them when absent and changes nothing when present.
+    [[nodiscard]] std::string level_rows(std::size_t level) const {
+        std::string out = "SELECT " + metadata_projection() + " FROM read_parquet(" +
+                          sql_literal(dataset_.level_paths[level]) + ")";
+        if (!level_has_offsets(level))
+            return out;
+        return "(" + out + ") UNION ALL BY NAME (SELECT NULL::BIGINT AS " + sql_identifier(id_offset) +
+               ", NULL::BIGINT AS " + sql_identifier(id_size) + " WHERE false)";
+    }
+
     [[nodiscard]] std::string common_table_expressions() const {
         // Naming every level once keeps the generated joins readable and lets
         // DuckDB plan all Parquet scans as one statement.
         std::string out = "WITH ";
-        for (std::size_t i = 0; i < dataset_.level_paths.size(); ++i) {
-            out += (i ? ", " : "") + alias(i) + " AS (SELECT " + metadata_projection() + " FROM read_parquet(" +
-                   sql_literal(dataset_.level_paths[i]) + "))";
-        }
+        for (std::size_t i = 0; i < dataset_.level_paths.size(); ++i)
+            out += (i ? ", " : "") + alias(i) + " AS (" + level_rows(i) + ")";
         return out;
     }
 
