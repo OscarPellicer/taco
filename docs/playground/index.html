@@ -12,7 +12,7 @@
     }
   </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=46">
+  <link rel="stylesheet" href="styles.css?v=47">
   <link rel="stylesheet" href="../shared/navigation.css">
   <script type="importmap">
     {
@@ -81,6 +81,19 @@
       <div id="plotLegend" class="plot-legend" aria-live="polite" hidden></div>
     </aside>
 
+    <aside id="sqlPanel" class="sql-panel" aria-label="Filter samples with SQL" hidden>
+      <button id="sqlToggle" class="sql-toggle" type="button" aria-expanded="false" aria-controls="sqlForm">SQL</button>
+      <form id="sqlForm" class="sql-form" hidden>
+        <textarea id="sqlQuery" rows="4" spellcheck="false" aria-label="SQL query that selects the samples to show">SELECT * FROM dataset</textarea>
+        <div class="sql-actions">
+          <button id="sqlRun" class="sql-run" type="submit">Run</button>
+          <button id="sqlClear" type="button">Clear</button>
+          <small>dataset · sample · ⌘/Ctrl+Enter</small>
+        </div>
+        <p id="sqlStatus" class="sql-status" aria-live="polite"></p>
+      </form>
+    </aside>
+
     <aside id="metadataPanel" class="metadata-panel" aria-labelledby="pointTitle" aria-hidden="true">
       <header>
         <div><p id="pointPosition">Point —</p><h2 id="pointTitle">Sample metadata</h2></div>
@@ -118,6 +131,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=64"></script>
+  <script type="module" src="app.js?v=65"></script>
 </body>
 </html>

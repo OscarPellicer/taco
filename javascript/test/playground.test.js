@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { extendRandomRowIndexes, randomRowIndexes } from "../../docs/playground/sampling.js";
+import { extendRandomRowIndexes, populationRows, randomRowIndexes } from "../../docs/playground/sampling.js";
+import { datasetView, identityColumn, normalizeQuery, selectSampleRows } from "../../docs/playground/sql.js";
 
 test("selects a sorted random sample without replacement", () => {
   let seed = 123456789;
@@ -48,4 +49,40 @@ test("rejects invalid sample extensions", () => {
   assert.throws(() => extendRandomRowIndexes(10, [1, 1], 5), /unique/);
   assert.throws(() => extendRandomRowIndexes(10, [11], 5), /current row/);
   assert.throws(() => extendRandomRowIndexes(10, [1, 2], 1), /cannot shrink/);
+});
+
+test("maps sampled positions onto the rows a SQL filter kept", () => {
+  assert.deepEqual(populationRows([0, 5], null), [0, 5]);
+  assert.equal(populationRows(null, null), null);
+  assert.deepEqual(populationRows(null, [3, 8, 13]), [3, 8, 13]);
+  assert.deepEqual(populationRows([2, 0], [3, 8, 13]), [13, 3]);
+  assert.deepEqual(populationRows(null, []), []);
+});
+
+test("normalizes a SQL filter query", () => {
+  assert.equal(normalizeQuery("  SELECT * FROM dataset ;; "), "SELECT * FROM dataset");
+  assert.equal(normalizeQuery("SELECT * FROM dataset -- all\n"), "SELECT * FROM dataset -- all");
+  assert.throws(() => normalizeQuery(" ; "), /Write a query/);
+  assert.throws(() => normalizeQuery(undefined), /Write a query/);
+});
+
+test("a SQL filter needs the sample identity", () => {
+  assert.equal(identityColumn(["id", "taco:sample_index"]), "taco:sample_index");
+  assert.equal(identityColumn(["internal:current_id", "id"]), "internal:current_id");
+  assert.throws(() => identityColumn(["id", "ml:split"]), /must return taco:sample_index/);
+});
+
+test("the dataset view hides reader columns like the Python reader", () => {
+  assert.equal(
+    datasetView(["internal:current_id", "internal:relative_path", "id", "ml:split", "taco:location"]),
+    'SELECT "internal:current_id" AS "taco:sample_index", "id", "ml:split" FROM "sample"',
+  );
+  assert.equal(
+    datasetView(["internal:current_id", "internal:source_file", "id", 'odd"name:x']),
+    'SELECT "internal:source_file" AS source_file, "internal:current_id" AS "taco:sample_index", "id", "odd""name:x" FROM "sample"',
+  );
+});
+
+test("a SQL filter needs the cached sample.parquet bytes", async () => {
+  await assert.rejects(() => selectSampleRows(undefined, "SELECT * FROM dataset"), /Reload the page/);
 });

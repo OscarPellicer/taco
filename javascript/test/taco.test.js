@@ -105,6 +105,14 @@ test("caches compressed metadata before projected queries", async () => {
   await assert.rejects(() => dataset.cacheLevel("missing"), /unknown metadata level/);
 });
 
+test("caching a metadata level returns its Parquet bytes", async () => {
+  const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
+  const bytes = await dataset.cacheLevel("sample");
+  assert.ok(bytes instanceof ArrayBuffer);
+  assert.deepEqual(new Uint8Array(bytes), fixture.entries.get("METADATA/sample.parquet"));
+  assert.equal(await dataset.cacheLevel("sample"), bytes);
+});
+
 test("reads a metadata row count without decoding its rows", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
   assert.equal(await dataset.levelRowCount("sample"), 3);

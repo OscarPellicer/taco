@@ -86,8 +86,12 @@ export class Dataset {
   }
 
   /**
+   * Download one metadata level once and keep it in memory. Resolves with its
+   * Parquet bytes, which the reader keeps using and callers must not modify.
+   *
    * @param {string} level
    * @param {{onProgress?: (progress: {loaded: number, total: number}) => void}} [options]
+   * @returns {Promise<ArrayBuffer>}
    */
   async cacheLevel(level, options = {}) {
     if (typeof level !== "string" || !this.levels.includes(level)) {
@@ -99,7 +103,7 @@ export class Dataset {
     if (options.onProgress !== undefined && typeof options.onProgress !== "function") {
       throw new TypeError("taco: onProgress must be a function");
     }
-    await (await this.#levelReader(level)).cache(options.onProgress);
+    return (await this.#levelReader(level)).cache(options.onProgress);
   }
 
   /** @param {string} level Return the number of rows in one metadata level without decoding it. */

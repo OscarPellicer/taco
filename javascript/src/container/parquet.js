@@ -17,7 +17,12 @@ export class TacoParquet {
     this.cachePromise = null;
   }
 
-  /** @param {(progress: {loaded: number, total: number}) => void} [onProgress] */
+  /**
+   * Download the Parquet file once and keep it in memory.
+   *
+   * @param {(progress: {loaded: number, total: number}) => void} [onProgress]
+   * @returns {Promise<ArrayBuffer>}
+   */
   async cache(onProgress) {
     if (!this.cachePromise) {
       const download = this.file.readAll
@@ -30,10 +35,12 @@ export class TacoParquet {
           slice: async (start, end = buffer.byteLength) => buffer.slice(start, end),
         };
         this.file = cachedFile;
+        return buffer;
       });
     }
-    await this.cachePromise;
+    const buffer = await this.cachePromise;
     onProgress?.({ loaded: this.file.byteLength, total: this.file.byteLength });
+    return buffer;
   }
 
   /** Return the number of rows without decoding the Parquet body. */

@@ -58,3 +58,17 @@ export function extendRandomRowIndexes(totalRows, current, targetSize, random = 
   }
   return [...current, ...additions];
 }
+
+/**
+ * Map sampled positions onto the physical rows of the population a SQL filter
+ * kept. Without a filter the positions are already physical rows, and null
+ * still means every row.
+ *
+ * @param {number[] | null} positions
+ * @param {number[] | null} population
+ * @returns {number[] | null}
+ */
+export function populationRows(positions, population) {
+  if (!population) return positions;
+  return positions === null ? population : positions.map((position) => population[position]);
+}

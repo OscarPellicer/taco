@@ -1,6 +1,7 @@
-import { openDataset } from "../javascript/src/index.js?v=16";
+import { openDataset } from "../javascript/src/index.js?v=17";
 import * as maplibregl from "https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.mjs";
-import { extendRandomRowIndexes, randomRowIndexes } from "./sampling.js?v=2";
+import { extendRandomRowIndexes, populationRows, randomRowIndexes } from "./sampling.js?v=3";
+import { selectSampleRows } from "./sql.js?v=1";
 
 const FIXTURE_ROOT = "https://huggingface.co/datasets/asterisk-labs/taco-api-fixtures/resolve/main";
 const MANIFEST_URL = `${FIXTURE_ROOT}/manifest.json`;
@@ -43,6 +44,7 @@ const element = Object.fromEntries(
     "downloadProgress", "downloadBar", "downloadPercent", "downloadBytes",
     "sampleDisplay", "sampleDisplayPercent", "sampleDisplayCount", "sampleDisplayProgress",
     "sampleDisplayHint", "decreasePoints", "increasePoints",
+    "sqlPanel", "sqlToggle", "sqlForm", "sqlQuery", "sqlRun", "sqlClear", "sqlStatus",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
@@ -196,6 +198,8 @@ const state = {
   sampledIndexes: null,
   sampleIndexes: null,
   sampleRows: 0,
+  // Physical sample rows a SQL filter kept, or null for every row.
+  population: null,
   centroidField: null,
   identityColumns: [],
   colorIndexes: new Uint8Array(),
@@ -214,6 +218,7 @@ const state = {
   messageTimer: null,
   loadToken: 0,
   changingPointCount: false,
+  filtering: false,
 };
 
 prefillRequestedUrl();
@@ -267,6 +272,17 @@ function bindEvents() {
   element.loadDataset.addEventListener("click", () => { void loadDatasetUrl(element.datasetUrl.value); });
   element.increasePoints.addEventListener("click", () => { void increaseDisplayedPoints(); });
   element.decreasePoints.addEventListener("click", () => { void decreaseDisplayedPoints(); });
+  element.sqlToggle.addEventListener("click", () => toggleSqlPanel());
+  element.sqlForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void runSqlFilter();
+  });
+  element.sqlQuery.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+    event.preventDefault();
+    element.sqlForm.requestSubmit();
+  });
+  element.sqlClear.addEventListener("click", () => { void clearSqlFilter(); });
   element.plotField.addEventListener("change", () => {
     state.plotMode = "auto";
     element.plotMode.value = "auto";
@@ -283,6 +299,7 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => {
     if (!element.metadataPanel.classList.contains("open")) return;
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLButtonElement) return;
+    if (event.target instanceof HTMLTextAreaElement) return;
     if (event.key === "Escape") closeMetadata();
     if (event.key === "ArrowLeft") navigateMetadata(-1);
     if (event.key === "ArrowRight") navigateMetadata(1);
@@ -341,8 +358,12 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   state.colorIndexes = new Uint8Array();
   state.parquetCachePromise = null;
   state.changingPointCount = false;
+  state.population = null;
+  setSqlBusy(false);
   element.sampleDisplay.hidden = true;
   element.plotPanel.hidden = true;
+  element.sqlPanel.hidden = true;
+  setSqlStatus("");
   setStatus("loading", "Reading TACO");
   disableDatasetNavigation(true);
   element.fixtureSelect.value = String(index);
@@ -392,10 +413,11 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
     state.identityColumns = identityColumns;
     state.colorIndexes = new Uint8Array(points.length);
     populatePlotFields(sampleFields);
+    element.sqlPanel.hidden = false;
     renderDataset(url, index);
     await renderPoints();
     setPointCountStatus(points.length, sampleRows, " · caching metadata");
-    state.parquetCachePromise = cacheParquets(dataset, token, sampleRows);
+    state.parquetCachePromise = cacheParquets(dataset, token);
   } catch (error) {
     if (token === state.loadToken) fail(error);
   } finally {
@@ -406,12 +428,12 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
   }
 }
 
-async function cacheParquets(dataset, token, sampleRows) {
+async function cacheParquets(dataset, token) {
   if (typeof dataset.cacheLevel !== "function") return;
   try {
     await Promise.all(dataset.levels.map((level) => dataset.cacheLevel(level)));
-    if (token === state.loadToken && dataset === state.dataset && !state.changingPointCount) {
-      setPointCountStatus(state.points.length, sampleRows);
+    if (token === state.loadToken && dataset === state.dataset && !state.changingPointCount && !state.filtering) {
+      setPointCountStatus(state.points.length, populationSize());
     }
   } catch (error) {
     if (token === state.loadToken && dataset === state.dataset) showMessage(messageOf(error));
@@ -477,14 +499,14 @@ function compactCount(value) {
 }
 
 async function increaseDisplayedPoints() {
-  if (!state.dataset || state.sampledIndexes === null || state.changingPointCount) return;
+  if (!state.dataset || state.sampledIndexes === null || state.changingPointCount || state.filtering) return;
   const { step } = pointDisplayConfig();
-  const targetSize = Math.min(state.sampledIndexes.length + step, state.sampleRows);
+  const targetSize = Math.min(state.sampledIndexes.length + step, populationSize());
   await changeDisplayedPointCount(targetSize);
 }
 
 async function decreaseDisplayedPoints() {
-  if (!state.dataset || state.sampledIndexes === null || state.changingPointCount) return;
+  if (!state.dataset || state.sampledIndexes === null || state.changingPointCount || state.filtering) return;
   const { initial, step } = pointDisplayConfig();
   const targetSize = previousPointCount(state.sampledIndexes.length, initial, step);
   await changeDisplayedPointCount(targetSize);
@@ -506,8 +528,8 @@ async function changeDisplayedPointCount(targetSize) {
 
   try {
     if (increasing) {
-      const extendedIndexes = extendRandomRowIndexes(state.sampleRows, state.sampledIndexes, targetSize);
-      const addedIndexes = extendedIndexes.slice(currentSize);
+      const extendedIndexes = extendRandomRowIndexes(populationSize(), state.sampledIndexes, targetSize);
+      const addedIndexes = populationRows(extendedIndexes.slice(currentSize), state.population);
       const rows = await state.dataset.readLevel("sample", {
         columns: state.identityColumns,
         rowIndexes: addedIndexes,
@@ -523,7 +545,7 @@ async function changeDisplayedPointCount(targetSize) {
       state.colorIndexes = colors;
     } else {
       const retainedIndexes = state.sampledIndexes.slice(0, targetSize);
-      const retained = new Set(retainedIndexes);
+      const retained = new Set(populationRows(retainedIndexes, state.population));
       const points = [];
       const colors = [];
       state.points.forEach((point, index) => {
@@ -545,9 +567,91 @@ async function changeDisplayedPointCount(targetSize) {
   } finally {
     if (token === state.loadToken) {
       state.changingPointCount = false;
-      setPointCountStatus(state.points.length, state.sampleRows);
+      setPointCountStatus(state.points.length, populationSize());
     }
   }
+}
+
+function populationSize() {
+  return state.population ? state.population.length : state.sampleRows;
+}
+
+function toggleSqlPanel() {
+  const open = element.sqlForm.hidden;
+  element.sqlForm.hidden = !open;
+  element.sqlToggle.setAttribute("aria-expanded", String(open));
+  if (open) element.sqlQuery.focus();
+}
+
+async function runSqlFilter() {
+  if (!state.dataset || state.filtering || state.changingPointCount) return;
+  const token = state.loadToken;
+  setSqlBusy(true);
+  try {
+    const parquet = await state.dataset.cacheLevel("sample");
+    const rows = await selectSampleRows(parquet, element.sqlQuery.value, (label) => setSqlStatus(`${label}…`));
+    if (token !== state.loadToken) return;
+    await showPopulation(rows);
+    setSqlStatus(`${rows.length.toLocaleString()} of ${state.sampleRows.toLocaleString()} samples`);
+  } catch (error) {
+    if (token === state.loadToken) setSqlStatus(messageOf(error), true);
+  } finally {
+    if (token === state.loadToken) setSqlBusy(false);
+  }
+}
+
+async function clearSqlFilter() {
+  if (!state.dataset || state.filtering || state.changingPointCount) return;
+  const token = state.loadToken;
+  setSqlBusy(true);
+  try {
+    if (state.population) await showPopulation(null);
+    if (token === state.loadToken) setSqlStatus("");
+  } catch (error) {
+    if (token === state.loadToken) setSqlStatus(messageOf(error), true);
+  } finally {
+    if (token === state.loadToken) setSqlBusy(false);
+  }
+}
+
+function setSqlBusy(busy) {
+  state.filtering = busy;
+  element.sqlRun.disabled = busy;
+  element.sqlClear.disabled = busy;
+}
+
+function setSqlStatus(text, error = false) {
+  element.sqlStatus.textContent = text;
+  element.sqlStatus.classList.toggle("error", error);
+}
+
+// Display a random sample of the rows a SQL filter kept, or of every row when rows is null.
+async function showPopulation(rows) {
+  const token = state.loadToken;
+  const size = rows ? rows.length : state.sampleRows;
+  const positions = randomRowIndexes(size, pointDisplayLimit());
+  const physical = populationRows(positions, rows);
+  const metadata = physical?.length === 0
+    ? []
+    : await state.dataset.readLevel("sample", {
+      columns: state.identityColumns,
+      ...(physical ? { rowIndexes: physical } : {}),
+    });
+  if (token !== state.loadToken) return;
+
+  // The selection is keyed by point position, so it goes before the points change.
+  closeMetadata();
+  const points = pointsFromMetadata(metadata, state.centroidField, physical);
+  state.population = rows;
+  state.points = points;
+  state.sampledIndexes = positions;
+  state.sampleIndexes = physical === null && points.length === state.sampleRows
+    ? null
+    : points.map((point) => point.physicalIndex);
+  state.colorIndexes = new Uint8Array(points.length);
+  await updateRenderedPoints();
+  if (state.plotField && points.length) await loadPlotField(state.plotField);
+  setPointCountStatus(points.length, populationSize());
 }
 
 function pointsFromMetadata(rows, centroidField, rowIndexes = null) {

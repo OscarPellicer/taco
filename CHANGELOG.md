@@ -4,6 +4,15 @@ All notable changes across the TACO core, language bindings, writer, and
 JavaScript reader are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- The viewer filters its samples with SQL on laptops and desktops. The query
+  reads `dataset` or `sample`, and the point limit applies to the samples it
+  returns.
+- The JavaScript `cacheLevel` resolves with the cached Parquet bytes.
+
 ## 0.12.0 - 2026-09-26
 
 ### Changed
