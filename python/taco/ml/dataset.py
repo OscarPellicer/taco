@@ -166,6 +166,20 @@ def _absent(value: Any) -> bool:
     return isinstance(value, float) and math.isnan(value)
 
 
+#: Which partition a TACOCAT row came from (spec 7.5).
+SOURCE_COLUMN = "internal:source_file"
+
+
+def _tacocat(source: str) -> Path | None:
+    """The `.tacocat/` directory `source` names, directly or as its dataset directory."""
+    path = Path(source)
+    for candidate in (path, path / ".tacocat"):
+        document = candidate / "COLLECTION.json"
+        if candidate.is_dir() and document.is_file() and "taco:sources" in json.loads(document.read_text()):
+            return candidate
+    return None
+
+
 class Dataset:
     """A TACO collection read as model-ready samples.
 
@@ -175,7 +189,8 @@ class Dataset:
     interpret each slot.
 
     With ``masked=True`` rasters come back as masked arrays: pixels equal to the
-    slot's ``nodata`` and, for labels, to its ``ignore_index`` are masked, so a
+    slot's ``nodata`` and, for labels, to its ``ignore_index`` or one of its
+    ``ignore_classes`` are masked, so a
     loss or a statistic never counts them by accident.
 
     With ``max_pixels``, a raster larger than that is read at a half, a quarter
@@ -201,17 +216,37 @@ class Dataset:
             parts = tuple(str(part) for part in source)
         if not parts:
             raise ValueError("taco.ml.Dataset needs at least one archive")
+        # A TACOCAT (spec 7.5): the `.tacocat/` directory, or the dataset directory
+        # holding it. Its consolidated tables are read once, through the catalog,
+        # and payloads come from the partitions it names.
+        catalog = _tacocat(parts[0]) if len(parts) == 1 else None
+        self.masked = masked
+        self.max_pixels = max_pixels
+        self._catalog = catalog
+        if catalog is not None:
+            document = json.loads((catalog / "COLLECTION.json").read_text())
+            if CONTRACT_KEY not in document:
+                raise ValueError(f"{catalog} declares no {CONTRACT_KEY}; "
+                                 f"taco.ml needs one to type its samples")
+            names = [entry["file"] for entry in document["taco:sources"]["partitions"]]
+            self.parts = tuple(str(catalog.parent / name) for name in names)
+            self.path = str(catalog)
+            self.reader = _Reader(str(catalog))
+            self._files = dict(zip(names, self.parts, strict=True))
+            self._init_contract(document)
+            return
         names = [Path(part).name for part in parts]
         if len(set(names)) != len(names):
             raise ValueError(f"parts must have distinct file names, got {names}")
         self.parts = parts
         self.path = parts[0]
-        self.masked = masked
-        self.max_pixels = max_pixels
         self.reader = _Reader(list(parts) if len(parts) > 1 else parts[0])
         self._files = dict(zip(names, parts, strict=True))
         documents = []
         for part in parts:
+            if Path(part).is_dir():               # a FOLDER container
+                documents.append(json.loads((Path(part) / "COLLECTION.json").read_text()))
+                continue
             with zipfile.ZipFile(part) as archive:
                 documents.append(json.loads(archive.read("COLLECTION.json")))
         document = documents[0]
@@ -223,6 +258,9 @@ class Dataset:
                 raise ValueError(f"{name} declares a different {CONTRACT_KEY} "
                                  f"from {names[0]}; they are not parts of one "
                                  f"collection")
+        self._init_contract(document)
+
+    def _init_contract(self, document: dict[str, Any]) -> None:
         self.collection = document
         self.contract = MLContract.model_validate(document[CONTRACT_KEY])
         slots = list(self.contract.inputs) + list(self.contract.targets)
@@ -250,6 +288,13 @@ class Dataset:
     @cached_property
     def _rows(self) -> list[tuple[str, int]]:
         """`(part, local sample id)` for each sample."""
+        if self._catalog is not None:
+            # A catalog renumbers rows globally but keeps each partition's own
+            # relative paths, whose first component is the local sample id.
+            return list(zip(self.table.column(SOURCE_COLUMN).to_pylist(),
+                            (int(path.split("/")[0]) for path
+                             in self.table.column("internal:relative_path").to_pylist()),
+                            strict=True))
         ids = self.table.column("internal:current_id").to_pylist()
         if len(self.parts) == 1:
             return [(next(iter(self._files)), int(i)) for i in ids]
@@ -263,7 +308,8 @@ class Dataset:
         """For a level below `sample`: `(part, parent id)` -> its rows, in stored order."""
         if level not in self._parents:
             table = self.level(level)
-            parts = (table.column("source_file").to_pylist() if len(self.parts) > 1
+            parts = (table.column(SOURCE_COLUMN).to_pylist() if self._catalog is not None
+                     else table.column("source_file").to_pylist() if len(self.parts) > 1
                      else [next(iter(self._files))] * table.num_rows)
             index: dict[tuple[str, int], list[int]] = {}
             for row, (part, parent) in enumerate(zip(parts, table.column("internal:parent_id").to_pylist(),
@@ -352,8 +398,38 @@ class Dataset:
         import pyarrow.parquet as pq
 
         out: dict[str, dict[str, tuple[int, int]]] = {}
+        if self._catalog is not None:
+            # One read of the consolidated tables, which carry every partition's
+            # offsets beside the partition they belong to.
+            out = {part: {} for part in self._files}
+            for level in sorted(self._catalog.glob("*.parquet")):
+                if level.name == "sample.parquet":
+                    continue
+                table = pq.read_table(level)
+                if "internal:offset" not in table.column_names:
+                    continue
+                for part, relative, offset, size in zip(
+                        table.column(SOURCE_COLUMN).to_pylist(),
+                        table.column("internal:relative_path").to_pylist(),
+                        table.column("internal:offset").to_pylist(),
+                        table.column("internal:size").to_pylist(), strict=True):
+                    if offset is not None:
+                        out[part][relative] = (offset, size)
+            return out
         for part, path in self._files.items():
             found = out[part] = {}
+            if Path(path).is_dir():
+                # A FOLDER container stores no byte ranges: a payload is the file
+                # `DATA/<relative_path>` itself (spec 3.2), read whole. The paths come
+                # from the metadata, not from stat-ing millions of files.
+                for level in sorted((Path(path) / "METADATA").glob("*.parquet")):
+                    if level.name == "sample.parquet":
+                        continue
+                    table = pq.read_table(level, columns=["internal:relative_path"])
+                    found.update((relative, (0, -1)) for relative
+                                 in table.column("internal:relative_path").to_pylist()
+                                 if relative)
+                continue
             with zipfile.ZipFile(path) as archive:
                 for name in archive.namelist():
                     if not (name.startswith("METADATA/") and name.endswith(".parquet")):
@@ -410,9 +486,25 @@ class Dataset:
 
     def _blob(self, part: str, relative_path: str) -> bytes:
         offset, size = self._where(part, relative_path)
-        with Path(self._files[part]).open("rb") as handle:
+        with Path(self._holder(part, relative_path)).open("rb") as handle:
             handle.seek(offset)
-            return handle.read(size)
+            return handle.read(size)          # a folder's payload: offset 0, size -1
+
+    def _is_folder(self, part: str) -> bool:
+        return Path(self._files[part]).is_dir()
+
+    def _holder(self, part: str, relative_path: str) -> str:
+        """The file a payload's bytes live in: the archive, or `DATA/<path>` of a folder."""
+        if self._is_folder(part):
+            return str(Path(self._files[part]) / "DATA" / relative_path)
+        return self._files[part]
+
+    def _gdal_path(self, part: str, relative_path: str) -> str:
+        """A path GDAL opens for one payload: a byte range of the archive, or the file."""
+        offset, size = self._where(part, relative_path)
+        if self._is_folder(part):
+            return self._holder(part, relative_path)
+        return f"/vsisubfile/{offset}_{size},{self._files[part]}"
 
     def _raster(self, part: str, relative_path: str, *, bands: int | None = None):
         """Decode one raster payload, reading it in place inside the archive.
@@ -427,11 +519,10 @@ class Dataset:
         import rasterio
         from rasterio.errors import NotGeoreferencedWarning
 
-        offset, size = self._where(part, relative_path)
         # A PNG or JPEG has no map grid, and that is normal for a picture.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", NotGeoreferencedWarning)
-            with rasterio.open(f"/vsisubfile/{offset}_{size},{self._files[part]}") as source:
+            with rasterio.open(self._gdal_path(part, relative_path)) as source:
                 shrink = self._shrink(source.width, source.height)
                 array = source.read(masked=self.masked, out_shape=(
                     source.count, source.height // shrink, source.width // shrink))
@@ -468,9 +559,15 @@ class Dataset:
         return np.ma.masked_equal(array, slot.nodata)
 
     def _mask_ignored(self, array, slot: Slot):
-        if not self.masked or slot.ignore_index is None:
+        """Mask the label values a loss must not score: ``ignore_index`` and
+        ``ignore_classes``."""
+        ignored = [] if slot.ignore_index is None else [slot.ignore_index]
+        ignored += list(slot.ignore_classes or ())
+        if not self.masked or not ignored:
             return array
-        return np.ma.masked_equal(array, slot.ignore_index)
+        if len(ignored) == 1:
+            return np.ma.masked_equal(array, ignored[0])
+        return np.ma.masked_where(np.isin(array, ignored), array)
 
     def _sample_shape(self, part: str, local: int) -> tuple[int, int]:
         """This sample's picture size, for a set or series that has no member here.

@@ -97,6 +97,17 @@ def test_masked_hides_nodata_and_ignored_labels(tmp_path: Path) -> None:
     assert not np.ma.isMaskedArray(Dataset(path)[0]["image"].array)
 
 
+def test_masked_hides_ignored_classes_beside_the_ignore_index(tmp_path: Path) -> None:
+    label = _tif(tmp_path / "src" / "label.tif", np.array([[[0, 1], [2, 3]]], "uint8"))
+    contract = {"inputs": [],
+                "targets": [{"name": "label", "kind": "mask", "path": "label.tif",
+                             "classes": ["unlabelled", "a", "unused", "b"],
+                             "ignore_index": 0, "ignore_classes": [2]}]}
+    sample = taco.Sample(assets=[taco.Asset(label, path="label.tif")])
+    path = _archive(tmp_path / "x.zip", ["label.tif"], contract, [sample], taco.Level("sample"))
+    assert Dataset(path, masked=True)[0]["label"].valid.tolist() == [[False, True], [False, True]]
+
+
 def test_a_series_stacked_in_one_file_is_cut_by_its_frame_count(tmp_path: Path) -> None:
     stack = np.arange(6 * 2 * 2, dtype="uint8").reshape(6, 2, 2)      # 3 frames x 2 bands
     series = _tif(tmp_path / "src" / "series.tif", stack)
@@ -126,6 +137,66 @@ def test_per_frame_dates_follow_the_frame_numbers(tmp_path: Path) -> None:
     value = Dataset(path)[0]["s2"]
     assert [int(frame[0, 0, 0]) for frame in value.array] == list(range(12))
     assert value.times == [f"2020-{i + 1:02d}-01" for i in range(12)]
+
+
+def test_a_folder_container_reads_like_its_zip(tmp_path: Path) -> None:
+    # The same samples written as ZIP and as FOLDER decode to the same arrays: a
+    # folder's payload is DATA/<relative_path> itself, with no byte range to seek.
+    def samples(root: Path) -> list[taco.Sample]:
+        out = []
+        for index in range(3):
+            image = _tif(root / f"image{index}.tif", np.full((2, 3, 3), index, "uint8"))
+            frames = [taco.Asset(_tif(root / f"t{index}_{i}.tif", np.full((1, 2, 2), 10 * index + i, "uint8")),
+                                 path=f"s2/t{i}.tif") for i in range(index + 1)]
+            out.append(taco.Sample(assets=[taco.Asset(image, path="image.tif"), *frames]))
+        return out
+    contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif"},
+                           {"name": "s2", "kind": "raster_series", "path": "s2/t*[1,3].tif",
+                            "structure": "series"}]}
+    structure = ["image.tif", "s2/t*[1,3].tif"]
+    levels = (taco.Level("sample"), taco.Level("children"), taco.Level("children/s2"))
+    zipped = Dataset(_archive(tmp_path / "x.zip", structure, contract, samples(tmp_path / "a"), *levels))
+    folder = Dataset(_archive(tmp_path / "x", structure, contract, samples(tmp_path / "b"), *levels))
+    assert Path(folder.path).is_dir()
+    assert len(folder) == len(zipped) == 3
+    for index in range(3):
+        for name in ("image", "s2"):
+            assert np.array_equal(np.asarray(folder[index][name].array),
+                                  np.asarray(zipped[index][name].array))
+    assert len(folder[2]["s2"].array) == 3
+
+
+def test_a_tacocat_reads_like_its_partitions(tmp_path: Path) -> None:
+    # Two partitions consolidated into `.tacocat/`: opening the catalog, or the
+    # dataset directory holding it, gives the same samples in partition order as
+    # the list of archives, series frames included.
+    contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif"},
+                           {"name": "s2", "kind": "raster_series", "path": "s2/t*[1,3].tif",
+                            "structure": "series"}]}
+    structure = ["image.tif", "s2/t*[1,3].tif"]
+    levels = (taco.Level("sample"), taco.Level("children"), taco.Level("children/s2"))
+    root = tmp_path / "ds"
+    parts = []
+    for part in range(2):
+        samples = []
+        for index in range(3):
+            value = 10 * part + index
+            image = _tif(tmp_path / "src" / f"i{value}.tif", np.full((1, 2, 2), value, "uint8"))
+            frames = [taco.Asset(_tif(tmp_path / "src" / f"t{value}_{i}.tif",
+                                      np.full((1, 2, 2), 100 + value, "uint8")), path=f"s2/t{i}.tif")
+                      for i in range(index + 1)]
+            samples.append(taco.Sample(assets=[taco.Asset(image, path="image.tif"), *frames]))
+        root.mkdir(exist_ok=True)
+        parts.append(_archive(root / f"x.{part:04d}.zip", structure, contract, samples, *levels))
+    catalog = taco.consolidate(parts)
+    listed = Dataset(parts)
+    for opened in (Dataset(catalog), Dataset(root)):
+        assert len(opened) == len(listed) == 6
+        for index in range(6):
+            for name in ("image", "s2"):
+                assert np.array_equal(np.asarray(opened[index][name].array),
+                                      np.asarray(listed[index][name].array))
+    assert [int(Dataset(root)[i]["image"].array[0, 0, 0]) for i in range(6)] == [0, 1, 2, 10, 11, 12]
 
 
 def test_a_reference_names_a_level_only_when_it_is_one(tmp_path: Path) -> None:
