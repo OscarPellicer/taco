@@ -92,6 +92,24 @@ def test_open_partitions(tmp_path: Path, collection: taco.Collection, make_sampl
         assert str(tmp_path / row["source_file"]) in row["before__B02.tif::location"]
 
 
+def test_consolidate_takes_columns_by_name(tmp_path: Path, collection: taco.Collection, make_sample,
+                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    # Partitions written by earlier writers store their user columns before the
+    # internal ones; the consolidated schema lists the internal ones first.
+    parts = [
+        build(tmp_path / "a.zip", collection, [make_sample(0)]),
+        build(tmp_path / "b.zip", collection, [make_sample(1)]),
+    ]
+    expected = open_view(taco.consolidate(parts, tmp_path / "plain")).level("sample")
+    from taco.container.view import DatasetView
+    stored = DatasetView.level
+    monkeypatch.setattr(DatasetView, "level",
+                        lambda self, level: (table := stored(self, level)).select(table.column_names[::-1]))
+    output = taco.consolidate(parts, tmp_path / "reordered")
+    monkeypatch.undo()
+    assert open_view(output).level("sample").equals(expected)
+
+
 def test_consolidate_preserves_schema_metadata(tmp_path: Path, collection: taco.Collection, make_sample) -> None:
     parts = [
         build(tmp_path / "a.zip", collection, [make_sample(0)]),

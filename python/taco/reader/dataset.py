@@ -91,6 +91,12 @@ class Dataset:
         opened = [native.NativeDataset(source) for source in self.sources]
         query = native.sql(opened, idx=None, level=name, pivoted=False, files=None, location=False)
         order = ("source_file, " if len(self.sources) > 1 else "") + '"internal:current_id"'
+        if self.collection.sources is not None:
+            # A TACOCAT keeps each partition's own ids, so rows are ordered by the
+            # partition's position in `taco:sources`, then by id within it.
+            files = [entry["file"] for entry in self.collection.sources.get("partitions", ())]
+            rank = " ".join(f"WHEN {_literal(file)} THEN {position}" for position, file in enumerate(files))
+            order = f'CASE "internal:source_file" {rank} END, "internal:current_id"'
         return engine.open_reader().execute(f"SELECT * FROM ({query}) ORDER BY {order}").to_arrow_table()
 
     def sql(self, query: str) -> pa.Table:
