@@ -60,10 +60,6 @@ export function extendRandomRowIndexes(totalRows, current, targetSize, random = 
 }
 
 /**
- * Map sampled positions onto the physical rows of the population a SQL filter
- * kept. Without a filter the positions are already physical rows, and null
- * still means every row.
- *
  * @param {number[] | null} positions
  * @param {number[] | null} population
  * @returns {number[] | null}

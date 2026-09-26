@@ -2,7 +2,57 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { extendRandomRowIndexes, populationRows, randomRowIndexes } from "../../docs/playground/sampling.js";
-import { datasetView, identityColumn, normalizeQuery, selectSampleRows } from "../../docs/playground/sql.js";
+import { DEFAULT_QUERY, datasetView, identityColumns, normalizeQuery, selectSampleRows } from "../../docs/playground/sql.js";
+import { normalizedDatasetUrl } from "../../docs/playground/source.js";
+
+test("resolves Source Cooperative product pages to their data endpoint", () => {
+  assert.equal(
+    normalizedDatasetUrl("https://source.coop/major-tom/core-dem"),
+    "https://data.source.coop/major-tom/core-dem",
+  );
+  assert.equal(
+    normalizedDatasetUrl("https://www.source.coop/major-tom/core-dem/?tab=details#readme"),
+    "https://data.source.coop/major-tom/core-dem/",
+  );
+  assert.equal(
+    normalizedDatasetUrl("https://data.source.coop/major-tom/core-dem"),
+    "https://data.source.coop/major-tom/core-dem",
+  );
+  assert.equal(
+    normalizedDatasetUrl("https://example.com/dataset.zip?download=1"),
+    "https://example.com/dataset.zip?download=1",
+  );
+});
+
+test("rejects incomplete Source Cooperative product pages", () => {
+  assert.throws(() => normalizedDatasetUrl("https://source.coop/major-tom"), /product URL/);
+  assert.throws(() => normalizedDatasetUrl("s3://bucket/dataset.zip"), /HTTP or HTTPS/);
+});
+
+test("resolves Hugging Face dataset pages to their files", () => {
+  assert.equal(
+    normalizedDatasetUrl("https://huggingface.co/datasets/owner/repo"),
+    "https://huggingface.co/datasets/owner/repo/resolve/main",
+  );
+  assert.equal(
+    normalizedDatasetUrl("https://huggingface.co/datasets/owner/repo/tree/v1/taco"),
+    "https://huggingface.co/datasets/owner/repo/resolve/v1/taco",
+  );
+  assert.equal(
+    normalizedDatasetUrl("https://huggingface.co/datasets/owner/repo/blob/main/data.zip?download=true#files"),
+    "https://huggingface.co/datasets/owner/repo/resolve/main/data.zip",
+  );
+  assert.equal(
+    normalizedDatasetUrl("https://huggingface.co/datasets/owner/repo/resolve/main/data.zip?download=true"),
+    "https://huggingface.co/datasets/owner/repo/resolve/main/data.zip?download=true",
+  );
+});
+
+test("rejects Hugging Face pages that are not dataset files", () => {
+  assert.throws(() => normalizedDatasetUrl("https://huggingface.co/owner/repo"), /dataset URL/);
+  assert.throws(() => normalizedDatasetUrl("https://huggingface.co/datasets/owner/repo/tree"), /missing a revision/);
+  assert.throws(() => normalizedDatasetUrl("https://huggingface.co/datasets/owner/repo/discussions"), /dataset or file URL/);
+});
 
 test("selects a sorted random sample without replacement", () => {
   let seed = 123456789;
@@ -62,24 +112,29 @@ test("maps sampled positions onto the rows a SQL filter kept", () => {
 test("normalizes a SQL filter query", () => {
   assert.equal(normalizeQuery("  SELECT * FROM dataset ;; "), "SELECT * FROM dataset");
   assert.equal(normalizeQuery("SELECT * FROM dataset -- all\n"), "SELECT * FROM dataset -- all");
-  assert.throws(() => normalizeQuery(" ; "), /Write a query/);
-  assert.throws(() => normalizeQuery(undefined), /Write a query/);
+  assert.equal(normalizeQuery(" ; "), DEFAULT_QUERY);
+  assert.equal(normalizeQuery(undefined), DEFAULT_QUERY);
 });
 
 test("a SQL filter needs the sample identity", () => {
-  assert.equal(identityColumn(["id", "taco:sample_index"]), "taco:sample_index");
-  assert.equal(identityColumn(["internal:current_id", "id"]), "internal:current_id");
-  assert.throws(() => identityColumn(["id", "ml:split"]), /must return taco:sample_index/);
+  assert.deepEqual(identityColumns(["id", "taco:sample_index"]), ["taco:sample_index"]);
+  assert.deepEqual(identityColumns(["internal:current_id", "id"]), ["internal:current_id"]);
+  assert.deepEqual(
+    identityColumns(["internal:current_id", "internal:source_file", "id"], true),
+    ["internal:current_id", "internal:source_file"],
+  );
+  assert.throws(() => identityColumns(["id", "ml:split"]), /must return taco:sample_index/);
+  assert.throws(() => identityColumns(["internal:current_id"], true), /internal:source_file/);
 });
 
 test("the dataset view hides reader columns like the Python reader", () => {
   assert.equal(
     datasetView(["internal:current_id", "internal:relative_path", "id", "ml:split", "taco:location"]),
-    'SELECT "internal:current_id" AS "taco:sample_index", "id", "ml:split" FROM "sample"',
+    'SELECT file_row_number AS "taco:sample_index", "id", "ml:split" FROM taco_rows',
   );
   assert.equal(
     datasetView(["internal:current_id", "internal:source_file", "id", 'odd"name:x']),
-    'SELECT "internal:source_file" AS source_file, "internal:current_id" AS "taco:sample_index", "id", "odd""name:x" FROM "sample"',
+    'SELECT "internal:source_file" AS source_file, file_row_number AS "taco:sample_index", "id", "odd""name:x" FROM taco_rows',
   );
 });
 

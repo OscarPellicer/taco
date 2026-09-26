@@ -1,7 +1,8 @@
 import { openDataset } from "../javascript/src/index.js?v=17";
 import * as maplibregl from "https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.mjs";
 import { extendRandomRowIndexes, populationRows, randomRowIndexes } from "./sampling.js?v=3";
-import { selectSampleRows } from "./sql.js?v=1";
+import { DEFAULT_QUERY, normalizeQuery, prepareSql, selectSampleRows } from "./sql.js?v=3";
+import { normalizedDatasetUrl } from "./source.js?v=2";
 
 const FIXTURE_ROOT = "https://huggingface.co/datasets/asterisk-labs/taco-api-fixtures/resolve/main";
 const MANIFEST_URL = `${FIXTURE_ROOT}/manifest.json`;
@@ -44,7 +45,7 @@ const element = Object.fromEntries(
     "downloadProgress", "downloadBar", "downloadPercent", "downloadBytes",
     "sampleDisplay", "sampleDisplayPercent", "sampleDisplayCount", "sampleDisplayProgress",
     "sampleDisplayHint", "decreasePoints", "increasePoints",
-    "sqlPanel", "sqlToggle", "sqlForm", "sqlQuery", "sqlRun", "sqlClear", "sqlStatus",
+    "sqlPanel", "sqlToggle", "sqlForm", "sqlQuery", "sqlRun", "sqlStatus",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
@@ -198,7 +199,7 @@ const state = {
   sampledIndexes: null,
   sampleIndexes: null,
   sampleRows: 0,
-  // Physical sample rows a SQL filter kept, or null for every row.
+  // Filtered physical rows; null means every row.
   population: null,
   centroidField: null,
   identityColumns: [],
@@ -282,7 +283,6 @@ function bindEvents() {
     event.preventDefault();
     element.sqlForm.requestSubmit();
   });
-  element.sqlClear.addEventListener("click", () => { void clearSqlFilter(); });
   element.plotField.addEventListener("change", () => {
     state.plotMode = "auto";
     element.plotMode.value = "auto";
@@ -384,10 +384,18 @@ async function loadDatasetUrl(value, { fixture = null, index = -1 } = {}) {
 
     const identityColumns = ["internal:current_id", centroidField];
     if (dataset.container === "tacocat") identityColumns.push("internal:source_file");
+    const sqlReady = window.matchMedia("(min-width: 701px)").matches
+      ? prepareSql().catch(() => {})
+      : null;
     const sampleRows = await dataset.levelRowCount("sample");
     setStatus("loading", "Downloading sample.parquet");
     setLoadingLabel("Downloading sample.parquet");
-    await dataset.cacheLevel("sample", { onProgress: updateDownloadProgress });
+    const sampleParquet = await dataset.cacheLevel("sample", { onProgress: updateDownloadProgress });
+    if (sqlReady) {
+      void sqlReady.then(() => {
+        if (token === state.loadToken) return prepareSql(sampleParquet);
+      }).catch(() => {});
+    }
     finishDownloadProgress();
     setStatus("loading", "Sampling points");
     setLoadingLabel("Sampling points");
@@ -588,8 +596,16 @@ async function runSqlFilter() {
   const token = state.loadToken;
   setSqlBusy(true);
   try {
+    setSqlStatus("");
+    const query = normalizeQuery(element.sqlQuery.value);
+    element.sqlQuery.value = query;
+    if (query === DEFAULT_QUERY) {
+      if (state.population) await showPopulation(null);
+      if (token === state.loadToken) setSqlStatus(`${state.sampleRows.toLocaleString()} of ${state.sampleRows.toLocaleString()} samples`);
+      return;
+    }
     const parquet = await state.dataset.cacheLevel("sample");
-    const rows = await selectSampleRows(parquet, element.sqlQuery.value, (label) => setSqlStatus(`${label}…`));
+    const rows = await selectSampleRows(parquet, query, (label) => setSqlStatus(`${label}…`));
     if (token !== state.loadToken) return;
     await showPopulation(rows);
     setSqlStatus(`${rows.length.toLocaleString()} of ${state.sampleRows.toLocaleString()} samples`);
@@ -600,24 +616,9 @@ async function runSqlFilter() {
   }
 }
 
-async function clearSqlFilter() {
-  if (!state.dataset || state.filtering || state.changingPointCount) return;
-  const token = state.loadToken;
-  setSqlBusy(true);
-  try {
-    if (state.population) await showPopulation(null);
-    if (token === state.loadToken) setSqlStatus("");
-  } catch (error) {
-    if (token === state.loadToken) setSqlStatus(messageOf(error), true);
-  } finally {
-    if (token === state.loadToken) setSqlBusy(false);
-  }
-}
-
 function setSqlBusy(busy) {
   state.filtering = busy;
   element.sqlRun.disabled = busy;
-  element.sqlClear.disabled = busy;
 }
 
 function setSqlStatus(text, error = false) {
@@ -625,7 +626,6 @@ function setSqlStatus(text, error = false) {
   element.sqlStatus.classList.toggle("error", error);
 }
 
-// Display a random sample of the rows a SQL filter kept, or of every row when rows is null.
 async function showPopulation(rows) {
   const token = state.loadToken;
   const size = rows ? rows.length : state.sampleRows;
@@ -639,7 +639,7 @@ async function showPopulation(rows) {
     });
   if (token !== state.loadToken) return;
 
-  // The selection is keyed by point position, so it goes before the points change.
+  // Close before replacing the point indexes.
   closeMetadata();
   const points = pointsFromMetadata(metadata, state.centroidField, physical);
   state.population = rows;
@@ -1893,16 +1893,6 @@ function pointName(point) {
 
 function fixtureUrl(fixture) {
   return `${FIXTURE_ROOT}/${String(fixture.path).replace(/^\/+/, "")}`;
-}
-
-function normalizedDatasetUrl(value) {
-  const text = String(value ?? "").trim();
-  if (!text) throw new Error("Enter a TACO dataset URL.");
-  const url = new URL(text);
-  if (!new Set(["http:", "https:"]).has(url.protocol)) {
-    throw new Error("The dataset URL must use HTTP or HTTPS.");
-  }
-  return url.href;
 }
 
 function shareablePlaygroundUrl(datasetUrl) {

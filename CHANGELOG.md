@@ -10,7 +10,9 @@ JavaScript reader are documented here. The format follows
 
 - The viewer filters its samples with SQL on laptops and desktops. The query
   reads `dataset` or `sample`, and the point limit applies to the samples it
-  returns.
+  returns. DuckDB loads alongside the sample metadata.
+- The viewer accepts Source Cooperative product pages and Hugging Face dataset,
+  tree and file pages as dataset URLs.
 - The JavaScript `cacheLevel` resolves with the cached Parquet bytes.
 
 ## 0.12.0 - 2026-09-26

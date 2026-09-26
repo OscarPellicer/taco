@@ -12,7 +12,7 @@
     }
   </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=47">
+  <link rel="stylesheet" href="styles.css?v=50">
   <link rel="stylesheet" href="../shared/navigation.css">
   <script type="importmap">
     {
@@ -68,31 +68,39 @@
     </aside>
 
     <div id="message" class="message" role="status" hidden></div>
-    <aside id="plotPanel" class="plot-panel" aria-label="Point colors" hidden>
-      <label for="plotField">Color points by</label>
-      <select id="plotField" aria-label="Color points by metadata field">
-        <option value="">Single color</option>
-      </select>
-      <select id="plotMode" aria-label="Interpret selected field as" hidden>
-        <option value="auto">Auto</option>
-        <option value="continuous">Continuous</option>
-        <option value="categorical">Categorical</option>
-      </select>
-      <div id="plotLegend" class="plot-legend" aria-live="polite" hidden></div>
-    </aside>
+    <div class="map-tools">
+      <aside id="sqlPanel" class="sql-panel" aria-label="Filter samples with SQL" hidden>
+        <button id="sqlToggle" class="sql-toggle" type="button" aria-expanded="false" aria-controls="sqlForm">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 5h16l-6.5 7.2v5.3l-3 1.5v-6.8z"/>
+          </svg>
+          <span>SQL filter</span><small>DuckDB</small>
+        </button>
+        <form id="sqlForm" class="sql-form" hidden>
+          <label for="sqlQuery">Query dataset or sample</label>
+          <textarea id="sqlQuery" rows="3" spellcheck="false" aria-label="SQL query that selects the samples to show">SELECT * FROM dataset
+WHERE "geoenrich:admin_countries" = 'Peru'</textarea>
+          <div class="sql-actions">
+            <small>⌘/Ctrl + Enter</small>
+            <button id="sqlRun" class="sql-run" type="submit">Run</button>
+          </div>
+          <p id="sqlStatus" class="sql-status" aria-live="polite"></p>
+        </form>
+      </aside>
 
-    <aside id="sqlPanel" class="sql-panel" aria-label="Filter samples with SQL" hidden>
-      <button id="sqlToggle" class="sql-toggle" type="button" aria-expanded="false" aria-controls="sqlForm">SQL</button>
-      <form id="sqlForm" class="sql-form" hidden>
-        <textarea id="sqlQuery" rows="4" spellcheck="false" aria-label="SQL query that selects the samples to show">SELECT * FROM dataset</textarea>
-        <div class="sql-actions">
-          <button id="sqlRun" class="sql-run" type="submit">Run</button>
-          <button id="sqlClear" type="button">Clear</button>
-          <small>dataset · sample · ⌘/Ctrl+Enter</small>
-        </div>
-        <p id="sqlStatus" class="sql-status" aria-live="polite"></p>
-      </form>
-    </aside>
+      <aside id="plotPanel" class="plot-panel" aria-label="Point colors" hidden>
+        <label for="plotField">Color points by</label>
+        <select id="plotField" aria-label="Color points by metadata field">
+          <option value="">Single color</option>
+        </select>
+        <select id="plotMode" aria-label="Interpret selected field as" hidden>
+          <option value="auto">Auto</option>
+          <option value="continuous">Continuous</option>
+          <option value="categorical">Categorical</option>
+        </select>
+        <div id="plotLegend" class="plot-legend" aria-live="polite" hidden></div>
+      </aside>
+    </div>
 
     <aside id="metadataPanel" class="metadata-panel" aria-labelledby="pointTitle" aria-hidden="true">
       <header>
@@ -131,6 +139,6 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js?v=65"></script>
+  <script type="module" src="app.js?v=69"></script>
 </body>
 </html>

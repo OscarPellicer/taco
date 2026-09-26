@@ -1,80 +1,107 @@
-// DuckDB-WASM runs the SQL filter. Like the map and proj4 it comes from
-// jsdelivr, and only when the first query runs, so opening a dataset never
-// waits for it.
 const DUCKDB_URL = "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm";
+export const DEFAULT_QUERY = "SELECT * FROM dataset";
 const SAMPLE_INDEX = "taco:sample_index";
 const CURRENT_ID = "internal:current_id";
 const SOURCE_FILE = "internal:source_file";
-// Reader-owned columns the dataset view hides, as the Python reader does.
 const HIDDEN = new Set(["id", "taco:location", "cozip:location"]);
 
 let engine = null;
+let engineReady = false;
 let registered = null;
+let sqlQueue = Promise.resolve();
+
+export async function prepareSql(parquet) {
+  const opened = await open();
+  engineReady = true;
+  if (!(parquet instanceof ArrayBuffer)) return;
+  return enqueue(async () => {
+    if (registered?.parquet !== parquet) await register(opened.db, opened.connection, parquet);
+  });
+}
 
 /**
- * Return the physical rows of sample.parquet that a query selects. The query
- * reads `dataset`, one row per sample like Dataset.sql in Python without the
- * file columns, or the raw `sample` level.
- *
- * @param {ArrayBuffer} parquet The cached sample.parquet bytes.
+ * @param {ArrayBuffer} parquet
  * @param {string} query
  * @param {(label: string) => void} [onStatus]
- * @returns {Promise<number[]>} Sorted physical row indexes.
+ * @returns {Promise<number[]>}
  */
 export async function selectSampleRows(parquet, query, onStatus = () => {}) {
-  // A stale cached reader returns nothing from cacheLevel.
   if (!(parquet instanceof ArrayBuffer)) throw new Error("Reload the page to update the TACO reader.");
   const statement = normalizeQuery(query);
-  if (!engine) onStatus("Loading DuckDB");
-  const { db, connection } = await open();
-  if (registered?.parquet !== parquet) await register(db, connection, parquet);
-  onStatus("Running");
-  const selection = `SELECT * FROM (\n${statement}\n) AS taco_query`;
-  const columns = (await connection.query(`${selection} LIMIT 0`)).schema.fields.map((field) => field.name);
-  const key = identityColumn(columns);
-  const rows = await connection.query(
-    `SELECT file_row_number FROM taco_rows WHERE ${quote(CURRENT_ID)} IN ` +
-      `(SELECT ${quote(key)} FROM (${selection}) AS taco_selected) ORDER BY file_row_number`,
-  );
-  return Array.from(rows.getChild("file_row_number").toArray(), Number);
+  if (!engineReady) onStatus("Loading SQL engine");
+  const opened = await open();
+  engineReady = true;
+  return enqueue(async () => {
+    const { db, connection } = opened;
+    if (registered?.parquet !== parquet) await register(db, connection, parquet);
+    onStatus("Running");
+    const selection = `SELECT * FROM (\n${statement}\n) AS taco_query`;
+    const columns = (await connection.query(`${selection} LIMIT 0`)).schema.fields.map((field) => field.name);
+    const keys = identityColumns(columns, registered?.sourceFile ?? false);
+    const rows = await connection.query(selectedRowsSql(selection, keys));
+    return Array.from(rows.getChild("file_row_number").toArray(), Number);
+  });
 }
 
 /** @param {unknown} query @returns {string} */
 export function normalizeQuery(query) {
   let statement = String(query ?? "").trim();
   while (statement.endsWith(";")) statement = statement.slice(0, -1).trimEnd();
-  if (!statement) throw new Error("Write a query, such as SELECT * FROM dataset.");
-  return statement;
+  return statement || DEFAULT_QUERY;
 }
 
-/** @param {string[]} columns @returns {string} */
-export function identityColumn(columns) {
-  if (columns.includes(SAMPLE_INDEX)) return SAMPLE_INDEX;
-  if (columns.includes(CURRENT_ID)) return CURRENT_ID;
-  throw new Error(`The query must return ${SAMPLE_INDEX}; use SELECT * or include it.`);
+/** @param {string[]} columns @param {boolean} sourceFile @returns {string[]} */
+export function identityColumns(columns, sourceFile = false) {
+  if (columns.includes(SAMPLE_INDEX)) return [SAMPLE_INDEX];
+  if (!columns.includes(CURRENT_ID)) {
+    throw new Error(`The query must return ${SAMPLE_INDEX}; use SELECT * or include it.`);
+  }
+  if (!sourceFile) return [CURRENT_ID];
+  if (!columns.includes(SOURCE_FILE)) {
+    throw new Error(`A catalog query over sample must also return ${SOURCE_FILE}.`);
+  }
+  return [CURRENT_ID, SOURCE_FILE];
 }
 
-/**
- * The dataset view over the columns of sample.parquet.
- *
- * @param {string[]} names
- * @returns {string}
- */
+/** @param {string[]} names @returns {string} */
 export function datasetView(names) {
   const columns = [];
   if (names.includes(SOURCE_FILE)) columns.push(`${quote(SOURCE_FILE)} AS source_file`);
-  columns.push(`${quote(CURRENT_ID)} AS ${quote(SAMPLE_INDEX)}`);
+  columns.push(`file_row_number AS ${quote(SAMPLE_INDEX)}`);
   if (names.includes("id")) columns.push(quote("id"));
   columns.push(...names.filter((name) => !name.startsWith("internal:") && !HIDDEN.has(name)).map(quote));
-  return `SELECT ${columns.join(", ")} FROM "sample"`;
+  return `SELECT ${columns.join(", ")} FROM taco_rows`;
 }
 
 function open() {
   engine ??= start().catch((error) => {
     engine = null;
+    engineReady = false;
     throw error;
   });
   return engine;
+}
+
+function enqueue(task) {
+  const result = sqlQueue.then(task);
+  sqlQueue = result.catch(() => {});
+  return result;
+}
+
+function selectedRowsSql(selection, keys) {
+  if (keys[0] === SAMPLE_INDEX) {
+    return `SELECT file_row_number FROM taco_rows WHERE file_row_number IN ` +
+      `(SELECT ${quote(SAMPLE_INDEX)} FROM (${selection}) AS taco_selected) ORDER BY file_row_number`;
+  }
+  if (keys.length === 1) {
+    return `SELECT file_row_number FROM taco_rows WHERE ${quote(CURRENT_ID)} IN ` +
+      `(SELECT ${quote(CURRENT_ID)} FROM (${selection}) AS taco_selected) ORDER BY file_row_number`;
+  }
+  return `SELECT taco_source.file_row_number FROM taco_rows AS taco_source WHERE EXISTS (` +
+    `SELECT 1 FROM (${selection}) AS taco_selected WHERE ` +
+    `taco_selected.${quote(CURRENT_ID)} = taco_source.${quote(CURRENT_ID)} AND ` +
+    `taco_selected.${quote(SOURCE_FILE)} = taco_source.${quote(SOURCE_FILE)}` +
+    `) ORDER BY taco_source.file_row_number`;
 }
 
 async function start() {
@@ -102,7 +129,7 @@ async function register(db, connection, parquet) {
   const names = (await connection.query('SELECT * FROM "sample" LIMIT 0')).schema.fields.map((field) => field.name);
   await connection.query(`CREATE OR REPLACE VIEW dataset AS ${datasetView(names)}`);
   if (registered) await db.dropFile(registered.file);
-  registered = { parquet, file };
+  registered = { parquet, file, sourceFile: names.includes(SOURCE_FILE) };
 }
 
 /** @param {string} name */
