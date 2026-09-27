@@ -124,6 +124,8 @@ class Sample:
 class _PreparedAsset:
     source: Path | bytes
     path: str | None
+    # Byte size measured when a writer accepted the sample.
+    size: int | None = None
 
     @property
     def is_inline(self) -> bool:
@@ -131,6 +133,9 @@ class _PreparedAsset:
 
     def replace_source(self, source: Path) -> _PreparedAsset:
         return _PreparedAsset(source, self.path)
+
+    def with_size(self, size: int) -> _PreparedAsset:
+        return _PreparedAsset(self.source, self.path, size)
 
 
 @dataclass(frozen=True)

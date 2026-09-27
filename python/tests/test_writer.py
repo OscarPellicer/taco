@@ -413,6 +413,27 @@ def test_partition_workers(tmp_path: Path, collection: taco.Collection, make_sam
     assert taco.validate(result.path).ok
 
 
+def test_zip_plan_reuses_sizes_measured_by_add(
+    tmp_path: Path, collection: taco.Collection, make_sample, monkeypatch
+) -> None:
+    import taco.writer.archive as archive_module
+
+    plan = archive_module.cozip_plan
+    calls = []
+
+    def recording_plan(files, names, **kwargs):
+        calls.append((files, kwargs.get("sizes")))
+        return plan(files, names, **kwargs)
+
+    monkeypatch.setattr(archive_module, "cozip_plan", recording_plan)
+    with taco.open_writer(collection, tmp_path / "data.zip") as writer:
+        writer.extend(make_sample(index) for index in range(2))
+        writer.run()
+
+    [(files, sizes)] = calls
+    assert sizes == [source.stat().st_size for _, source in files]
+
+
 def test_partition_options_are_checked(tmp_path: Path, collection: taco.Collection) -> None:
     with pytest.raises(ValueError, match="either"):
         taco.open_writer(collection, tmp_path / "a.zip", partition_size=1, partition_by="ml:split")

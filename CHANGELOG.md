@@ -15,6 +15,12 @@ JavaScript reader are documented here. The format follows
   tree and file pages as dataset URLs.
 - The JavaScript `cacheLevel` resolves with the cached Parquet bytes.
 
+### Changed
+
+- The ZIP writer reuses the asset sizes that `add()` already measures when it
+  plans the archive, so planning no longer stats every data file a second
+  time. This requires cozip 2026.9.27 or newer.
+
 ## 0.12.0 - 2026-09-26
 
 ### Changed

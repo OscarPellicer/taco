@@ -103,8 +103,12 @@ class Writer:
             raise SampleError(f"sample id {logical_id!r} appears more than once")
         sample_id = self.sample_count
         sample = self._materialize_inline_assets(sample_id, sample)
-        data_size = sum(self._asset_size(asset) for asset in sample.assets)
-        self._samples.append((sample, data_size))
+        # Keep each size so archive planning does not stat the sources again.
+        sizes = [self._asset_size(asset) for asset in sample.assets]
+        sample = sample.replace_assets(
+            [asset.with_size(size) for asset, size in zip(sample.assets, sizes, strict=True)]
+        )
+        self._samples.append((sample, sum(sizes)))
         if not self._sample_ids.add(logical_id):
             raise RuntimeError("sample id index changed while adding a sample")
         return sample_id

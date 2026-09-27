@@ -51,7 +51,7 @@ dependencies = [
 
 [project.optional-dependencies]
 writer = [
-    "cozip>=2026.9.4",
+    "cozip>=2026.9.27",
     "numpy>=1.24",
     "pydantic>=2.8",
     "pyproj>=3.6",

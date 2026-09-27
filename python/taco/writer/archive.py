@@ -41,14 +41,15 @@ def _priority_names(collection: Collection) -> list[str]:
     ]
 
 
-def _data_entries(sample_index: int, sample: _PreparedSample) -> list[tuple[str, Path]]:
-    entries: list[tuple[str, Path]] = []
+def _data_entries(sample_index: int, sample: _PreparedSample) -> list[tuple[str, Path, int]]:
+    entries: list[tuple[str, Path, int]] = []
     for asset in sample.assets:
         if not isinstance(asset.source, Path):
             raise TypeError("inline assets must be materialized before planning")
         assert asset.path is not None
+        assert asset.size is not None
         name = f"{DATA_DIR}/{sample_index}/{asset.path}"
-        entries.append((name, asset.source))
+        entries.append((name, asset.source, asset.size))
     return entries
 
 
@@ -134,12 +135,17 @@ class ArchiveWriter(Writer):
             # disk-backed sample stream makes that second pass possible without
             # retaining the whole dataset in memory.
             files: list[tuple[str, Path]] = []
+            sizes: list[int] = []
             with self._show_progress(sample_count, f"planning {output.name}", enabled=show_progress) as progress:
                 for index, sample in samples():
-                    files.extend(_data_entries(index, sample))
+                    for name, source, size in _data_entries(index, sample):
+                        files.append((name, source))
+                        sizes.append(size)
                     progress.update()
             names = _priority_names(self.collection)
-            layout = cozip_plan(files, names)
+            # Sizes come from add(); cozip checks them against the sources
+            # when it writes the archive.
+            layout = cozip_plan(files, names, sizes=sizes)
             offsets = layout.offsets
 
             tables = MetadataTableWriter(
