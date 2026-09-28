@@ -6,6 +6,28 @@ JavaScript reader are documented here. The format follows
 
 ## Unreleased
 
+## 0.13.2 - 2026-09-28
+
+### Changed
+
+- `workers > 1` builds partitions in processes instead of threads. The
+  collection must be picklable, and scripts need an
+  `if __name__ == "__main__":` guard.
+- `add()` validates each sample once and is about twice as fast.
+- Rumi percentiles use counting for narrow integer ranges and partial selection
+  for wider ranges.
+
+### Fixed
+
+- Rumi percentiles no longer wrap on integer files that span most of their
+  type's range.
+- Mapping-based `Rumi` extensions can be reconstructed from their normalized
+  `stats` attribute, including through `dataclasses.replace`. Byte strings now
+  fail with the expected `stats` type error instead of being read as sequences
+  of integers.
+- A failed or interrupted parallel partition build terminates the other workers
+  instead of waiting for their current partitions to finish.
+
 ## 0.13.0 - 2026-09-28
 
 ### Changed
@@ -20,7 +42,9 @@ JavaScript reader are documented here. The format follows
 - `Rumi(nodata=...)` is gone; statistics exclude only non-finite values.
 - Wide reads carry each Rumi statistic next to its file, such as
   `dem.rumi::mean`.
-- Only `taco.extensions.Rumi` may use the `rumi` metadata namespace.
+- `taco.Level` reserves the `rumi` metadata namespace for
+  `taco.extensions.Rumi`; serialized mapping contracts accept validated Rumi
+  fields.
 - The viewer does not show Rumi statistics in its metadata panel. SQL still
   reads them.
 
