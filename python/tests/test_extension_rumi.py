@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -161,6 +162,23 @@ def test_rumi_per_file_selection_validates_the_contract() -> None:
             )
 
 
+def test_rumi_file_statistics_survive_reconstruction() -> None:
+    selected = {
+        "image.rumi": ["mean", "p98"],
+        "cube.rumi": ["mean_t0"],
+    }
+    extension = taco.extensions.Rumi(stats=selected)
+
+    changed = replace(extension, header=False)
+    reconstructed = taco.extensions.Rumi(stats=extension.stats)
+
+    assert changed.stats == extension.stats
+    assert changed.configuration() == {"header": False, "stats": selected}
+    assert reconstructed == extension
+    assert hash(reconstructed) == hash(extension)
+    assert reconstructed.configuration() == extension.configuration()
+
+
 @pytest.mark.parametrize(
     ("name", "files", "message"),
     [
@@ -203,6 +221,7 @@ def test_rumi_rejects_an_empty_statistic_list() -> None:
     [
         (1, "mapping from structure declarations"),
         (None, "mapping from structure declarations"),
+        (b"mean", "mapping from structure declarations"),
         (["mean", 2], "statistic names must be strings"),
         ({"data.rumi": 2}, "sequence of statistic names"),
     ],
@@ -259,6 +278,31 @@ def test_rumi_statistics_read_booleans_as_zero_and_one(tmp_path: Path, monkeypat
     row = write_fake_rumi(tmp_path, monkeypatch, np.array([[[True, False], [True, True]]]))
     assert (row["rumi:minimum"], row["rumi:maximum"], row["rumi:mean"]) == (0.0, 1.0, 0.75)
     assert (row["rumi:p2"], row["rumi:p98"]) == (pytest.approx(0.06), 1.0)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        np.random.default_rng(1).integers(0, 4000, 1000).astype(np.int16),
+        np.random.default_rng(2).integers(-(2**15), 2**15, 1000).astype(np.int16),
+        np.random.default_rng(3).integers(0, 2**32, 1000).astype(np.uint32),
+        np.random.default_rng(4).integers(0, 60_000, 1000).astype(np.uint64) + np.uint64(2**64 - 70_000),
+        np.array([7], dtype=np.uint8),
+    ],
+    ids=["counted", "full-int16", "wide-sorted", "top-of-uint64", "one-value"],
+)
+def test_rumi_integer_percentiles_match_numpy(
+    values: np.ndarray, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    row = write_fake_rumi(tmp_path, monkeypatch, values.reshape(1, 1, -1))
+    assert (row["rumi:p2"], row["rumi:p98"]) == (np.percentile(values, 2), np.percentile(values, 98))
+
+
+def test_rumi_integer_percentiles_do_not_wrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # numpy.percentile subtracts these neighbours as int16 and wraps to -1.
+    values = np.array([-(2**15)] + [2**15 - 1] * 49, dtype=np.int16).reshape(1, 1, -1)
+    row = write_fake_rumi(tmp_path, monkeypatch, values)
+    assert row["rumi:p2"] == pytest.approx(32767 - 65535 * 0.02)
 
 
 def test_rumi_statistics_reject_complex_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

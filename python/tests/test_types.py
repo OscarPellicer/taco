@@ -145,6 +145,31 @@ def test_coerce_value_normalizes() -> None:
 
 
 @pytest.mark.parametrize(
+    ("value", "dtype"),
+    [
+        (0.1, pa.float32()),
+        (-0.0, pa.float32()),
+        (1e-46, pa.float32()),
+        (1e39, pa.float32()),
+        ("ñandú", pa.string()),
+        ("\ud800", pa.string()),
+        (2**64 - 1, pa.uint64()),
+        (2**63, pa.int64()),
+        (-1, pa.uint8()),
+    ],
+)
+def test_coerce_value_matches_arrow_for_simple_scalars(value: object, dtype: pa.DataType) -> None:
+    # The fast path must agree with Arrow, errors included.
+    try:
+        expected = pa.array([value], type=dtype)[0].as_py()
+    except (pa.ArrowException, ValueError, OverflowError, UnicodeEncodeError):
+        with pytest.raises(ValueError, match="cannot store"):
+            coerce_value(value, dtype)
+        return
+    assert repr(coerce_value(value, dtype)) == repr(expected)
+
+
+@pytest.mark.parametrize(
     ("value", "dtype", "match"),
     [
         ({"a": 1.5}, pa.struct([("a", pa.int32())]), "integer"),

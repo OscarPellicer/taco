@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import struct
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
@@ -287,6 +288,45 @@ def _check_scalar(value: object, dtype: pa.DataType, *, nullable: bool = True) -
             _check_scalar(mapped, dtype.item_type, nullable=dtype.item_field.nullable)
 
 
+_NOT_SIMPLE = object()
+_FLOAT32 = struct.Struct("<f")
+_INTEGER_BOUNDS = {
+    dtype: (0, 2**dtype.bit_width - 1)
+    if pa.types.is_unsigned_integer(dtype)
+    else (-(2 ** (dtype.bit_width - 1)), 2 ** (dtype.bit_width - 1) - 1)
+    for dtype in (pa.int8(), pa.int16(), pa.int32(), pa.int64(), pa.uint8(), pa.uint16(), pa.uint32(), pa.uint64())
+}
+
+
+def _simple_value(value: object, dtype: pa.DataType) -> object:
+    """Plain scalars skip the Arrow round trip; anything else returns _NOT_SIMPLE."""
+    if type(value) is str and (pa.types.is_string(dtype) or pa.types.is_large_string(dtype)):
+        assert isinstance(value, str)
+        if value.isascii():
+            return value
+        try:
+            value.encode()
+        except UnicodeEncodeError:
+            return _NOT_SIMPLE
+        return value
+    if type(value) is float:
+        if pa.types.is_float64(dtype):
+            return value
+        if pa.types.is_float32(dtype):
+            try:
+                return _FLOAT32.unpack(_FLOAT32.pack(value))[0]
+            except OverflowError:
+                return _NOT_SIMPLE
+    if type(value) is bool and pa.types.is_boolean(dtype):
+        return value
+    if type(value) is int and dtype in _INTEGER_BOUNDS:
+        assert isinstance(value, int)
+        low, high = _INTEGER_BOUNDS[dtype]
+        if low <= value <= high:
+            return value
+    return _NOT_SIMPLE
+
+
 def coerce_value(value: object, dtype: pa.DataType, *, nullable: bool = True) -> object:
     """Validate ``value`` against ``dtype`` and return its normalized Python form.
 
@@ -294,6 +334,11 @@ def coerce_value(value: object, dtype: pa.DataType, *, nullable: bool = True) ->
     stored losslessly in a column of type ``dtype``.
     """
     _check_scalar(value, dtype, nullable=nullable)
+    if value is None:
+        return None
+    simple = _simple_value(value, dtype)
+    if simple is not _NOT_SIMPLE:
+        return simple
     try:
         array = pa.array([value], type=dtype)
     except (pa.ArrowException, TypeError, ValueError, OverflowError) as exc:

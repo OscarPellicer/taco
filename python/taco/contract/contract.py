@@ -544,47 +544,36 @@ class Contract:
         return tree
 
     def validate_sample(self, sample: Sample) -> Sample:
-        if not isinstance(sample, Sample):
-            raise SampleError(f"expected a Sample, got {type(sample).__name__}")
-        assets = self._resolve_assets(sample.assets)
-        tree = self.expand(assets, sample.folders)
-        self.flatten_metadata(SAMPLE_LEVEL, sample.metadata, scope="sample")
-        for folder, nodes in tree.items():
-            level = self.level_of_folder(folder)
-            for node in nodes:
-                self.flatten_metadata(level, node.metadata, scope="folder" if node.is_folder else "asset")
-        ordered = tuple(node.asset for nodes in tree.values() for node in nodes if node.asset is not None)
-        return Sample(
-            id=sample.id,
-            assets=ordered,
-            metadata=sample.metadata,
-            folders=sample.folders,
-        )
+        return self._check_sample(sample)[0]
 
     def prepare_sample(self, sample: Sample) -> _PreparedSample:
-        sample = self.validate_sample(sample)
-        rows: dict[str, tuple[_PreparedNode, ...]] = {}
+        sample, metadata, rows = self._check_sample(sample)
+        return _PreparedSample(
+            sample.id,
+            tuple(_PreparedAsset(asset.source, asset.path) for asset in sample.assets),
+            metadata,
+            rows,
+        )
+
+    def _check_sample(self, sample: Sample) -> tuple[Sample, dict[str, Any], dict[str, tuple[_PreparedNode, ...]]]:
+        if not isinstance(sample, Sample):
+            raise SampleError(f"expected a Sample, got {type(sample).__name__}")
         tree = self.expand(sample.assets, sample.folders)
+        metadata = self.flatten_metadata(SAMPLE_LEVEL, sample.metadata, scope="sample")
+        rows: dict[str, tuple[_PreparedNode, ...]] = {}
         for folder, nodes in tree.items():
             level = self.level_of_folder(folder)
             rows[level] = tuple(
                 _PreparedNode(
                     node.name,
                     node.is_folder,
-                    self.flatten_metadata(
-                        level,
-                        node.metadata,
-                        scope="folder" if node.is_folder else "asset",
-                    ),
+                    self.flatten_metadata(level, node.metadata, scope="folder" if node.is_folder else "asset"),
                 )
                 for node in nodes
             )
-        return _PreparedSample(
-            sample.id,
-            tuple(_PreparedAsset(asset.source, asset.path) for asset in sample.assets),
-            self.flatten_metadata(SAMPLE_LEVEL, sample.metadata, scope="sample"),
-            rows,
-        )
+        ordered = tuple(node.asset for nodes in tree.values() for node in nodes if node.asset is not None)
+        validated = Sample(id=sample.id, assets=ordered, metadata=sample.metadata, folders=sample.folders)
+        return validated, metadata, rows
 
     def flatten_metadata(self, level: str, metadata: Metadata, *, scope: str) -> dict[str, Any]:
         groups = self._groups[level]

@@ -75,6 +75,26 @@ def test_required_group_is_checked() -> None:
         contract.validate_sample(taco.Sample(id="u1", assets=[taco.Asset(b"x", path="a.bin")]))
 
 
+def test_prepare_sample_flattens_metadata_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    contract = taco.Contract(structure=["a.bin", "b.bin"], metadata=[taco.Level("sample", values=Values)])
+    calls = []
+    flatten = taco.Contract.flatten_metadata
+
+    def counting(self, level, *args, **kwargs):
+        calls.append(level)
+        return flatten(self, level, *args, **kwargs)
+
+    monkeypatch.setattr(taco.Contract, "flatten_metadata", counting)
+    sample = taco.Sample(
+        id="once",
+        assets=[taco.Asset(b"x", path="a.bin"), taco.Asset(b"y", path="b.bin")],
+        metadata=taco.Metadata(values=Values(count=1)),
+    )
+    prepared = contract.prepare_sample(sample)
+    assert calls == ["sample", "children", "children"]
+    assert prepared.metadata == {"values:count": 1, "values:score": None}
+
+
 def test_assets_infer_flat_paths(tmp_path: Path) -> None:
     source = tmp_path / "a.bin"
     source.write_bytes(b"x")

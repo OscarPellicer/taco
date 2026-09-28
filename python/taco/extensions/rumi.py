@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeGuard
 
 import numpy as np
 import pyarrow as pa
@@ -17,14 +18,18 @@ from ..errors import SampleError
 # Statistics included by stats=True.
 STATISTICS = ("minimum", "maximum", "mean", "stddev", "p2", "p98")
 
+_StatisticSelection = bool | str | Sequence[str]
+_NormalizedFileStatistics = tuple[tuple[str, tuple[str, ...]], ...]
+
 _REDUCERS: dict[str, Callable[[np.ndarray], Any]] = {
     "minimum": lambda values: values.min(),
     "maximum": lambda values: values.max(),
     "mean": lambda values: values.mean(dtype=np.float64),
     "stddev": lambda values: values.std(dtype=np.float64),
-    "p2": lambda values: np.percentile(values, 2),
-    "p98": lambda values: np.percentile(values, 98),
 }
+_PERCENTILES = {"p2": 2, "p98": 98}
+# Integer ranges narrower than this are counted instead of sorted.
+_COUNTED_SPAN = 1 << 16
 _LABELS = {
     "minimum": "Minimum",
     "maximum": "Maximum",
@@ -75,7 +80,7 @@ def _statistics(value: object, *, allow_mapping: bool = False) -> tuple[_Statist
         return ()
     elif isinstance(value, str):
         names = (value,)
-    elif isinstance(value, Sequence):
+    elif isinstance(value, Sequence) and not isinstance(value, bytes | bytearray):
         names = value
     else:
         expected = "a boolean, a statistic name, or a sequence of statistic names"
@@ -93,13 +98,29 @@ def _statistics(value: object, *, allow_mapping: bool = False) -> tuple[_Statist
     return statistics
 
 
+def _is_normalized_file_statistics(value: object) -> TypeGuard[_NormalizedFileStatistics]:
+    return (
+        isinstance(value, tuple)
+        and bool(value)
+        and all(
+            isinstance(item, tuple)
+            and len(item) == 2
+            and isinstance(item[0], str)
+            and isinstance(item[1], tuple)
+            and all(isinstance(name, str) for name in item[1])
+            for item in value
+        )
+    )
+
+
 def _file_statistics(
-    value: Mapping[str, bool | str | Sequence[str]],
+    value: Mapping[str, _StatisticSelection] | _NormalizedFileStatistics,
 ) -> tuple[tuple[Leaf, tuple[_Statistic, ...]], ...]:
     if not value:
         raise ValueError("stats mapping cannot be empty; use stats=False to store none")
     result = []
-    for declaration, selected in value.items():
+    items = value.items() if isinstance(value, Mapping) else value
+    for declaration, selected in items:
         if not isinstance(declaration, str):
             raise TypeError(f"Rumi stats keys must be structure declarations, got {type(declaration).__name__}")
         if selected is False:
@@ -142,15 +163,60 @@ def _compute(array: np.ndarray, statistics: tuple[_Statistic, ...], source: Path
         subsets.setdefault((statistic.time, statistic.band), []).append(statistic)
     result: dict[str, float | None] = {}
     for group in subsets.values():
-        values = _subset(array, group[0], source)
-        valid = np.isfinite(values)
-        values = values[valid]
-        if values.dtype == np.bool_:
-            # Percentiles interpolate, which booleans cannot do.
-            values = values.view(np.uint8)
+        values = _valid(_subset(array, group[0], source))
+        integer = values.dtype.kind in "iu"
+        wanted = [_PERCENTILES[statistic.kind] for statistic in group if statistic.kind in _PERCENTILES]
+        percentiles = _integer_percentiles(values, wanted) if integer and wanted and values.size else {}
         for statistic in group:
-            result[statistic.name] = float(_REDUCERS[statistic.kind](values)) if values.size else None
+            if not values.size:
+                result[statistic.name] = None
+            elif statistic.kind not in _PERCENTILES:
+                result[statistic.name] = float(_REDUCERS[statistic.kind](values))
+            elif integer:
+                result[statistic.name] = percentiles[_PERCENTILES[statistic.kind]]
+            else:
+                result[statistic.name] = float(np.percentile(values, _PERCENTILES[statistic.kind]))
     return result
+
+
+def _valid(values: np.ndarray) -> np.ndarray:
+    if values.dtype == np.bool_:
+        # Percentiles interpolate, which booleans cannot do.
+        return values.ravel().view(np.uint8)
+    if values.dtype.kind in "iu":
+        return values.ravel()
+    finite: np.ndarray = values[np.isfinite(values)]
+    return finite
+
+
+def _integer_percentiles(values: np.ndarray, percentiles: list[int]) -> dict[int, float]:
+    """np.percentile, interpolated with Python ints because numpy's subtraction can wrap."""
+    n = values.size
+    positions = {}
+    for q in percentiles:
+        virtual = (n - 1) * (q / 100)
+        previous = min(math.floor(virtual), n - 1)
+        positions[q] = (previous, min(previous + 1, n - 1), virtual - previous)
+    ranked = _ranked(
+        values, sorted({rank for previous, following, _ in positions.values() for rank in (previous, following)})
+    )
+    result = {}
+    for q, (previous, following, gamma) in positions.items():
+        a, b = ranked[previous], ranked[following]
+        difference = b - a
+        result[q] = float(b) - difference * (1 - gamma) if gamma >= 0.5 else float(a) + difference * gamma
+    return result
+
+
+def _ranked(values: np.ndarray, ranks: list[int]) -> dict[int, int]:
+    low, high = int(values.min()), int(values.max())
+    if high - low >= _COUNTED_SPAN:
+        partitioned = np.partition(values, ranks)
+        return {rank: int(partitioned[rank]) for rank in ranks}
+    # Signed subtraction may wrap, but the unsigned view is still the offset.
+    offsets = (values - values.dtype.type(low)).view(f"u{values.dtype.itemsize}")
+    cumulative = np.cumsum(np.bincount(offsets.astype(np.intp, copy=False)))
+    return {rank: low + int(np.searchsorted(cumulative, rank, side="right")) for rank in ranks}
 
 
 def _source(value: Path | None) -> Path:
@@ -173,7 +239,7 @@ class Rumi(Extension):
     """
 
     header: bool = True
-    stats: bool | str | Sequence[str] | Mapping[str, bool | str | Sequence[str]] = False
+    stats: bool | str | Sequence[str] | Mapping[str, _StatisticSelection] | _NormalizedFileStatistics = False
     _statistics: tuple[_Statistic, ...] = field(init=False, repr=False, compare=False)
     _file_statistics: tuple[tuple[Leaf, tuple[_Statistic, ...]], ...] = field(init=False, repr=False, compare=False)
 
@@ -183,7 +249,7 @@ class Rumi(Extension):
     def __post_init__(self) -> None:
         if not isinstance(self.header, bool):
             raise TypeError("header must be a boolean")
-        if isinstance(self.stats, Mapping):
+        if isinstance(self.stats, Mapping) or _is_normalized_file_statistics(self.stats):
             by_file = _file_statistics(self.stats)
             unique: dict[str, _Statistic] = {}
             for _, selected in by_file:
