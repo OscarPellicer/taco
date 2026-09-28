@@ -36,11 +36,13 @@ Column order is fixed:
 taco:sample_index | id | stac:geometry | ... | ml:split | before/B02.tif::location | extra::location
 ```
 
-A generated name is the structure path plus `::location`. A leaf whose level
-declares `rumi:header` is immediately followed by `{name}::header`. A variable
-sequence uses its **prefix** and occupies one list column: `extra*[1,3].png` becomes
-`extra::location` of type `list<string>`, ordered by the numeric index, with between
-`min` and `max` entries.
+A generated name is the structure path plus `::location`. It is followed by
+`{name}::header` when the level declares `rumi:header`, then by the Rumi statistics
+that apply to the leaf, such as `{name}::mean_b10`, in `taco:metadata` order. A
+`files` list on a statistic limits it to those exact structure declarations. A
+variable sequence uses its **prefix** and occupies one list column:
+`extra*[1,3].png` becomes `extra::location` of type `list<string>`, ordered by the
+numeric index, with between `min` and `max` entries.
 
 The double `::` cannot collide with a metadata field, which contains exactly one `:`.
 

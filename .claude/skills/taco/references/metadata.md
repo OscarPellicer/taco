@@ -44,6 +44,10 @@ Shorthands accepted by `_raw_field`: a bare type string or `pa.DataType` means
 `nullable=False` with no description; a two-element sequence means
 `(type, description)` with `nullable=True`.
 
+Rumi statistic fields may also contain `files`, a non-empty list of distinct,
+complete structure declarations from that metadata level. It is written by a
+per-file `Rumi(stats={...})` selection and is invalid on every other field.
+
 ## Scopes
 
 A group is bound to what it can describe through `__taco_scopes__`:

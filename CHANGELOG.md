@@ -4,6 +4,24 @@ All notable changes across the TACO core, language bindings, writer, and
 JavaScript reader are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- `taco.extensions.Rumi` stores each statistic as its own `double` column.
+  `stats=True` stores `rumi:minimum`, `rumi:maximum`, `rumi:mean`,
+  `rumi:stddev`, `rumi:p2` and `rumi:p98` over the whole array, and a list
+  such as `stats=["mean", "mean_b10", "p98_t0_b3"]` selects bands and time
+  steps. A mapping selects different statistics for each structure declaration,
+  while omitted files get none. `rumi:stats` and its counts are gone. Datasets
+  that store the old field must be rebuilt.
+- `Rumi(nodata=...)` is gone; statistics exclude only non-finite values.
+- Wide reads carry each Rumi statistic next to its file, such as
+  `dem.rumi::mean`.
+- Only `taco.extensions.Rumi` may use the `rumi` metadata namespace.
+- The viewer does not show Rumi statistics in its metadata panel. SQL still
+  reads them.
+
 ## 0.12.1 - 2026-09-27
 
 ### Added
@@ -435,12 +453,10 @@ JavaScript reader are documented here. The format follows
   inferred from field names, so the writer no longer guesses an extent from
   `stac:centroid` or `time_start`, and `_extent.py`, `auto_extent`,
   `ExtentSpec`, `compute_extent` and `wkb_bounds` are gone. STAC is not part
-  of the core. A TACOCAT still merges the extents its partitions declare,
-  which TACO specification 7.5 requires.
-- Archives are written as `.zip`. cozip specification 14.5 makes the profile
-  byte in the byte-0 index the only authoritative signal, and the extension
-  carries no meaning. Outputs are extensionless or end in `.zip`; any other
-  suffix is rejected.
+  of the core. A TACOCAT still reports the union of its partition extents.
+- Archives use `.zip`. The profile byte at offset zero is authoritative; the
+  filename extension carries no format meaning. Outputs are extensionless or
+  end in `.zip`; any other suffix is rejected.
 - Reading a dataset is the `cozip` DuckDB extension's job. `open_dataset`,
   `TacoDataset` and `vsi_subfile` are gone from the top-level API;
   `taco.reader` forwards to the extension and builds no VSI paths itself. The

@@ -5,8 +5,9 @@ Sources: `python/taco/contract/structure.py`, `contract/naming.py`,
 
 The contract is `taco:structure` plus `taco:metadata`. It is declared once, stored in
 `COLLECTION.json`, and never changes. Two contracts are equal when their serialized
-form matches: structure order, level names, qualified fields, types, nullability and
-descriptions. Python class names, defaults and validators are not part of it.
+form matches: structure order, level names, qualified fields, types, nullability,
+descriptions and the `files` of Rumi statistics. Python class names, defaults and
+validators are not part of it.
 
 ```python
 contract = taco.Contract(
@@ -161,6 +162,7 @@ That order becomes `internal:current_id` in the child tables.
 ## From and to `COLLECTION.json`
 
 `Contract.from_dict` requires `taco:structure` and `taco:metadata`, and every
-serialized field to declare exactly `type`, `nullable` and `description`. It also
-requires `taco:metadata` to contain every level the structure implies, so a contract
-cannot silently lose a level. The writer does not persist extension descriptors.
+serialized field to declare `type` and `nullable`; an omitted `description` becomes
+an empty string. A Rumi statistic selected per file may also declare `files`.
+`taco:metadata` must contain every level the structure implies, so a contract cannot
+silently lose a level. The writer does not persist extension descriptors.

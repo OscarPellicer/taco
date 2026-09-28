@@ -43,7 +43,8 @@ const dataset = await openDataset(url, { container: "zip" });
 The default wide view contains one row per sample and a generated
 `{file}::location` column per structure leaf, named after its structure path,
 such as `before/image.rumi::location`. Rumi files also get a `{file}::header`
-column, so a row has everything needed to read them.
+column when the contract declares one, so a row has everything needed to read the
+asset. Statistics selected for that file follow it, such as `{file}::mean`.
 
 ```js
 const samples = await dataset.read({

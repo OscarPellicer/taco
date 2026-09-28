@@ -64,6 +64,8 @@ A stale `TACO_LIB` or a leftover `_lib/` from another version. Rebuild, or unset
 | `source does not belong to the same collection: <path>` | A source list mixing collections |
 | `a source list cannot contain TACOCAT datasets` | Open the catalog on its own |
 | `COLLECTION.json is larger than 64 MiB, refusing to read it` | Collection metadata is being abused as a data store |
+| `COLLECTION.json: invalid Rumi field 'rumi:stats'` | Written before Rumi statistics became separate columns; rebuild it |
+| `COLLECTION.json: field 'rumi:mean' must have type double` | A Rumi statistic has the wrong stored type; fix or rebuild the dataset |
 
 ### Remote sources
 

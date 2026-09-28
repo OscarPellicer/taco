@@ -142,9 +142,14 @@ and only ZIP metadata carries the byte offsets that make random access possible.
   leading-zero name does not match the sequence. Its rows land in one LIST column
   named after the prefix.
 - **Generated columns carry `::`.** The name is the structure path plus `::location`,
-  or `::header` when the level declares `rumi:header`. User fields contain exactly one
-  `:`, so the double colon cannot collide. `before/B02.tif` reads as
-  `before/B02.tif::location`.
+  followed by `::header` when declared and the Rumi statistics that apply to that
+  declaration, such as `::mean_b10`. `Rumi(stats={...})` selects them per file. User
+  fields contain exactly one `:`, so the double colon cannot collide.
+  `before/B02.tif` reads as `before/B02.tif::location`.
+- **Rumi has no `nodata` parameter.** Statistics exclude only non-finite values;
+  dataset-specific masks belong in another extension. The `rumi` namespace
+  accepts only `header` and the current statistic columns; old `rumi:stats` datasets
+  must be rebuilt.
 - **Every user field needs double quotes in SQL.** `WHERE ml:split = 'train'` is a
   DuckDB parser error; write `WHERE "ml:split" = 'train'`. So does a level relation
   with `/`: `FROM "children/before"`.

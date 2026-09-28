@@ -231,6 +231,8 @@ Every field MUST declare the following properties. Its type MUST be representabl
 | `nullable` | boolean | Whether the stored column may contain null values |
 | `description` | string | Human-readable field description; MAY be empty |
 
+A Rumi statistic MAY also declare `files`, a non-empty list of distinct structure declarations at the same metadata level. The list limits that statistic to those files. No other field may declare `files`.
+
 | Type family | Canonical forms |
 | --- | --- |
 | Scalar | `bool`, signed and unsigned integers from 8 to 64 bits, `float16`, `float`, `double`, `string`, `large_string`, `binary`, `large_binary`, `date32`, `date64` |
@@ -281,7 +283,7 @@ The column names `cozip:location`, `taco:location`, and `taco:sample_index` are 
 
 A reader MUST calculate locations from the payload offset, size, and containing file. It MUST ignore or remove stored values that use any reserved name.
 
-On disk, a namespace only qualifies a column name. It does not create a nested struct or identify a Python class. Contracts are equivalent when their structure, levels, qualified fields, types, nullability, and descriptions are the same.
+On disk, a namespace only qualifies a column name. It does not create a nested struct or identify a Python class. Contracts are equivalent when their structure, levels, qualified fields, types, nullability, descriptions, and Rumi file selections are the same.
 
 #### Spatial and temporal profiles
 
@@ -372,17 +374,50 @@ Every produced column MUST appear in `taco:metadata` with its final type, nullab
 
 #### Rumi extension
 
-The Rumi extension operates on one local `.rumi` asset per row. It stores `rumi:header` unless configured with `header=False`, and `rumi:stats` when configured with `stats=True`. At least one of the two MUST be enabled. It MUST obtain `rumi:header` from `rumi.info(source=asset_path).header`. Producers MUST NOT construct this value themselves.
+The Rumi extension operates on one local `.rumi` asset per row. It owns the `rumi` namespace: no other metadata group may use it. It stores `rumi:header` unless configured with `header=False`, and the statistics selected with `stats`. At least one of the two MUST be enabled. It MUST obtain `rumi:header` from `rumi.info(source=asset_path).header`. Producers MUST NOT construct this value themselves.
 
 The header is stored as Parquet `binary`. A reader can use it for selective access without parsing the payload first.
 
-When statistics are enabled, the extension also stores `rumi:stats` as one list entry per band with the following non-null top-level type.
+Each statistic is a nullable `double` column named `rumi:<statistic>`, optionally followed by a selection.
+
+| Statistic | Value |
+| --- | --- |
+| `minimum`, `maximum` | Smallest and largest valid value |
+| `mean` | Arithmetic mean |
+| `stddev` | Population standard deviation |
+| `p2`, `p98` | 2nd and 98th percentiles, interpolated linearly between the closest ranks |
+
+Without a selection, a statistic covers every valid value of the array: all bands and, in a Cube, all time steps. `_b<band>` selects one band, `_t<time>` one time step of a Cube, and `_t<time>_b<band>` one band at one time step. Indexes start at zero and have no leading zeros, like variable sequences.
+
+`stats=True` stores the six statistics without a selection. `stats=["mean", "mean_b10", "p98_t0_b3"]` stores exactly those three columns for every Rumi file at the level.
 
 ```
-list<struct<minimum: double?, maximum: double?, mean: double?, stddev: double?, valid_count: int64, nodata_count: int64>>
+rumi:minimum  rumi:maximum  rumi:mean  rumi:stddev  rumi:p2  rumi:p98
 ```
 
-Cube statistics combine the time and spatial axes for each band. Non-finite values and the configured nodata sentinel are excluded.
+`stats` MAY instead map a complete structure declaration to its own selection. The mapping MUST be non-empty, and each value MUST be `True`, a statistic name, or a non-empty list of statistic names. A declaration omitted from the mapping gets no statistics; it MUST NOT be represented by `False` or an empty list. The mapping is declared at the metadata level that owns those assets. For a variable sequence, the key is the declaration itself, including `*[min,max]`.
+
+```python
+taco.extensions.Rumi(
+    stats={
+        "rumi/image.rumi": ["mean", "p98"],
+        "rumi/cube.rumi": ["mean_t0", "p98_t0_b3"],
+    }
+)
+```
+
+The level stores the union of the selected statistic columns. A row contains null for a statistic that does not apply to its file. In `taco:metadata`, each restricted statistic declares the structure declarations it applies to with `files`; readers use that list to expose only the columns that belong beside each file.
+
+```json
+"rumi:mean": {
+  "type": "double",
+  "nullable": true,
+  "description": "Mean of all valid values",
+  "files": ["rumi/image.rumi"]
+}
+```
+
+Statistics exclude non-finite values; booleans count as 0 and 1. The extension has no `nodata` option. Dataset-specific masking belongs outside this extension. A statistic is null when its selection holds no valid value. The writer MUST reject complex values, an asset that lacks a selected band or time step, and a time selection on an Image. A contract that declares any other field in the `rumi` namespace, declares `rumi:header` with a type other than `binary`, or declares a Rumi statistic with a type other than `double` is invalid.
 
 #### Examples
 
@@ -889,7 +924,7 @@ For example, Spatial receives a grid and produces `spatial:centroid`. `MajorTOM(
 
 The writer computes extension outputs from batches of validated metadata during `run()`. Each context also contains the local asset associated with every row, allowing format extensions to inspect payloads without asking producers to duplicate file metadata.
 
-`taco.extensions.Rumi(stats=True)` requires a local `.rumi` asset. It produces the canonical binary `rumi:header` and the per-band `rumi:stats`; `header=False` omits the header. `taco.extensions.GeoEnrich` attaches selected environmental variables through one of two backends. The default `majortom-index` backend joins a 10 km MajorTOM code against the public MajorTOM index on Source Cooperative without requiring an Earth Engine account; the explicitly selected `earthengine` backend samples a configurable centroid. The index backend and source URL are stored as collection metadata.
+`taco.extensions.Rumi(stats=True)` requires a local `.rumi` asset. It produces the canonical binary `rumi:header` and one `double` column per statistic, such as `rumi:mean` or `rumi:mean_b10`; `header=False` omits the header. A `stats` mapping selects different columns for different structure declarations at the same level. `taco.extensions.GeoEnrich` attaches selected environmental variables through one of two backends. The default `majortom-index` backend joins a 10 km MajorTOM code against the public MajorTOM index on Source Cooperative without requiring an Earth Engine account; the explicitly selected `earthengine` backend samples a configurable centroid. The index backend and source URL are stored as collection metadata.
 
 Extension dependencies and operational settings remain in the active Python contract while writing. Semantic parameters are stored as collection metadata as defined in Section 5.4. The persisted contract contains only the resulting structure and metadata schema.
 
@@ -1018,7 +1053,7 @@ Remote file locations use the VSI prefix of their storage, such as `/vsicurl/`, 
 
 The result includes the generated `taco:sample_index` and the stable logical `id`. TACOCAT also includes `source_file`, which identifies the ZIP containing each sample.
 
-Every selected file has a `{file}::location` column calculated by the reader. Location columns are not stored in metadata. A Rumi file also has a `{file}::header` column when its metadata level declares `rumi:header`. These generated columns do not modify the dataset.
+Every selected file has a `{file}::location` column calculated by the reader. Location columns are not stored in metadata. A Rumi file also has a `{file}::header` column when its metadata level declares `rumi:header`, and one `{file}::<statistic>` column for every Rumi statistic that applies to that structure declaration, such as `{file}::mean_b10`. These generated columns do not modify the dataset.
 
 Collection metadata is not repeated in every result row. It is available through `Dataset.collection`.
 
@@ -1029,7 +1064,7 @@ The `dataset` relation and `read()` use the following column order. `source_file
 | `dataset` | `source_file` when present, `taco:sample_index`, `id`, sample metadata in `sample.parquet` schema order, then generated file columns |
 | `read()` | The same columns as `dataset`, limited to the requested structure declarations when `files` is provided |
 
-Generated file columns follow the selected declarations in structure order. Each `{file}::location` column is immediately followed by `{file}::header` when the file declares `rumi:header`. A variable sequence occupies one list column in the position of its declaration.
+Generated file columns follow the selected declarations in structure order. Each `{file}::location` column is immediately followed by the file's Rumi columns, in `taco:metadata` order. A variable sequence occupies one list column in the position of its declaration.
 
 ```
 read("cloudsen12.zip")
@@ -1040,15 +1075,15 @@ read("cloudsen12.zip")
 read("change_detection.zip", files=["before/B02.tif", "after/B02.tif"])
 # taco:sample_index | id | ml:split | before/B02.tif::location | after/B02.tif::location
 
-# Rumi assets carry their header
+# Rumi assets carry their header and statistics
 read("multisensor.zip")
-# taco:sample_index | id       | optical.rumi::location | optical.rumi::header | radar.rumi::location | radar.rumi::header
-# 0            | lima-001 | /vsisubfile/...       | b"LOVE..."          | /vsisubfile/...     | b"LOVE..."
+# taco:sample_index | id       | optical.rumi::location | optical.rumi::header | optical.rumi::mean | radar.rumi::location | ...
+# 0            | lima-001 | /vsisubfile/...       | b"LOVE..."          | 1204.5             | /vsisubfile/...     | ...
 ```
 
-A generated column is named after its structure path, followed by `::location` or `::header`, so `before/B02.tif` becomes `before/B02.tif::location`. The double `::` distinguishes generated columns from metadata fields, which contain exactly one `:`.
+A generated column is named after its structure path, followed by `::location`, `::header` or a Rumi statistic, so `before/B02.tif` becomes `before/B02.tif::location`. The double `::` distinguishes generated columns from metadata fields, which contain exactly one `:`.
 
-A variable sequence uses the path to its prefix. `before/img*[1,16].tif` becomes the `LIST(VARCHAR)` column `before/img::location`. A Rumi sequence also has a `LIST(BLOB)` column named `before/img::header`.
+A variable sequence uses the path to its prefix. `before/img*[1,16].tif` becomes the `LIST(VARCHAR)` column `before/img::location`. A Rumi sequence may also have a `LIST(BLOB)` column named `before/img::header` and applicable `LIST(DOUBLE)` statistic columns such as `before/img::mean`.
 
 ```
 read("multitemporal_s2.zip")
@@ -1219,7 +1254,7 @@ v2 extensions combined schema definitions with metadata computation through base
 
 v3 uses namespaced Pydantic models for passive metadata and a generic `Extension` abstraction for writer-time operations. The namespace determines the stored field prefix. Extensions combine optional validated inputs, declared outputs, local asset access, and explicit dependencies.
 
-`taco` includes Spatial and STAC extensions that compute the centroid of each grid or footprint, a Rumi extension for canonical headers and per-band statistics, and composable operations such as MajorTOM. The writer resolves their dependency graph during `run()`. Datasets can define additional models or extension subclasses without modifying the writer core.
+`taco` includes Spatial and STAC extensions that compute the centroid of each grid or footprint, a Rumi extension for canonical headers and selectable array statistics, and composable operations such as MajorTOM. The writer resolves their dependency graph during `run()`. Datasets can define additional models or extension subclasses without modifying the writer core.
 
 ### A.6. TACOCAT and TACOLLECTION
 

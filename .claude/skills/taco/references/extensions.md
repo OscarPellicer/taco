@@ -21,7 +21,7 @@ Do not store extension descriptors in `COLLECTION.json`.
 | --- | --- | --- | --- |
 | `Spatial(model=...)` | `spatial:geometry`, `proj_code`, `proj_shape`, `proj_transform` | `spatial:centroid` | sample, folder |
 | `STAC(model=...)` | `stac:geometry`, `proj_code`, `proj_shape`, `proj_transform` | `stac:centroid` | sample, folder |
-| `Rumi(header=True, stats=False, nodata=None)` | nothing | `rumi:header` and/or `rumi:stats`, at least one | sample, asset |
+| `Rumi(header=True, stats=False)` | nothing | `rumi:header` by default; optional `double` statistic columns; at least one output required | sample, asset |
 | `MajorTOM(dist_km=100, extra=(), latitude_range=(-85, 85), longitude_range=(-180, 180), sep="_", centroid="stac:centroid")` | the centroid field | `majortom:code` plus one per extra grid | sample |
 | `GeoEnrich(variables=None, backend="majortom-index", scale_m=5120, batch_size=250, max_concurrency=8, centroid="stac:centroid", code="majortom:code", index_url=...)` | the 10 km MajorTOM code by default; the centroid field for `earthengine` | one column per variable | sample |
 
@@ -61,17 +61,46 @@ outside their CRS domain.
 ### Rumi
 
 `Rumi` needs one local `.rumi` asset per row and calls `rumi.info(source=...)` for the
-canonical header; producers must never construct it themselves. With `stats=True` it
-also decodes each frame and stores per-band statistics as
-`list<struct<minimum: double?, maximum: double?, mean: double?, stddev: double?,
-valid_count: int64, nodata_count: int64>>`, excluding non-finite values and the
-configured `nodata`. Cube statistics combine the time and spatial axes per band.
-Errors: `the Rumi extension requires one local asset for every metadata row`, `the
-Rumi extension only accepts .rumi assets, got 'x.tif'`, and
-`the Rumi extension requires 'taco-eo[rumi]'`.
+canonical header; producers must never construct it themselves. It must be bound as
+`rumi=`, and no other group may use that namespace.
 
-A level declaring `rumi:header` makes the reader emit a `{file}::header` column beside
-each `{file}::location`.
+`stats` decodes each asset and stores one nullable `double` column per statistic:
+`minimum`, `maximum`, `mean`, `stddev` (population), `p2` and `p98` (linear
+interpolation). `stats=True` stores the six over the whole array: every band and, in a
+Cube, every time step. A list selects exactly those columns, each optionally
+restricted with `_b<band>`, `_t<time>` or `_t<time>_b<band>`, zero-based without
+leading zeros:
+
+```python
+taco.extensions.Rumi(stats=True)                                  # rumi:mean, rumi:p98, ...
+taco.extensions.Rumi(stats=["mean", "mean_b10", "p98_t0_b3"])
+taco.extensions.Rumi(stats={
+    "rumi/image.rumi": ["mean", "p98"],
+    "rumi/cube.rumi": ["mean_t0", "p98_t0_b3"],
+})
+```
+
+The simple boolean, string, and list forms configure every `.rumi` file at the level.
+A mapping is bound at the `children/...` level that owns the assets and uses complete
+structure declarations as keys. Its values may be `True`, a statistic name, or a
+non-empty list of names. Omit a declaration to store no statistics for that file. A
+variable sequence key is the declaration itself, such as `rumi/image*[1,4].rumi`.
+
+The Parquet level contains the union of those columns and uses null where a statistic
+does not apply. The serialized field records its applicable declarations in `files`,
+so wide readers only place that statistic beside the right file.
+
+Non-finite values are excluded, booleans count as 0 and 1, and complex values are
+rejected; a selection without valid values is null. `Rumi` has no `nodata` parameter;
+dataset-specific masking belongs in another extension. Errors include `Rumi statistic
+'mean_t0' needs a Cube, but 'x.rumi' is an Image`, `Rumi statistic 'p2_b2' reads band
+2, but 'x.rumi' has 2 bands`, `the Rumi extension requires one local asset for every
+metadata row`, `the Rumi extension only accepts .rumi assets, got 'x.tif'`, and `the
+Rumi extension requires 'taco-eo[rumi]'`.
+
+After each `{file}::location`, the reader emits `{file}::header` when declared and
+the applicable `{file}::<statistic>` columns. No other field is valid in the reserved
+`rumi` namespace; datasets that store the old `rumi:stats` field must be rebuilt.
 
 ### MajorTOM and GeoEnrich
 

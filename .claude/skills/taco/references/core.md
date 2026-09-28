@@ -104,7 +104,10 @@ swallows every exception, so a broken bar can never break a download.
 The contract is then checked: a supported `taco:version`, a non-empty
 `taco:structure` of strings with parseable variable leaves, a `taco:metadata` object
 whose levels match the Parquet files exactly, `sample` present, `children` present
-whenever child levels exist, and every `children/...` level preceded by its parent.
+whenever child levels exist, every `children/...` level preceded by its parent, and
+`rumi` fields limited to the header and statistics. Their types and optional file
+selections are checked here as well. `core/src/rumi.hpp` holds the statistic grammar
+shared with the SQL builder.
 
 For a ZIP the core reads the byte-zero index and fetches `COLLECTION.json` plus every
 indexed Parquet range in one batch. For a remote directory it fetches the files named

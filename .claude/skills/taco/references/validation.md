@@ -123,6 +123,8 @@ METADATA level 'children/x' has no parent level 'children': <source>
 METADATA level 'other' is not 'children' or below it: <source>
 taco needs a TACO-profile archive (profile=2). Got profile=<n>
 COLLECTION.json is larger than 64 MiB, refusing to read it: <source>
+COLLECTION.json: invalid Rumi field 'rumi:stats': <source>
+COLLECTION.json: field 'rumi:mean' must have type double: <source>
 ```
 
 The reader checks the contract and the level graph; it does not read every payload
