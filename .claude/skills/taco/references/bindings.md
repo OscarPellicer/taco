@@ -25,9 +25,9 @@ wheels bundle the native library. Building from the sdist needs a C++23 compiler
 CMake, Ninja, pkg-config, libcurl 7.83+ and OpenSSL 3+; the sdist force-includes
 `core/` and `extern/karu/` under `native/`.
 
-Runtime dependencies: `cffi`, `cozip`, `duckdb`, `numpy`, `tqdm`, `pyarrow`,
-`pydantic`, `pyproj`, `shapely`. Extras: `rumi` (the Rumi extension), `geoenrich`
-(Earth Engine), `test`, `dev`, `test-eo`.
+Runtime dependencies: `cffi`, `duckdb`, `pyarrow`, `tqdm`. The `writer` extra adds
+`cozip`, `numpy`, `pydantic`, `pyproj` and `shapely`; `rumi` (the Rumi extension),
+`geoenrich` (Earth Engine), `test`, `dev` and `test-eo` include it.
 
 The library is found at `taco/_lib/libtaco.{dylib,so}` or wherever `TACO_LIB` points.
 

@@ -155,8 +155,9 @@ CHANGELOG.md     one file for the core and all five packages
 Python package structure:
 
 ```
-taco/contract/    Contract, Collection, Sample/Asset/Folder, schema, types, naming
-taco/metadata/    scoped Pydantic groups, Extension base, profiles, MajorTOM, GeoEnrich
+taco/contract/    Contract, Collection, Sample/Asset/Folder, schema, types, naming,
+                  the Extension base
+taco/metadata/    scoped Pydantic groups, profiles, MajorTOM, GeoEnrich
 taco/extensions/  writer-time operations bound into a Level
 taco/writer/      open_writer, archive and folder writers, metadata tables, partitions,
                   catalog (consolidate), export

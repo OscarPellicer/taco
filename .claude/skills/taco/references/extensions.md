@@ -1,6 +1,6 @@
 # Extensions: writer-time metadata operations
 
-Sources: `python/taco/metadata/_base.py`, `python/taco/extensions/`,
+Sources: `python/taco/contract/extension.py`, `python/taco/extensions/`,
 `python/taco/metadata/derived.py`, SPEC 5.4.
 
 An **extension** is a metadata operation the writer runs during `run()`, after assets

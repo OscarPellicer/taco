@@ -171,7 +171,7 @@ and only ZIP metadata carries the byte offsets that make random access possible.
   namespaces and `__` in names are reserved. Path components reject `<>:"\|?` and a
   trailing space or dot. `*`, `[` and `]` are allowed only in the final component of a
   valid variable-sequence declaration. Structure paths are normalized relative POSIX
-  and printable ASCII.
+  and printable ASCII. Names that differ only in letter case are rejected.
 - **Empty data is refused.** Every dataset needs a sample, every sample a declared
   file, and every stored file at least one byte.
 - **Remote metadata is cached, payloads are not.** Entries live under `TACO_CACHE_DIR`
