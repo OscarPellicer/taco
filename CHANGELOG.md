@@ -6,6 +6,8 @@ JavaScript reader are documented here. The format follows
 
 ## Unreleased
 
+## 0.13.0 - 2026-09-28
+
 ### Changed
 
 - `taco.extensions.Rumi` stores each statistic as its own `double` column.
