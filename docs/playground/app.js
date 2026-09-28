@@ -1,4 +1,4 @@
-import { openDataset } from "../javascript/src/index.js?v=17";
+import { openDataset } from "../javascript/src/index.js?v=18";
 import * as maplibregl from "https://cdn.jsdelivr.net/npm/maplibre-gl@6.9.0/dist/maplibre-gl.mjs";
 import { extendRandomRowIndexes, populationRows, randomRowIndexes } from "./sampling.js?v=3";
 import { DEFAULT_QUERY, normalizeQuery, prepareSql, selectSampleRows } from "./sql.js?v=3";
@@ -1277,6 +1277,14 @@ function navigateMetadata(direction) {
   renderMetadataPage();
 }
 
+// Rumi statistics can add dozens of fields per level. SQL reads them; the panel does not show them.
+const RUMI_STATISTIC_FIELD =
+  /^rumi:(minimum|maximum|mean|stddev|p2|p98)(_(b(0|[1-9][0-9]*)|t(0|[1-9][0-9]*)(_b(0|[1-9][0-9]*))?))?$/;
+
+function isRumiStatistic(name) {
+  return RUMI_STATISTIC_FIELD.test(name);
+}
+
 function appendMetadataRecord(record) {
   const section = document.createElement("section");
   section.className = "metadata-record";
@@ -1284,7 +1292,7 @@ function appendMetadataRecord(record) {
   heading.textContent = record.title;
   const list = document.createElement("dl");
   for (const [name, value] of orderedMetadataEntries(record.values)) {
-    if (LOCATION_FIELDS.has(name)) continue;
+    if (LOCATION_FIELDS.has(name) || isRumiStatistic(name)) continue;
     const wrapper = document.createElement("div");
     wrapper.className = "metadata-row";
     const term = document.createElement("dt");
@@ -1733,7 +1741,9 @@ function appendContractSchemas() {
   section.append(heading);
 
   state.dataset.levels.forEach((level) => {
-    const fields = Object.entries(state.dataset.contract.metadata[level] || {});
+    const fields = Object.entries(state.dataset.contract.metadata[level] || {}).filter(
+      ([fieldName]) => !isRumiStatistic(fieldName),
+    );
     const card = document.createElement("article");
     card.className = "schema-card";
     const header = document.createElement("header");
