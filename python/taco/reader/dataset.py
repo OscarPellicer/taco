@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import pyarrow as pa
 
 from ..contract.contract import CHILDREN_LEVEL, Contract
-from ..contract.naming import SAMPLE_INDEX
+from ..contract.naming import SAMPLE_INDEX, rumi_file_field
 from ..contract.structure import Leaf
 from ..errors import ContainerError
 from . import engine, native
@@ -18,28 +18,22 @@ def _identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
-# Rumi assets are read statelessly with their header, so a wide read carries it
-# next to the location of every leaf whose level declares it.
-_HEADER_FIELD = "rumi:header"
-
-
 def _output_name(declaration: str, *, variable: bool) -> str:
     # Generated columns keep the structure path, or the prefix of a variable sequence.
     return declaration.partition("*")[0] if variable else declaration
 
 
-def _has_header(contract: Contract, leaf: Leaf) -> bool:
-    level = "/".join((CHILDREN_LEVEL, *leaf.folder))
-    return _HEADER_FIELD in contract.metadata.get(level, {})
-
-
 def _wide_columns(contract: Contract, leaf: Leaf) -> list[tuple[str, str]]:
     # Metadata fields contain exactly one ':', so the double separator cannot
-    # collide with user metadata.
+    # collide with user metadata. Rumi fields follow the location so consumers
+    # can pair the header and statistics with the asset they describe.
     name = _output_name(leaf.declaration, variable=leaf.variable)
     columns = [("taco:location", f"{name}::location")]
-    if _has_header(contract, leaf):
-        columns.append((_HEADER_FIELD, f"{name}::header"))
+    level = "/".join((CHILDREN_LEVEL, *leaf.folder))
+    for field, spec in contract.metadata.get(level, {}).items():
+        suffix = rumi_file_field(field)
+        if suffix is not None and (spec.files is None or leaf.declaration in spec.files):
+            columns.append((field, f"{name}::{suffix}"))
     return columns
 
 

@@ -1,6 +1,6 @@
 #pragma once
 
-// The byte-0 index of a CoZIP archive (cozip spec sections 5 to 8).
+// The index stored at byte zero of a CoZIP archive.
 
 #include <cstdint>
 #include <string>

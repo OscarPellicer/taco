@@ -7,7 +7,7 @@ import pyarrow as pa
 
 from ..errors import ContractError
 
-# TACO spec 7.2. Users may not declare fields with this prefix.
+# Internal columns are safe to hide because user schemas cannot declare them.
 CURRENT_ID = "internal:current_id"
 PARENT_ID = "internal:parent_id"
 RELATIVE_PATH = "internal:relative_path"
@@ -18,6 +18,12 @@ SAMPLE_INDEX = "taco:sample_index"
 
 ID_TYPE = pa.uint64()
 OFFSET_TYPE = pa.uint64()
+
+# Selections use zero-based indexes without leading zeros.
+RUMI_NAMESPACE = "rumi"
+RUMI_STATISTIC = re.compile(
+    r"(minimum|maximum|mean|stddev|p2|p98)(?:_(?:b(0|[1-9][0-9]*)|t(0|[1-9][0-9]*)(?:_b(0|[1-9][0-9]*))?))?"
+)
 
 COLLECTION_FILENAME = "COLLECTION.json"
 DATA_DIR = "DATA"
@@ -184,6 +190,14 @@ def level_folder(level: str) -> tuple[str, ...]:
     if level in {"sample", "children"}:
         return ()
     return tuple(level.split("/")[1:])
+
+
+def rumi_file_field(name: str) -> str | None:
+    """Return the suffix a wide read gives this Rumi field next to each file location."""
+    namespace, _, field = name.partition(":")
+    if namespace == RUMI_NAMESPACE and (field == "header" or RUMI_STATISTIC.fullmatch(field)):
+        return field
+    return None
 
 
 def sanitize_filename(value: str) -> str:

@@ -3,6 +3,7 @@
 #include "error.hpp"
 #include "json.hpp"
 #include "paths.hpp"
+#include "rumi.hpp"
 #include "sql.hpp"
 #include "transport.hpp"
 
@@ -166,6 +167,11 @@ void test_paths() {
     CHECK(taco::sql_literal("it's") == "'it''s'");
     CHECK(taco::sql_identifier("a\"b") == "\"a\"\"b\"");
     CHECK(taco::hex64(0x1234) == "0000000000001234");
+
+    CHECK(taco::rumi_file_suffix("rumi:header") == "header");
+    CHECK(taco::rumi_file_suffix("rumi:mean_t0_b3") == "mean_t0_b3");
+    CHECK(!taco::rumi_file_suffix("rumi:stats"));
+    CHECK(!taco::rumi_file_suffix("rumi:mean_b01"));
 }
 
 void test_cozip_index() {
@@ -318,6 +324,28 @@ void test_sql() {
     taco::ReadOptions rumi_quiet;
     rumi_quiet.location = false;
     CHECK(contains(taco::build_sql(rumi, rumi_quiet), "NULL::BLOB AS \"before/B02.bin::header\""));
+
+    // Rumi statistics follow the header.
+    const Strings statistics = {"mean", "p98_t0_b3", "minimum_t12", "stddev_b0"};
+    for (auto& [name, fields] : rumi.contract.fields) {
+        if (name != "children/before")
+            continue;
+        for (const auto& field : statistics)
+            fields.push_back("rumi:" + field);
+    }
+    const auto stats_wide = taco::build_sql(rumi, taco::ReadOptions{});
+    for (const auto& field : statistics)
+        CHECK(contains(stats_wide, "AS \"before/B02.bin::" + field + "\""));
+    CHECK(stats_wide.find("AS \"before/B02.bin::header\"") < stats_wide.find("AS \"before/B02.bin::mean\""));
+    const auto stats_quiet = taco::build_sql(rumi, rumi_quiet);
+    CHECK(contains(stats_quiet, "NULL::DOUBLE AS \"before/B02.bin::mean\""));
+
+    const auto selected_stats = taco::open_dataset(data("taco_rumi.zip"), cache);
+    const auto selected_wide = taco::build_sql(selected_stats, taco::ReadOptions{});
+    CHECK(contains(selected_wide, "AS \"scene/image.rumi::mean\""));
+    CHECK(!contains(selected_wide, "scene/image.rumi::maximum_b1"));
+    CHECK(contains(selected_wide, "AS \"scene/series::maximum_b1\""));
+    CHECK(!contains(selected_wide, "scene/series::mean"));
 
     taco::ReadOptions long_quiet;
     long_quiet.pivot = false;

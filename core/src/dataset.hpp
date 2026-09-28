@@ -14,13 +14,22 @@ namespace taco {
 enum class Container { zip, folder, tacocat };
 
 struct Contract {
+    struct FileScope {
+        std::string level;
+        std::string field;
+        std::vector<std::string> files;
+    };
+
     std::vector<std::string> structure;
     // Every level with the user fields it declares, in COLLECTION.json order.
     std::vector<std::pair<std::string, std::vector<std::string>>> fields;
+    std::vector<FileScope> file_scopes;
     bool has_derived = false;
     std::string derived;
 
     [[nodiscard]] const std::vector<std::string>* fields_of(std::string_view level) const;
+    [[nodiscard]] bool field_applies(std::string_view level, std::string_view field,
+                                     std::string_view declaration) const;
 };
 
 struct Dataset {

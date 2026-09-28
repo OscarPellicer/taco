@@ -12,7 +12,7 @@ import pyarrow as pa
 from ..container.parquet import Encoding
 from ..errors import ContractError, SampleError
 from .extension import CollectionSummary, DerivedMetadata, Extension
-from .naming import validate_field_name
+from .naming import RUMI_NAMESPACE, validate_field_name
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from pydantic import BaseModel
@@ -57,9 +57,17 @@ class Field:
     type: str
     nullable: bool
     description: str = ""
+    files: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "nullable": self.nullable, "description": self.description}
+        result: dict[str, Any] = {
+            "type": self.type,
+            "nullable": self.nullable,
+            "description": self.description,
+        }
+        if self.files is not None:
+            result["files"] = list(self.files)
+        return result
 
 
 @dataclass(frozen=True)
@@ -233,6 +241,11 @@ def _model_binding(namespace: str, value: Any) -> Group:
 
 
 def _extension_binding(namespace: str, value: Extension) -> Group:
+    expected_namespace = value.__taco_namespace__
+    if expected_namespace is not None and namespace != expected_namespace:
+        raise ContractError(
+            f"{type(value).__name__} must use metadata namespace {expected_namespace!r}, got {namespace!r}"
+        )
     model = value.input_model
     input_fields: tuple[tuple[str, pa.Field], ...] = ()
     summaries: tuple[type[CollectionSummary], ...] = ()
@@ -298,6 +311,10 @@ class Level:
         bindings = []
         for namespace, value in groups.items():
             _namespace(namespace)
+            # Wide reads carry Rumi fields next to file locations by name, so
+            # only the Rumi extension may declare them.
+            if namespace == RUMI_NAMESPACE and getattr(value, "__taco_namespace__", None) != RUMI_NAMESPACE:
+                raise ContractError("metadata namespace 'rumi' is reserved for taco.extensions.Rumi")
             if isinstance(value, Extension):
                 bindings.append(_extension_binding(namespace, value))
             else:

@@ -1,66 +1,155 @@
 from __future__ import annotations
 
-import math
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+import json
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
 import pyarrow as pa
 
-from ..metadata._base import Extension, ExtensionContext
+from ..contract.extension import Extension, ExtensionContext
+from ..contract.naming import RUMI_NAMESPACE, RUMI_STATISTIC
+from ..contract.structure import Leaf, parse_leaf
+from ..errors import SampleError
 
-_BAND_STATS = pa.struct(
-    [
-        pa.field("minimum", pa.float64(), nullable=True),
-        pa.field("maximum", pa.float64(), nullable=True),
-        pa.field("mean", pa.float64(), nullable=True),
-        pa.field("stddev", pa.float64(), nullable=True),
-        pa.field("valid_count", pa.int64(), nullable=False),
-        pa.field("nodata_count", pa.int64(), nullable=False),
-    ]
-)
+# Statistics included by stats=True.
+STATISTICS = ("minimum", "maximum", "mean", "stddev", "p2", "p98")
+
+_REDUCERS: dict[str, Callable[[np.ndarray], Any]] = {
+    "minimum": lambda values: values.min(),
+    "maximum": lambda values: values.max(),
+    "mean": lambda values: values.mean(dtype=np.float64),
+    "stddev": lambda values: values.std(dtype=np.float64),
+    "p2": lambda values: np.percentile(values, 2),
+    "p98": lambda values: np.percentile(values, 98),
+}
+_LABELS = {
+    "minimum": "Minimum",
+    "maximum": "Maximum",
+    "mean": "Mean",
+    "stddev": "Population standard deviation",
+    "p2": "2nd percentile",
+    "p98": "98th percentile",
+}
 
 
-def _band_stats(array: np.ndarray, nodata: float | int | None) -> list[dict[str, float | int | None]]:
-    if array.ndim == 3:
-        bands = (array[index] for index in range(array.shape[0]))
-    elif array.ndim == 4:
-        bands = (array[:, index, ...] for index in range(array.shape[1]))
+@dataclass(frozen=True)
+class _Statistic:
+    name: str
+    kind: str
+    time: int | None
+    band: int | None
+
+    @property
+    def description(self) -> str:
+        scope = "all valid values"
+        if self.band is not None or self.time is not None:
+            scope = "the valid values"
+            if self.band is not None:
+                scope += f" in band {self.band}"
+            if self.time is not None:
+                scope += f" at time step {self.time}"
+        return f"{_LABELS[self.kind]} of {scope}"
+
+
+def _statistic(name: object) -> _Statistic:
+    if not isinstance(name, str):
+        raise TypeError(f"Rumi statistic names must be strings, got {type(name).__name__}")
+    match = RUMI_STATISTIC.fullmatch(name)
+    if match is None:
+        raise ValueError(
+            f"unknown Rumi statistic {name!r}; use {', '.join(STATISTICS)}, "
+            "optionally followed by _b<band>, _t<time> or _t<time>_b<band>"
+        )
+    kind, band, time, time_band = match.groups()
+    band = band if band is not None else time_band
+    return _Statistic(name, kind, None if time is None else int(time), None if band is None else int(band))
+
+
+def _statistics(value: object, *, allow_mapping: bool = False) -> tuple[_Statistic, ...]:
+    if value is True:
+        names: Sequence[object] = STATISTICS
+    elif value is False:
+        return ()
+    elif isinstance(value, str):
+        names = (value,)
+    elif isinstance(value, Sequence):
+        names = value
     else:
-        raise ValueError(f"Rumi arrays must have shape (B,Y,X) or (T,B,Y,X), got {array.shape}")
+        expected = "a boolean, a statistic name, or a sequence of statistic names"
+        if allow_mapping:
+            expected += ", or a mapping from structure declarations to those selections"
+        raise TypeError(f"stats must be {expected}")
+    if not names:
+        raise ValueError("stats cannot be empty; use stats=False to store none")
+    statistics = tuple(_statistic(name) for name in names)
+    seen: set[str] = set()
+    for statistic in statistics:
+        if statistic.name in seen:
+            raise ValueError(f"duplicate Rumi statistic {statistic.name!r}")
+        seen.add(statistic.name)
+    return statistics
 
-    result: list[dict[str, float | int | None]] = []
-    for band in bands:
-        valid = np.isfinite(band)
-        if nodata is not None:
-            valid &= band != nodata
-        values = band[valid]
-        count = int(values.size)
-        missing = int(band.size - count)
-        if count:
-            result.append(
-                {
-                    "minimum": float(values.min()),
-                    "maximum": float(values.max()),
-                    "mean": float(values.mean(dtype=np.float64)),
-                    "stddev": float(values.std(dtype=np.float64)),
-                    "valid_count": count,
-                    "nodata_count": missing,
-                }
-            )
-        else:
-            result.append(
-                {
-                    "minimum": None,
-                    "maximum": None,
-                    "mean": None,
-                    "stddev": None,
-                    "valid_count": 0,
-                    "nodata_count": missing,
-                }
-            )
+
+def _file_statistics(
+    value: Mapping[str, bool | str | Sequence[str]],
+) -> tuple[tuple[Leaf, tuple[_Statistic, ...]], ...]:
+    if not value:
+        raise ValueError("stats mapping cannot be empty; use stats=False to store none")
+    result = []
+    for declaration, selected in value.items():
+        if not isinstance(declaration, str):
+            raise TypeError(f"Rumi stats keys must be structure declarations, got {type(declaration).__name__}")
+        if selected is False:
+            raise ValueError(f"Rumi stats for {declaration!r} cannot be False; omit it from the mapping instead")
+        if isinstance(selected, Sequence) and not isinstance(selected, str | bytes) and not selected:
+            raise ValueError(f"Rumi stats for {declaration!r} cannot be empty; omit it from the mapping instead")
+        result.append((parse_leaf(declaration), _statistics(selected)))
+    return tuple(result)
+
+
+def _subset(array: np.ndarray, statistic: _Statistic, source: Path) -> np.ndarray:
+    """The values one statistic describes: the whole array, a band, a time step or both."""
+    cube = array.ndim == 4
+    if statistic.time is not None and not cube:
+        raise SampleError(f"Rumi statistic {statistic.name!r} needs a Cube, but {source.name!r} is an Image")
+    bands = array.shape[1] if cube else array.shape[0]
+    if statistic.band is not None and statistic.band >= bands:
+        raise SampleError(
+            f"Rumi statistic {statistic.name!r} reads band {statistic.band}, but {source.name!r} has {bands} bands"
+        )
+    if statistic.time is not None and statistic.time >= array.shape[0]:
+        raise SampleError(
+            f"Rumi statistic {statistic.name!r} reads time step {statistic.time}, "
+            f"but {source.name!r} has {array.shape[0]} time steps"
+        )
+    band = slice(None) if statistic.band is None else statistic.band
+    if not cube:
+        return array[band]
+    return array[slice(None) if statistic.time is None else statistic.time, band]
+
+
+def _compute(array: np.ndarray, statistics: tuple[_Statistic, ...], source: Path) -> dict[str, float | None]:
+    if array.ndim not in (3, 4):
+        raise SampleError(f"Rumi arrays must have shape (B,Y,X) or (T,B,Y,X), got {array.shape} in {source.name!r}")
+    if np.iscomplexobj(array):
+        raise SampleError(f"Rumi statistics need real values, got {array.dtype} in {source.name!r}")
+    # Statistics of the same band and time step share one pass over its valid values.
+    subsets: dict[tuple[int | None, int | None], list[_Statistic]] = {}
+    for statistic in statistics:
+        subsets.setdefault((statistic.time, statistic.band), []).append(statistic)
+    result: dict[str, float | None] = {}
+    for group in subsets.values():
+        values = _subset(array, group[0], source)
+        valid = np.isfinite(values)
+        values = values[valid]
+        if values.dtype == np.bool_:
+            # Percentiles interpolate, which booleans cannot do.
+            values = values.view(np.uint8)
+        for statistic in group:
+            result[statistic.name] = float(_REDUCERS[statistic.kind](values)) if values.size else None
     return result
 
 
@@ -74,26 +163,46 @@ def _source(value: Path | None) -> Path:
 
 @dataclass(frozen=True)
 class Rumi(Extension):
-    """Inspect local ``.rumi`` assets during ``writer.run()``."""
+    """Inspect local ``.rumi`` assets during ``writer.run()``.
+
+    ``stats=True`` stores the minimum, maximum, mean, population standard
+    deviation and the 2nd and 98th percentiles of every valid value. A list of
+    names such as ``["mean", "mean_b10", "p98_t0_b3"]`` stores exactly those,
+    each restricted to a band, a time step, or both. A mapping from complete
+    structure declarations to selections chooses statistics per file.
+    """
 
     header: bool = True
-    stats: bool = False
-    nodata: float | int | None = None
+    stats: bool | str | Sequence[str] | Mapping[str, bool | str | Sequence[str]] = False
+    _statistics: tuple[_Statistic, ...] = field(init=False, repr=False, compare=False)
+    _file_statistics: tuple[tuple[Leaf, tuple[_Statistic, ...]], ...] = field(init=False, repr=False, compare=False)
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample", "asset"})
+    __taco_namespace__: ClassVar[str | None] = RUMI_NAMESPACE
 
     def __post_init__(self) -> None:
         if not isinstance(self.header, bool):
             raise TypeError("header must be a boolean")
-        if not isinstance(self.stats, bool):
-            raise TypeError("stats must be a boolean")
-        if not (self.header or self.stats):
-            raise ValueError("the Rumi extension needs header=True or stats=True")
-        if self.nodata is not None:
-            if isinstance(self.nodata, bool) or not isinstance(self.nodata, int | float):
-                raise TypeError("nodata must be a number or None")
-            if not math.isfinite(self.nodata):
-                raise ValueError("nodata must be finite")
+        if isinstance(self.stats, Mapping):
+            by_file = _file_statistics(self.stats)
+            unique: dict[str, _Statistic] = {}
+            for _, selected in by_file:
+                for statistic in selected:
+                    unique.setdefault(statistic.name, statistic)
+            statistics = tuple(unique.values())
+            normalized: object = tuple(
+                (leaf.declaration, tuple(statistic.name for statistic in selected)) for leaf, selected in by_file
+            )
+        else:
+            by_file = ()
+            statistics = _statistics(self.stats, allow_mapping=True)
+            normalized = tuple(statistic.name for statistic in statistics)
+        # Normalize mutable inputs so the frozen extension remains hashable.
+        object.__setattr__(self, "stats", normalized)
+        object.__setattr__(self, "_statistics", statistics)
+        object.__setattr__(self, "_file_statistics", by_file)
+        if not (self.header or statistics):
+            raise ValueError("the Rumi extension requires header=True or at least one statistic")
 
     @property
     def requires(self) -> tuple[str, ...]:
@@ -111,19 +220,48 @@ class Rumi(Extension):
                     metadata={b"description": b"Canonical external Rumi header"},
                 )
             )
-        if self.stats:
+        for statistic in self._statistics:
+            # Null when no selected value is finite or the statistic does not apply to this file.
+            metadata = {b"description": statistic.description.encode()}
+            if self._file_statistics:
+                files = [
+                    leaf.declaration
+                    for leaf, selected in self._file_statistics
+                    if statistic.name in {item.name for item in selected}
+                ]
+                metadata[b"taco:files"] = json.dumps(files).encode()
             fields.append(
                 pa.field(
-                    "stats",
-                    pa.list_(pa.field("item", _BAND_STATS, nullable=False)),
-                    nullable=False,
-                    metadata={b"description": b"Per-band statistics over decoded valid samples"},
+                    statistic.name,
+                    pa.float64(),
+                    nullable=True,
+                    metadata=metadata,
                 )
             )
         return pa.schema(fields)
 
     def configuration(self) -> Mapping[str, Any]:
-        return {"header": self.header, "stats": self.stats, "nodata": self.nodata}
+        if self._file_statistics:
+            stats: object = {
+                leaf.declaration: [statistic.name for statistic in selected] for leaf, selected in self._file_statistics
+            }
+        else:
+            stats = [statistic.name for statistic in self._statistics]
+        return {
+            "header": self.header,
+            "stats": stats,
+        }
+
+    def _selected_for(self, path: str) -> tuple[_Statistic, ...]:
+        if not self._file_statistics:
+            return self._statistics
+        contract_path = path.partition("/")[2]
+        folder, _, name = contract_path.rpartition("/")
+        parts = tuple(folder.split("/")) if folder else ()
+        for leaf, selected in self._file_statistics:
+            if leaf.folder == parts and leaf.match_index(name) is not None:
+                return selected
+        return ()
 
     def run(self, context: ExtensionContext) -> Mapping[str, Sequence[Any]]:
         # Validate the row-to-asset contract before importing the optional
@@ -135,17 +273,22 @@ class Rumi(Extension):
             raise ImportError("the Rumi extension requires 'taco-eo[rumi]'") from exc
 
         headers = []
-        statistics = []
-        for source in sources:
+        statistics: dict[str, list[float | None]] = {statistic.name: [] for statistic in self._statistics}
+        actual_paths = context.columns["internal:relative_path"] if self._file_statistics else ("",) * len(sources)
+        for source, path in zip(sources, actual_paths, strict=True):
             metadata = rumi.info(source=source)
             headers.append(metadata.header)
-            if self.stats:
-                statistics.append(_band_stats(np.asarray(rumi.read(source, metadata.header)), self.nodata))
+            selected = self._selected_for(str(path))
+            computed: dict[str, float | None] = {}
+            if selected:
+                array = np.asarray(rumi.read(source, metadata.header))
+                computed = _compute(array, selected, source)
+            for name in statistics:
+                statistics[name].append(computed.get(name))
         result: dict[str, Sequence[Any]] = {}
         if self.header:
             result["header"] = headers
-        if self.stats:
-            result["stats"] = statistics
+        result.update(statistics)
         return result
 
 

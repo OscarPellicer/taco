@@ -2,6 +2,7 @@
 
 #include "error.hpp"
 #include "paths.hpp"
+#include "rumi.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -10,8 +11,7 @@
 namespace taco {
 namespace {
 
-// TACO spec 7.2. Users may not define columns with this prefix, so the
-// builder can hide them from the projected metadata without collisions.
+// User schemas cannot declare these names, so generated projections can hide them safely.
 constexpr const char* id_current = "internal:current_id";
 constexpr const char* id_parent = "internal:parent_id";
 constexpr const char* id_path = "internal:relative_path";
@@ -22,9 +22,6 @@ constexpr const char* logical_id = "id";
 constexpr const char* sample_index = "taco:sample_index";
 constexpr const char* location_column = "taco:location";
 constexpr const char* flat_location_column = "cozip:location";
-// Rumi assets are read statelessly with their header, so a wide read carries
-// it next to the location of every leaf whose level declares it.
-constexpr const char* header_field = "rumi:header";
 constexpr const char* data_directory = "DATA";
 
 std::string regex_escape(std::string_view value) {
@@ -139,9 +136,9 @@ class QueryBuilder {
         std::string branches;
         if (options_.has_files) {
             const auto leaves = selected_leaves();
-            branches = flat_branches(false, &leaves);
+            branches = flat_branches(&leaves);
         } else {
-            branches = flat_branches(false);
+            branches = flat_branches();
         }
         std::string out = "SELECT ";
         if (tacocat_)
@@ -175,9 +172,9 @@ class QueryBuilder {
             for (const auto& leaf : leaves) {
                 out += leaf.variable ? ", NULL::VARCHAR[] AS " : ", NULL::VARCHAR AS ";
                 out += sql_identifier(location_name(leaf));
-                if (has_header(leaf)) {
-                    out += leaf.variable ? ", NULL::BLOB[] AS " : ", NULL::BLOB AS ";
-                    out += sql_identifier(header_name(leaf));
+                for (const auto& column : rumi_columns(leaf)) {
+                    out += ", NULL::" + column.type + (leaf.variable ? "[]" : "") + " AS " +
+                           sql_identifier(column.name);
                 }
             }
             out += " FROM (SELECT " + metadata_projection() + " FROM read_parquet(" +
@@ -201,19 +198,19 @@ class QueryBuilder {
                 out += ", COALESCE(p." + sql_identifier(location) + ", []::VARCHAR[]) AS " + sql_identifier(location);
             else
                 out += ", p." + sql_identifier(location);
-            if (!has_header(leaf))
-                continue;
-            const auto header = header_name(leaf);
-            if (leaf.variable)
-                out += ", COALESCE(p." + sql_identifier(header) + ", []::BLOB[]) AS " + sql_identifier(header);
-            else
-                out += ", p." + sql_identifier(header);
+            for (const auto& column : rumi_columns(leaf)) {
+                if (leaf.variable)
+                    out += ", COALESCE(p." + sql_identifier(column.name) + ", []::" + column.type + "[]) AS " +
+                           sql_identifier(column.name);
+                else
+                    out += ", p." + sql_identifier(column.name);
+            }
         }
         out += " FROM " + alias(0) + " LEFT JOIN LATERAL (SELECT 1 AS taco_anchor";
         for (const auto& leaf : leaves) {
             out += pivot_column(leaf, location_column, location_name(leaf));
-            if (has_header(leaf))
-                out += pivot_column(leaf, header_field, header_name(leaf));
+            for (const auto& column : rumi_columns(leaf))
+                out += pivot_column(leaf, column.field, column.name);
         }
         out += " FROM (" + pivot_branches(options_.has_files ? &leaves : nullptr) + ") AS flat";
         out += ") p ON true";
@@ -229,11 +226,26 @@ class QueryBuilder {
     // Metadata fields contain exactly one ':'. The double separator keeps
     // generated columns outside that namespace without hiding the leaf name.
     static std::string location_name(const Leaf& leaf) { return output_name(leaf) + "::location"; }
-    static std::string header_name(const Leaf& leaf) { return output_name(leaf) + "::header"; }
 
-    [[nodiscard]] bool has_header(const Leaf& leaf) const {
-        const auto* fields = dataset_.contract.fields_of(leaf_level(leaf));
-        return fields && std::find(fields->begin(), fields->end(), header_field) != fields->end();
+    // A Rumi field of a leaf's level and the wide column it fills.
+    struct RumiColumn {
+        std::string field;
+        std::string name;
+        std::string type;
+    };
+
+    [[nodiscard]] std::vector<RumiColumn> rumi_columns(const Leaf& leaf) const {
+        std::vector<RumiColumn> columns;
+        const auto level = leaf_level(leaf);
+        if (const auto* fields = dataset_.contract.fields_of(level)) {
+            for (const auto& field : *fields) {
+                if (const auto suffix = rumi_file_suffix(field);
+                    suffix && dataset_.contract.field_applies(level, field, leaf.declaration))
+                    columns.push_back({field, output_name(leaf) + "::" + std::string(*suffix),
+                                       *suffix == "header" ? "BLOB" : "DOUBLE"});
+            }
+        }
+        return columns;
     }
 
     // One pivoted value of a leaf: the value itself, or the list of a
@@ -243,8 +255,7 @@ class QueryBuilder {
             return ", MAX(CASE WHEN path = " + sql_literal(leaf.declaration) + " THEN " + sql_identifier(column) +
                    " END) AS " + sql_identifier(name);
         }
-        // TACO spec 5.2: the index has no leading zeros, so img01.tif is not an
-        // instance of img*[a,b].tif.
+        // A leading zero makes the name a different file, not part of the sequence.
         const auto pattern = variable_pattern(leaf);
         return ", list(" + sql_identifier(column) + " ORDER BY TRY_CAST(regexp_extract(path, " + sql_literal(pattern) +
                ", 1) AS BIGINT)) FILTER (WHERE regexp_matches(path, " + sql_literal(pattern) + ")) AS " +
@@ -384,7 +395,7 @@ class QueryBuilder {
     }
 
     // One row per data file, columns aligned across levels by name.
-    [[nodiscard]] std::string flat_branches(bool identity_only, const std::vector<Leaf>* selected = nullptr) const {
+    [[nodiscard]] std::string flat_branches(const std::vector<Leaf>* selected = nullptr) const {
         std::string out;
         // Level zero is sample metadata. Payload files begin at child levels.
         for (std::size_t level = 1; level < dataset_.level_names.size(); ++level) {
@@ -395,15 +406,9 @@ class QueryBuilder {
                 out += alias(0) + "." + sql_identifier(id_source) + " AS source_file, ";
             out += alias(0) + "." + sql_identifier(id_current) + " AS " + sql_identifier(sample_index) + ", " +
                    alias(0) + "." + sql_identifier(logical_id) + " AS id, " + path_expression(level) + " AS path";
-            if (identity_only || options_.location)
+            if (options_.location)
                 out += ", " + location_expression(level) + " AS " + sql_identifier(location_column);
-            if (identity_only) {
-                const auto* fields = dataset_.contract.fields_of(dataset_.level_names[level]);
-                if (fields && std::find(fields->begin(), fields->end(), header_field) != fields->end())
-                    out += ", " + alias(level) + "." + sql_identifier(header_field);
-            }
-            if (!identity_only)
-                out += ancestor_projection(level);
+            out += ancestor_projection(level);
             out += " FROM " + alias(level) + join_chain(level);
 
             std::vector<std::string> filters;
@@ -427,9 +432,12 @@ class QueryBuilder {
                 out += "\nUNION ALL BY NAME\n";
             out += "SELECT " + path_expression(level) + " AS path, " + location_expression(level) + " AS " +
                    sql_identifier(location_column);
-            const auto* fields = dataset_.contract.fields_of(dataset_.level_names[level]);
-            if (fields && std::find(fields->begin(), fields->end(), header_field) != fields->end())
-                out += ", " + alias(level) + "." + sql_identifier(header_field);
+            if (const auto* fields = dataset_.contract.fields_of(dataset_.level_names[level])) {
+                for (const auto& field : *fields) {
+                    if (rumi_file_suffix(field))
+                        out += ", " + alias(level) + "." + sql_identifier(field);
+                }
+            }
             out += " FROM " + alias(level);
 
             auto child = level;

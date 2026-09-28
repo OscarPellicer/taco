@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import shutil
 import struct
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
@@ -240,6 +241,52 @@ def write_tacocat(output: Path) -> None:
         writer.run()
 
 
+def write_rumi(output: Path) -> None:
+    import geozl
+    import numpy as np
+    import rumi
+
+    def image(path: Path, first: int) -> None:
+        array = np.arange(first, first + 32, dtype=np.int16).reshape(2, 4, 4)
+        frames = rumi.frames(array, "b (row h) (col w) -> row col b (h w)", tile_size=2)
+        for frame in frames:
+            frame.compressed = geozl.compress(frame.data, graph=geozl.graph(frame.data, "id>zstd"))
+        rumi.write(path, frames, bands=["red", "nir"], time=["2024-01-01"])
+
+    contract = taco.Contract(
+        structure=["scene/image.rumi", "scene/series*[1,2].rumi", "mask.bin"],
+        metadata=[
+            taco.Level(
+                "children/scene",
+                rumi=taco.extensions.Rumi(
+                    stats={
+                        "scene/image.rumi": "mean",
+                        "scene/series*[1,2].rumi": "maximum_b1",
+                    }
+                ),
+            )
+        ],
+    )
+    with (
+        tempfile.TemporaryDirectory() as scratch,
+        taco.open_writer(collection(contract, "taco-rumi"), output, overwrite=True) as writer,
+    ):
+        for index in range(2):
+            names = ["image.rumi", "series1.rumi", "series0.rumi"]
+            for offset, name in enumerate(names):
+                image(Path(scratch) / f"{index}-{name}", 100 * index + 10 * offset)
+            writer.add(
+                taco.Sample(
+                    id=f"rumi-{index}",
+                    assets=[
+                        *(taco.Asset(Path(scratch) / f"{index}-{name}", path=f"scene/{name}") for name in names),
+                        taco.Asset(payload("mask", index), path="mask.bin"),
+                    ],
+                )
+            )
+        writer.run()
+
+
 def edit_collection(folder: Path, change) -> None:
     path = folder / "COLLECTION.json"
     data = json.loads(path.read_text())
@@ -260,6 +307,7 @@ def main() -> None:
     write_variable(DATA / "taco_variable.zip")
     write_shadow(DATA / "taco_shadow.zip")
     write_tacocat(DATA / "taco_cat")
+    write_rumi(DATA / "taco_rumi.zip")
 
     shutil.copytree(DATA / "taco_folder", DATA / "taco_badjson")
     (DATA / "taco_badjson" / "COLLECTION.json").write_text("{ not json")

@@ -5,5 +5,5 @@ from cozip._taco import write as cozip_write
 
 __all__ = ["INDEX_NAME", "cozip_plan", "cozip_write"]
 
-# Reserved by cozip specification 5.3; a TACO archive must not use it.
+# CoZIP owns this entry name; dataset payloads cannot reuse it.
 INDEX_NAME = "__cozip__"

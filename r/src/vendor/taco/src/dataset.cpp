@@ -6,6 +6,7 @@
 #include "json.hpp"
 #include "paths.hpp"
 #include "progress.hpp"
+#include "rumi.hpp"
 #include "transport.hpp"
 
 #include <karu/karu.h>
@@ -249,8 +250,7 @@ Dataset open_local_directory(const std::string& source) {
         directory = utf8(root);
     }
 
-    // TACO spec 7.5: a catalog sits beside the archives it indexes, so
-    // internal:source_file resolves against its parent directory.
+    // Catalog source paths are relative to the directory that contains .tacocat.
     const bool folder = fs::is_directory(root / "METADATA", error);
     Dataset dataset;
     dataset.source = directory;
@@ -485,8 +485,48 @@ Contract read_contract(const Dataset& dataset) {
         if (!value.is_object())
             fail("COLLECTION.json: metadata level must be an object: " + source);
         std::vector<std::string> names;
-        for (const auto& member : value.members)
+        for (const auto& member : value.members) {
+            const auto suffix = rumi_file_suffix(member.first);
+            if (member.first.starts_with("rumi:") && !suffix)
+                fail("COLLECTION.json: invalid Rumi field '" + member.first + "': " + source);
+            if (suffix) {
+                const auto* type = member.second.is_object() ? member.second.find("type") : nullptr;
+                const std::string_view expected = *suffix == "header" ? "binary" : "double";
+                if (!type || !type->is_string() || type->string != expected)
+                    fail("COLLECTION.json: field '" + member.first + "' must have type " +
+                         std::string(expected) + ": " + source);
+            }
+            if (member.second.is_object()) {
+                if (const auto* files = member.second.find("files")) {
+                    if (!suffix || *suffix == "header")
+                        fail("COLLECTION.json: field '" + member.first + "' cannot declare files: " + source);
+                    if (!files->is_array() || files->items.empty())
+                        fail("COLLECTION.json: files for field '" + member.first +
+                             "' must be a non-empty array: " + source);
+                    Contract::FileScope scope{level, member.first, {}};
+                    for (const auto& file : files->items) {
+                        if (!file.is_string())
+                            fail("COLLECTION.json: files for field '" + member.first +
+                                 "' must contain structure declarations: " + source);
+                        if (std::find(contract.structure.begin(), contract.structure.end(), file.string) ==
+                            contract.structure.end())
+                            fail("COLLECTION.json: field '" + member.first +
+                                 "' names an unknown structure declaration: " + source);
+                        const auto slash = file.string.rfind('/');
+                        const std::string file_level =
+                            slash == std::string::npos ? "children" : "children/" + file.string.substr(0, slash);
+                        if (file_level != level)
+                            fail("COLLECTION.json: file for field '" + member.first +
+                                 "' belongs to another level: " + source);
+                        if (std::find(scope.files.begin(), scope.files.end(), file.string) != scope.files.end())
+                            fail("COLLECTION.json: duplicate file for field '" + member.first + "': " + source);
+                        scope.files.push_back(file.string);
+                    }
+                    contract.file_scopes.push_back(std::move(scope));
+                }
+            }
             names.push_back(member.first);
+        }
         contract.fields.emplace_back(level, std::move(names));
     }
     for (const auto& level : dataset.level_names) {
@@ -564,6 +604,15 @@ const std::vector<std::string>* Contract::fields_of(std::string_view level) cons
             return &names;
     }
     return nullptr;
+}
+
+bool Contract::field_applies(std::string_view level, std::string_view field,
+                             std::string_view declaration) const {
+    for (const auto& scope : file_scopes) {
+        if (scope.level == level && scope.field == field)
+            return std::find(scope.files.begin(), scope.files.end(), declaration) != scope.files.end();
+    }
+    return true;
 }
 
 std::size_t Dataset::level_index(std::string_view name) const {

@@ -10,8 +10,7 @@
 namespace taco {
 namespace {
 
-// cozip spec 5.1 and 7: the payload starts right after a fixed 51-byte Local
-// File Header for the __cozip__ entry.
+// The __cozip__ payload starts after its fixed 51-byte Local File Header.
 constexpr std::uint64_t lfh_size = 51;
 constexpr std::uint64_t index_header_size = 11;
 // name length (2) + offset (8) + size (8) + at least one name byte
@@ -55,7 +54,7 @@ void check_minimum_size(std::uint64_t file_size, const std::string& uri) {
              " bytes): " + uri);
 }
 
-// cozip spec 8.5 step 1: the fixed shape of the __cozip__ local file header.
+// Validate the fixed portion of the __cozip__ local file header.
 std::uint8_t parse_profile_prefix(const std::string& head, const std::string& uri) {
     if (head.size() < lfh_size + 7)
         fail("cozip profile prefix is truncated: " + uri);
@@ -151,8 +150,7 @@ CozipIndex read_cozip_index(const std::string& uri) {
     if (payload_end > head.size())
         head += read_ranges({Range{uri, head.size(), payload_end - head.size()}}).front();
 
-    // cozip spec 8.3: FNV-1a 64 over the index payload followed by the
-    // trailing 32 KiB, each byte counted once where the two overlap.
+    // Hash the index payload and trailing 32 KiB, counting their overlap once.
     const std::string_view payload = std::string_view(head).substr(lfh_size, payload_size);
     std::uint64_t hash = fnv1a(payload, fnv_offset_basis);
     if (payload_end <= suffix_start)
@@ -204,7 +202,7 @@ CozipIndex read_cozip_index(const std::string& uri) {
         validate_name(entry.name, uri);
         if (!seen.insert(entry.name).second)
             fail("cozip index lists '" + entry.name + "' twice: " + uri);
-        // cozip spec 7.5: a reader rejects ranges that leave the archive.
+        // Reject entries whose byte range leaves the archive.
         if (entry.size == 0 || entry.offset < lfh_size || entry.offset > index.file_size ||
             entry.size > index.file_size - entry.offset)
             fail("cozip index entry '" + entry.name + "' has a range outside the archive: " + uri);

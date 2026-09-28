@@ -10,7 +10,7 @@ import pyarrow as pa
 
 from ..errors import ContractError, SampleError
 from .extension import ExtensionContext
-from .naming import level_folder
+from .naming import level_folder, rumi_file_field
 from .sample import Asset, Folder, Sample, _PreparedAsset, _PreparedNode, _PreparedSample
 from .schema import PROFILE_FIELDS, Field, Group, Level, Metadata, validate_qualified_field
 from .structure import Leaf, Node, build_tree, parse_leaf
@@ -23,7 +23,7 @@ SAMPLE_ID = "id"
 
 def _raw_field(name: str, spec: Any, *, level: str) -> Field:
     if isinstance(spec, Mapping):
-        extra = sorted(set(spec) - {"type", "nullable", "description"})
+        extra = sorted(set(spec) - {"type", "nullable", "description", "files"})
         if extra:
             raise ContractError(f"field {level}.{name} has unknown properties {extra}")
         if "type" not in spec or "nullable" not in spec:
@@ -31,22 +31,35 @@ def _raw_field(name: str, spec: Any, *, level: str) -> Field:
         type_spec = spec["type"]
         nullable = spec["nullable"]
         description = spec.get("description", "")
+        files_value = spec.get("files")
     elif isinstance(spec, (str, pa.DataType)):
-        type_spec, nullable, description = spec, False, ""
+        type_spec, nullable, description, files_value = spec, False, "", None
     elif isinstance(spec, Sequence) and not isinstance(spec, (str, bytes)) and len(spec) == 2:
         type_spec, description = spec
         nullable = True
+        files_value = None
     else:
         raise ContractError(f"invalid field declaration for {level}.{name}")
     if not isinstance(nullable, bool):
         raise ContractError(f"nullable of {level}.{name} must be a boolean")
     if not isinstance(description, str):
         raise ContractError(f"description of {level}.{name} must be a string")
+    files: tuple[str, ...] | None = None
+    if files_value is not None:
+        if (
+            not isinstance(files_value, list)
+            or not files_value
+            or not all(isinstance(item, str) for item in files_value)
+        ):
+            raise ContractError(f"files for {level}.{name} must be a non-empty list of structure declarations")
+        if len(files_value) != len(set(files_value)):
+            raise ContractError(f"files for {level}.{name} must not contain duplicates")
+        files = tuple(files_value)
     try:
         dtype = parse_type(type_spec)
     except ContractError as exc:
         raise ContractError(f"field {level}.{name}: {exc}") from exc
-    return Field(type_name(dtype), nullable, description)
+    return Field(type_name(dtype), nullable, description, files)
 
 
 def _configuration(value: Mapping[str, Any], *, namespace: str) -> dict[str, Any]:
@@ -154,6 +167,7 @@ class Contract:
             normalized, types_, groups, derived_ = self._from_models(metadata, levels, children)
         self._check_field_case(normalized)
         self._check_profiles(normalized)
+        self._check_rumi_fields(normalized, leaves)
 
         object.__setattr__(self, "structure", declarations)
         object.__setattr__(self, "metadata", normalized)
@@ -203,6 +217,33 @@ class Contract:
                         f"{namespace.upper()} metadata at level {level!r} must use canonical nullability "
                         "or make the complete optional group nullable"
                     )
+
+    @staticmethod
+    def _check_rumi_fields(metadata: Mapping[str, Mapping[str, Field]], leaves: tuple[Leaf, ...]) -> None:
+        # Wide reads carry these next to each file location, typed without reading the level.
+        by_declaration = {leaf.declaration: leaf for leaf in leaves}
+        for level, fields in metadata.items():
+            for name, spec in fields.items():
+                suffix = rumi_file_field(name)
+                if name.startswith("rumi:") and suffix is None:
+                    raise ContractError(f"field {level}.{name} is not a Rumi header or statistic")
+                expected = "binary" if suffix == "header" else "double"
+                if suffix is not None and spec.type != expected:
+                    raise ContractError(f"field {level}.{name} must have type {expected}, got {spec.type}")
+                if spec.files is None:
+                    continue
+                if suffix is None or suffix == "header":
+                    raise ContractError(f"field {level}.{name} cannot be restricted to files")
+                unknown = sorted(set(spec.files) - set(by_declaration))
+                if unknown:
+                    raise ContractError(f"field {level}.{name} names unknown structure declarations {unknown}")
+                wrong_level = [
+                    declaration
+                    for declaration in spec.files
+                    if "/".join((CHILDREN_LEVEL, *by_declaration[declaration].folder)) != level
+                ]
+                if wrong_level:
+                    raise ContractError(f"field {level}.{name} names files outside that metadata level: {wrong_level}")
 
     @staticmethod
     def _derive_levels(children: Mapping[tuple[str, ...], Any]) -> tuple[str, ...]:
@@ -269,8 +310,12 @@ class Contract:
                     description = ""
                     if arrow_field.metadata and b"description" in arrow_field.metadata:
                         description = arrow_field.metadata[b"description"].decode()
+                    files = None
+                    if arrow_field.metadata and b"taco:files" in arrow_field.metadata:
+                        parsed_files = json.loads(arrow_field.metadata[b"taco:files"])
+                        files = tuple(cast(list[str], parsed_files))
                     level_fields[arrow_field.name] = Field(
-                        type_name(arrow_field.type), arrow_field.nullable, description
+                        type_name(arrow_field.type), arrow_field.nullable, description, files
                     )
                     level_types[arrow_field.name] = arrow_field.type
                 if group.extension is not None:
@@ -698,11 +743,12 @@ class Contract:
             if not isinstance(fields, Mapping):
                 raise ContractError(f"metadata for {level!r} must be an object")
             for name, declaration in fields.items():
-                if not isinstance(declaration, Mapping) or set(declaration) != {
-                    "type",
-                    "nullable",
-                    "description",
-                }:
+                required = {"type", "nullable", "description"}
+                if (
+                    not isinstance(declaration, Mapping)
+                    or not required.issubset(declaration)
+                    or set(declaration) - required - {"files"}
+                ):
                     raise ContractError(f"serialized field {level}.{name} must declare type, nullable, and description")
         contract = cls(
             structure=data["taco:structure"],
