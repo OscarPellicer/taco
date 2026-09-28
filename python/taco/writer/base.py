@@ -26,6 +26,19 @@ class BuildResult:
     parts: tuple[Path, ...] = ()
 
 
+def render_collection(collection: Collection, summaries: Mapping[str, Any]) -> str:
+    data = collection.to_dict()
+
+    # Recompute summaries instead of carrying stale collection values.
+    data.pop("extent", None)
+    for name, value in summaries.items():
+        if value is None:
+            data.pop(name, None)
+        else:
+            data[name] = value
+    return json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+
+
 class Writer:
     def __init__(
         self,
@@ -151,16 +164,7 @@ class Writer:
         return Progress(self.progress and enabled, total, description, unit)
 
     def _render_collection(self, summaries: Mapping[str, Any]) -> str:
-        data = self.collection.to_dict()
-
-        # Recompute summaries instead of carrying stale collection values.
-        data.pop("extent", None)
-        for name, value in summaries.items():
-            if value is None:
-                data.pop(name, None)
-            else:
-                data[name] = value
-        return json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+        return render_collection(self.collection, summaries)
 
     def _materialize_inline_assets(self, sample_id: int, sample: _PreparedSample) -> _PreparedSample:
         if not any(asset.is_inline for asset in sample.assets):
@@ -195,4 +199,4 @@ class Writer:
             yield sample_id, sample, size
 
 
-__all__ = ["BuildResult", "Writer"]
+__all__ = ["BuildResult", "Writer", "render_collection"]

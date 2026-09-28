@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import pickle
 import tempfile
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +21,9 @@ from ..contract.naming import (
 )
 from ..contract.sample import _PreparedSample
 from ..errors import WriterError
-from .base import BuildResult, Writer
+from .base import BuildResult, Writer, render_collection
 from .metadata import MetadataTableWriter
+from .progress import Progress
 
 # The Python API requires .zip for a predictable output mode. Readers still
 # identify TACO archives from the cozip profile byte, not from this suffix.
@@ -76,6 +79,14 @@ class ArchiveWriter(Writer):
             raise ValueError("workers must be a positive integer")
         if workers > 1 and parsed_partition_size is None and partition_by is None:
             raise ValueError("workers requires a partitioned ZIP dataset")
+        if workers > 1:
+            try:
+                pickle.dumps((collection, dict(parquet_options or {})))
+            except Exception as exc:
+                raise ValueError(
+                    "workers > 1 requires picklable collection and parquet_options; "
+                    f"define metadata models and extensions at module level ({exc})"
+                ) from exc
         if partition_by == SAMPLE_ID:
             raise ValueError("partition_by cannot be 'id'; it is unique, so every sample would be its own partition")
         if partition_by is not None and partition_by not in collection.contract.metadata[SAMPLE_LEVEL]:
@@ -118,6 +129,17 @@ class ArchiveWriter(Writer):
             self.sample_count,
         )
 
+    def _archive_build(self) -> _ArchiveBuild:
+        return _ArchiveBuild(
+            collection=self.collection,
+            stage=self._stage,
+            row_group_size=self.row_group_size,
+            batch_size=self.batch_size,
+            parquet_options=self.parquet_options,
+            overwrite=self.overwrite,
+            progress=self.progress,
+        )
+
     def _write_archive(
         self,
         output: Path,
@@ -126,8 +148,32 @@ class ArchiveWriter(Writer):
         *,
         show_progress: bool = True,
     ) -> BuildResult:
+        return self._archive_build().write(output, samples, sample_count, show_progress=show_progress)
+
+
+@dataclass(frozen=True)
+class _ArchiveBuild:
+    """What a partition worker needs to write one archive."""
+
+    collection: Collection
+    stage: Path
+    row_group_size: int
+    batch_size: int
+    parquet_options: Mapping[str, Any]
+    overwrite: bool
+    progress: bool
+
+    def write(
+        self,
+        output: Path,
+        samples: Callable[[], Iterator[tuple[int, _PreparedSample]]],
+        sample_count: int,
+        *,
+        show_progress: bool = True,
+    ) -> BuildResult:
+        contract = self.collection.contract
         temporary_output: Path | None = None
-        with tempfile.TemporaryDirectory(prefix="build-", dir=self._stage) as name:
+        with tempfile.TemporaryDirectory(prefix="build-", dir=self.stage) as name:
             stage = Path(name)
 
             # cozip must know the complete data layout before metadata is
@@ -136,7 +182,7 @@ class ArchiveWriter(Writer):
             # retaining the whole dataset in memory.
             files: list[tuple[str, Path]] = []
             sizes: list[int] = []
-            with self._show_progress(sample_count, f"planning {output.name}", enabled=show_progress) as progress:
+            with self._progress(sample_count, f"planning {output.name}", enabled=show_progress) as progress:
                 for index, sample in samples():
                     for name, source, size in _data_entries(index, sample):
                         files.append((name, source))
@@ -149,7 +195,7 @@ class ArchiveWriter(Writer):
             offsets = layout.offsets
 
             tables = MetadataTableWriter(
-                self.contract,
+                contract,
                 stage / METADATA_DIR,
                 with_offsets=True,
                 parquet_options=self.parquet_options,
@@ -157,7 +203,7 @@ class ArchiveWriter(Writer):
                 batch_size=self.batch_size,
             )
             try:
-                with self._show_progress(sample_count, f"metadata {output.name}", enabled=show_progress) as progress:
+                with self._progress(sample_count, f"metadata {output.name}", enabled=show_progress) as progress:
                     for index, sample in samples():
                         tables.add_sample(index, sample, offsets.__getitem__)
                         progress.update()
@@ -167,13 +213,13 @@ class ArchiveWriter(Writer):
                 raise
 
             collection_path = stage / COLLECTION_FILENAME
-            collection_path.write_text(self._render_collection(tables.summaries), encoding="utf-8")
+            collection_path.write_text(render_collection(self.collection, tables.summaries), encoding="utf-8")
 
             # Collection and metadata members are placed in cozip's priority
             # area so readers can fetch them with a small number of range reads.
             priority_files = [(COLLECTION_FILENAME, collection_path)]
             priority_files += [
-                (f"{METADATA_DIR}/{level_to_filename(level)}", paths[level]) for level in self.contract.levels
+                (f"{METADATA_DIR}/{level_to_filename(level)}", paths[level]) for level in contract.levels
             ]
 
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -181,7 +227,7 @@ class ArchiveWriter(Writer):
             os.close(descriptor)
             temporary_output = Path(temporary_name)
             try:
-                with self._show_progress(1, f"packing {output.name}", "archive", enabled=show_progress) as progress:
+                with self._progress(1, f"packing {output.name}", enabled=show_progress, unit="archive") as progress:
                     cozip_write(temporary_output, layout, priority_files)
                     progress.update()
                 # mkstemp creates 0600; a published archive follows the umask.
@@ -197,12 +243,15 @@ class ArchiveWriter(Writer):
                     path=output,
                     samples=sample_count,
                     data_files=len(files),
-                    metadata_files=len(self.contract.levels),
+                    metadata_files=len(contract.levels),
                     size=output.stat().st_size,
                 )
             finally:
                 if temporary_output is not None:
                     temporary_output.unlink(missing_ok=True)
+
+    def _progress(self, total: int, description: str, *, enabled: bool, unit: str = "sample") -> Progress:
+        return Progress(self.progress and enabled, total, description, unit)
 
 
 __all__ = ["ArchiveWriter"]

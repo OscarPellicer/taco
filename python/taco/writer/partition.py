@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
+import pickle
 import tempfile
-from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..container.publish import publish_many
 from ..contract.contract import SAMPLE_LEVEL
@@ -14,10 +15,10 @@ from ..contract.sample import _PreparedSample
 from ..errors import WriterError
 from .base import BuildResult
 from .catalog import consolidate
-from .staging import StagedSamples
+from .staging import StagedSamples, read_staged
 
 if TYPE_CHECKING:
-    from .archive import ArchiveWriter
+    from .archive import ArchiveWriter, _ArchiveBuild
 
 logger = logging.getLogger("taco")
 
@@ -118,6 +119,60 @@ def _write_partition(
     return writer._write_archive(release / output.name, records, samples.count, show_progress=show_progress)
 
 
+def _write_partitions_in_processes(
+    writer: ArchiveWriter,
+    release: Path,
+    jobs: list[tuple[Path, tuple[str, StagedSamples[tuple[_PreparedSample, int]]]]],
+    update: Callable[[int], None],
+) -> list[BuildResult]:
+    # Processes, not threads: extensions such as Rumi hold the GIL.
+    payload = pickle.dumps(writer._archive_build())
+    results: list[BuildResult | None] = [None] * len(jobs)
+    context = multiprocessing.get_context("spawn")
+    order = sorted(range(len(jobs)), key=lambda position: -jobs[position][1][1].count)
+    tasks = []
+    for position in order:
+        output, (label, stream) = jobs[position]
+        tasks.append((position, payload, release / output.name, stream.path, stream.count, label))
+
+    pool = context.Pool(processes=min(writer.workers, len(jobs)))
+    try:
+        for position, result in pool.imap_unordered(_build_partition_job, tasks):
+            results[position] = result
+            update(result.samples)
+        pool.close()
+    except BaseException:
+        pool.terminate()
+        raise
+    finally:
+        pool.join()
+    return cast(list[BuildResult], results)
+
+
+def _build_partition_job(
+    job: tuple[int, bytes, Path, Path, int, str],
+) -> tuple[int, BuildResult]:
+    position, payload, output, staged, count, label = job
+    logger.info("building partition %s with %d samples -> %s", label, count, output)
+    return position, _build_partition(payload, output, staged, count)
+
+
+def _build_partition(payload: bytes, output: Path, staged: Path, count: int) -> BuildResult:
+    try:
+        build: _ArchiveBuild = pickle.loads(payload)
+    except Exception as exc:
+        raise WriterError(
+            "partition worker could not load the collection; "
+            f"define metadata models and extensions in an importable module ({exc})"
+        ) from exc
+
+    def records() -> Iterator[tuple[int, _PreparedSample]]:
+        for index, (sample, _) in enumerate(read_staged(staged)):
+            yield index, sample
+
+    return build.write(output, records, count, show_progress=False)
+
+
 def write_partitioned(writer: ArchiveWriter) -> BuildResult:
     partitions = _stage_partitions(writer)
     if len(partitions) == 1:
@@ -143,19 +198,8 @@ def write_partitioned(writer: ArchiveWriter) -> BuildResult:
                 _write_partition(writer, release, output, label, stream, True) for output, (label, stream) in jobs
             ]
         else:
-            results = []
-            with (
-                writer._show_progress(writer.sample_count, f"building {writer.output.name}") as progress,
-                ThreadPoolExecutor(max_workers=min(writer.workers, len(jobs))) as executor,
-            ):
-                futures = [
-                    executor.submit(_write_partition, writer, release, output, label, stream, False)
-                    for output, (label, stream) in jobs
-                ]
-                for future in futures:
-                    result = future.result()
-                    results.append(result)
-                    progress.update(result.samples)
+            with writer._show_progress(writer.sample_count, f"building {writer.output.name}") as progress:
+                results = _write_partitions_in_processes(writer, release, jobs, progress.update)
 
         tacocat = consolidate(
             [item.path for item in results],

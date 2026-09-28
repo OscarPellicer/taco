@@ -3,7 +3,7 @@ from __future__ import annotations
 import pickle
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Generic, TypeVar, cast
+from typing import Any, Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -30,15 +30,17 @@ class StagedSamples(Generic[T]):
     def __iter__(self) -> Iterator[T]:
         if not self._file.closed:
             self._file.flush()
-
-        # Each pass gets its own read handle. This also lets separate archive
-        # partitions be consumed concurrently without sharing file position.
-        with self.path.open("rb") as stream:
-            while True:
-                try:
-                    yield cast(T, pickle.load(stream))
-                except EOFError:
-                    return
+        return read_staged(self.path)
 
 
-__all__ = ["StagedSamples"]
+def read_staged(path: Path) -> Iterator[Any]:
+    # Each pass opens its own handle, so partitions can be read concurrently.
+    with path.open("rb") as stream:
+        while True:
+            try:
+                yield pickle.load(stream)
+            except EOFError:
+                return
+
+
+__all__ = ["StagedSamples", "read_staged"]

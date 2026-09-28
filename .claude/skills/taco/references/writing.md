@@ -113,7 +113,9 @@ extensions over batches first so the value exists before grouping.
 The output is `<stem>_<label>.zip` beside a `.tacocat/` directory, and all of them are
 published together. `BuildResult.path` is the catalog, `BuildResult.parts` the
 archives. If only one partition results, the writer falls back to a single archive.
-`workers > 1` builds partitions on a thread pool and shows one combined progress bar.
+`workers > 1` builds partitions in that many processes and shows one combined progress
+bar. Metadata models and extensions must be importable (not defined in a notebook), and
+scripts need an `if __name__ == "__main__":` guard.
 
 ```python
 with taco.open_writer(collection, "ds.zip", partition_by="ml:split", overwrite=True) as writer:

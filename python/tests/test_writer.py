@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+import time
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Barrier
+from types import MappingProxyType
+from typing import ClassVar
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -18,6 +21,33 @@ from taco.container.view import open_view
 from taco.errors import SampleError, WriterError
 from taco.metadata.sample import STAC
 from taco.writer.identity import IdentifierIndex
+
+
+@dataclass(frozen=True)
+class FailOrBlock(taco.Extension):
+    marker: str
+    __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample"})
+    __taco_namespace__: ClassVar[str] = "worker"
+
+    @property
+    def requires(self) -> tuple[str, ...]:
+        return ()
+
+    @property
+    def fields(self) -> pa.Schema:
+        return pa.schema([pa.field("done", pa.bool_())])
+
+    def run(self, context: taco.ExtensionContext) -> dict[str, list[bool]]:
+        source = context.assets[0]
+        assert source is not None
+        if source.read_text() == "slow":
+            Path(self.marker).touch()
+            time.sleep(20)
+            return {"done": [True]}
+        deadline = time.monotonic() + 5
+        while not Path(self.marker).exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        raise RuntimeError("partition failed")
 
 
 def test_zip_end_to_end(tmp_path: Path, collection: taco.Collection, make_sample) -> None:
@@ -394,23 +424,71 @@ def test_partition_by_size(tmp_path: Path, collection: taco.Collection, make_sam
     assert open_view(result.path).sample_count == 3
 
 
-def test_partition_workers(tmp_path: Path, collection: taco.Collection, make_sample, monkeypatch) -> None:
-    import taco.writer.archive as archive_module
+def test_partition_workers_match_a_serial_build(tmp_path: Path, collection: taco.Collection, make_sample) -> None:
+    results = {}
+    for workers in (1, 2):
+        with taco.open_writer(
+            collection,
+            tmp_path / str(workers) / "parts.zip",
+            partition_size=1,
+            workers=workers,
+            parquet_options=MappingProxyType({"compression": "zstd"}),
+        ) as writer:
+            writer.extend(make_sample(index) for index in range(3))
+            results[workers] = writer.run()
 
-    barrier = Barrier(2)
-    write = archive_module.cozip_write
+    serial, parallel = results[1], results[2]
 
-    def write_together(*args, **kwargs) -> None:
-        barrier.wait(timeout=5)
-        write(*args, **kwargs)
+    def entries(path: Path) -> list[tuple[str, bytes]]:
+        # ZIP headers store the build time.
+        with zipfile.ZipFile(path) as archive:
+            return [(info.filename, archive.read(info)) for info in archive.infolist()]
 
-    monkeypatch.setattr(archive_module, "cozip_write", write_together)
+    assert [entries(path) for path in parallel.parts] == [entries(path) for path in serial.parts]
+    catalog = sorted(path.name for path in serial.path.iterdir())
+    assert catalog == sorted(path.name for path in parallel.path.iterdir())
+    assert all((serial.path / name).read_bytes() == (parallel.path / name).read_bytes() for name in catalog)
+    assert taco.validate(parallel.path).ok
+
+
+def test_partition_workers_need_a_picklable_collection(tmp_path: Path) -> None:
+    class Local(BaseModel):
+        value: int
+
+    contract = taco.Contract(structure=["a.bin"], metadata=[taco.Level("sample", local=Local)])
+    collection = taco.Collection(contract=contract, id="local", description="d", licenses=["MIT"], providers=["p"])
+    with pytest.raises(ValueError, match="picklable collection"):
+        taco.open_writer(collection, tmp_path / "parts.zip", partition_size=1, workers=2)
+
+
+def test_partition_worker_reports_a_collection_it_cannot_load(tmp_path: Path) -> None:
+    from taco.writer.partition import _build_partition
+
+    with pytest.raises(WriterError, match="could not load the collection"):
+        _build_partition(b"not a pickle", tmp_path / "part.zip", tmp_path / "samples.stage", 1)
+
+
+def test_partition_workers_terminate_after_an_error(tmp_path: Path) -> None:
+    marker = tmp_path / "slow-started"
+    contract = taco.Contract(
+        structure=["a.bin"],
+        metadata=[taco.Level("sample", worker=FailOrBlock(str(marker)))],
+    )
+    collection = taco.Collection(contract=contract, id="abort", description="d", licenses=["MIT"], providers=["p"])
+    samples = []
+    for name in ("slow", "fail"):
+        source = tmp_path / name
+        source.write_text(name)
+        samples.append(taco.Sample(id=name, assets=[taco.Asset(source, path="a.bin")]))
+
+    started = time.monotonic()
     with taco.open_writer(collection, tmp_path / "parts.zip", partition_size=1, workers=2) as writer:
-        writer.extend(make_sample(index) for index in range(2))
-        result = writer.run()
+        writer.extend(samples)
+        with pytest.raises(RuntimeError, match="partition failed"):
+            writer.run()
 
-    assert len(result.parts) == 2
-    assert taco.validate(result.path).ok
+    assert marker.exists()
+    assert time.monotonic() - started < 10
 
 
 def test_zip_plan_reuses_sizes_measured_by_add(
