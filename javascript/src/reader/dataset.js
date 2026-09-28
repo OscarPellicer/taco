@@ -1,9 +1,10 @@
+import { rumiFileField } from "../contract/rumi.js";
 import { matchLeaf } from "../contract/structure.js";
-import { fail } from "../errors.js";
-import { matchesFilter } from "./filter.js";
 import { TacoAsset } from "../container/asset.js";
 import { TacoParquet, PROTECTED_LOCATION_COLUMNS } from "../container/parquet.js";
 import { basename, contractPath, parentLevel } from "../container/paths.js";
+import { fail } from "../errors.js";
+import { matchesFilter } from "./filter.js";
 import { safeInteger } from "./source.js";
 
 const ID_CURRENT = "internal:current_id";
@@ -13,8 +14,6 @@ const ID_OFFSET = "internal:offset";
 const ID_SIZE = "internal:size";
 const ID_SOURCE = "internal:source_file";
 const SAMPLE_INDEX = "taco:sample_index";
-const HEADER_FIELD = "rumi:header";
-
 /**
  * @typedef {Record<string, any>} Row
  * @typedef {import("../contract/structure.js").TacoLeaf} TacoLeaf
@@ -26,7 +25,7 @@ const HEADER_FIELD = "rumi:header";
  *
  * @typedef {object} WideColumns
  * @property {string} location
- * @property {string | null} header
+ * @property {Array<{ field: string, name: string }>} rumi
  *
  * @typedef {object} ReadLevelOptions
  * @property {string[]} [columns]
@@ -235,8 +234,9 @@ export class Dataset {
       const output = this.#sampleIdentity(sample);
       copyUserMetadata(output, sample);
       for (const leaf of leaves) {
-        for (const name of Object.values(/** @type {WideColumns} */ (columns.get(leaf)))) {
-          if (name) output[name] = location && leaf.variable ? [] : null;
+        const names = /** @type {WideColumns} */ (columns.get(leaf));
+        for (const name of [names.location, ...names.rumi.map((column) => column.name)]) {
+          output[name] = location && leaf.variable ? [] : null;
         }
       }
       outputs.set(this.#identity(sample), output);
@@ -246,7 +246,7 @@ export class Dataset {
     const files = await this.#fileNodes(samples, leaves, true);
     // Variable leaves are collected with their numeric index and sorted only
     // after the hierarchy has been walked.
-    /** @type {Map<string, Map<TacoLeaf, Array<{ index: number, location: string, header: any }>>>} */
+    /** @type {Map<string, Map<TacoLeaf, Array<{ index: number, location: string, row: Row }>>>} */
     const sequences = new Map();
     for (const node of files) {
       const path = contractPath(requirePath(node.row));
@@ -257,10 +257,9 @@ export class Dataset {
       if (!output) continue;
       const names = /** @type {WideColumns} */ (columns.get(leaf));
       const value = this.#source.location(node.row);
-      const header = node.row[HEADER_FIELD] ?? null;
       if (!leaf.variable) {
         output[names.location] = value;
-        if (names.header) output[names.header] = header;
+        for (const column of names.rumi) output[column.name] = node.row[column.field] ?? null;
         continue;
       }
       let sampleSequences = sequences.get(sampleKey);
@@ -273,7 +272,7 @@ export class Dataset {
         values = [];
         sampleSequences.set(leaf, values);
       }
-      values.push({ index: /** @type {number} */ (matchLeaf(leaf, path)), location: value, header });
+      values.push({ index: /** @type {number} */ (matchLeaf(leaf, path)), location: value, row: node.row });
     }
     for (const [sampleKey, sampleSequences] of sequences) {
       const output = outputs.get(sampleKey);
@@ -282,7 +281,7 @@ export class Dataset {
         const names = /** @type {WideColumns} */ (columns.get(leaf));
         values.sort((left, right) => left.index - right.index);
         output[names.location] = values.map((item) => item.location);
-        if (names.header) output[names.header] = values.map((item) => item.header);
+        for (const column of names.rumi) output[column.name] = values.map((item) => item.row[column.field] ?? null);
       }
     }
     return [...outputs.values()];
@@ -291,8 +290,8 @@ export class Dataset {
   /**
    * Wide column names of one leaf, named after its structure path. Metadata
    * fields contain exactly one ':', so the double separator cannot collide
-   * with user metadata. Rumi assets are read statelessly with their header, so
-   * it travels next to the location.
+   * with user metadata. Rumi fields follow the location so consumers can pair
+   * the header and statistics with the asset they describe.
    *
    * @param {TacoLeaf} leaf
    * @returns {WideColumns}
@@ -300,8 +299,14 @@ export class Dataset {
   #wideColumns(leaf) {
     const slash = leaf.key.lastIndexOf("/");
     const level = slash < 0 ? "children" : `children/${leaf.key.slice(0, slash)}`;
-    const fields = this.contract.metadata[level] ?? {};
-    return { location: `${leaf.key}::location`, header: HEADER_FIELD in fields ? `${leaf.key}::header` : null };
+    const rumi = [];
+    for (const [field, declaration] of Object.entries(this.contract.metadata[level] ?? {})) {
+      const suffix = rumiFileField(field);
+      if (suffix !== null && (!declaration.files || declaration.files.includes(leaf.declaration))) {
+        rumi.push({ field, name: `${leaf.key}::${suffix}` });
+      }
+    }
+    return { location: `${leaf.key}::location`, rumi };
   }
 
   /**
@@ -363,7 +368,7 @@ export class Dataset {
             ID_PATH,
             ...(this.container === "folder" ? [] : [ID_OFFSET, ID_SIZE]),
             ...(this.container === "tacocat" ? [ID_SOURCE] : []),
-            ...(HEADER_FIELD in (this.contract.metadata[level] ?? {}) ? [HEADER_FIELD] : []),
+            ...Object.keys(this.contract.metadata[level] ?? {}).filter((field) => rumiFileField(field) !== null),
           ]
         : undefined;
       const rows = await this.readLevel(level, {

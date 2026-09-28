@@ -185,6 +185,33 @@ test("generated columns do not overwrite qualified metadata", async () => {
   assert.match(row["image_bin::location"], /^\/vsicurl\//);
 });
 
+test("wide reads carry Rumi headers and statistics next to locations", async () => {
+  const dataset = await openDataset(`${fixture.baseUrl}/rumi.zip`);
+  const [row] = await dataset.read({ idx: 0 });
+  assert.deepEqual(Object.keys(row).filter((name) => name.includes("::")), [
+    "scene/image.rumi::location",
+    "scene/image.rumi::header",
+    "scene/image.rumi::mean",
+    "scene/series::location",
+    "scene/series::header",
+    "scene/series::maximum_b1",
+    "mask.bin::location",
+  ]);
+  assert.equal(new TextDecoder().decode(row["scene/image.rumi::header"].subarray(0, 4)), "LOVE");
+  assert.equal(row["scene/image.rumi::mean"], 15.5);
+  // Sequences follow the numeric index, not the order the files were written.
+  assert.deepEqual(row["scene/series::maximum_b1"], [51, 41]);
+
+  const [quiet] = await dataset.read({ idx: 0, files: ["scene/image.rumi"], location: false });
+  assert.deepEqual(quiet, {
+    "taco:sample_index": 0,
+    id: "rumi-0",
+    "scene/image.rumi::location": null,
+    "scene/image.rumi::header": null,
+    "scene/image.rumi::mean": null,
+  });
+});
+
 test("supports idx, files, semantic filters, and location opt-out", async () => {
   const dataset = await openDataset(`${fixture.baseUrl}/dataset.zip`);
   const rows = await dataset.read({
@@ -289,4 +316,43 @@ test("tasks is optional but cannot be empty", () => {
   assert.throws(() => parseCollection({ ...collection, tasks: [] }), /tasks must be a non-empty list/);
   assert.throws(() => parseCollection({ ...collection, "taco:structure": null }), /non-empty list/);
   assert.throws(() => parseCollection({ ...collection, "taco:structure": ["img*[0,3].tif"] }), /invalid bounds/);
+  const legacyRumi = {
+    ...collection,
+    "taco:metadata": {
+      ...collection["taco:metadata"],
+      children: {
+        "rumi:stats": { type: "list<double>", nullable: true, description: "Legacy statistics" },
+      },
+    },
+  };
+  assert.throws(() => parseCollection(legacyRumi), /invalid Rumi field "rumi:stats"/);
+});
+
+test("validates per-file Rumi statistics", () => {
+  const field = (name, files) => ({
+    "taco:version": SUPPORTED_TACO_VERSION,
+    id: "rumi-files",
+    description: "Rumi file scopes",
+    licenses: ["MIT"],
+    providers: [{ name: "Asterisk Labs" }],
+    "taco:structure": ["data.rumi"],
+    "taco:metadata": {
+      sample: {},
+      children: {
+        [name]: {
+          type: name === "rumi:header" ? "binary" : "double",
+          nullable: true,
+          description: "",
+          files,
+        },
+      },
+    },
+  });
+
+  assert.throws(() => parseCollection(field("rumi:mean", "data.rumi")), /non-empty list/);
+  assert.throws(() => parseCollection(field("rumi:mean", [])), /non-empty list/);
+  assert.throws(() => parseCollection(field("rumi:mean", ["data.rumi", "data.rumi"])), /duplicates/);
+  assert.throws(() => parseCollection(field("rumi:header", ["data.rumi"])), /cannot be restricted/);
+  assert.throws(() => parseCollection(field("quality:score", ["data.rumi"])), /cannot be restricted/);
+  assert.throws(() => parseCollection(field("rumi:mean", ["missing.rumi"])), /unknown file/);
 });

@@ -1,4 +1,5 @@
 import { fail } from "../errors.js";
+import { rumiFileField } from "./rumi.js";
 import { deriveLevels, parseStructurePath } from "./structure.js";
 
 /**
@@ -53,7 +54,7 @@ export function parseContract(collection) {
     const fields = metadataObject[level];
     if (!object(fields)) fail("INVALID_CONTRACT", `metadata for ${level} must be an object`);
     for (const [name, declaration] of Object.entries(/** @type {Record<string, any>} */ (fields))) {
-      validateField(name, declaration, level);
+      validateField(name, declaration, level, leaves);
     }
   }
 
@@ -74,8 +75,9 @@ export function parseContract(collection) {
  * @param {string} name
  * @param {unknown} declaration
  * @param {string} level
+ * @param {TacoLeaf[]} leaves
  */
-function validateField(name, declaration, level) {
+function validateField(name, declaration, level, leaves) {
   if (!/^[a-z][a-z0-9_]*:[^:/]+$/.test(name) || name.includes("__")) {
     fail("INVALID_CONTRACT", `invalid qualified field ${JSON.stringify(name)} at ${level}`);
   }
@@ -88,7 +90,8 @@ function validateField(name, declaration, level) {
   }
   const spec = /** @type {Record<string, any>} */ (declaration);
   const keys = Object.keys(spec).sort();
-  if (keys.join("\0") !== ["description", "nullable", "type"].join("\0")) {
+  const required = ["description", "nullable", "type"];
+  if (keys.filter((key) => key !== "files").join("\0") !== required.join("\0")) {
     fail("INVALID_CONTRACT", `field ${level}.${name} must declare type, nullable, and description`);
   }
   if (
@@ -97,5 +100,48 @@ function validateField(name, declaration, level) {
     typeof spec.description !== "string"
   ) {
     fail("INVALID_CONTRACT", `field ${level}.${name} has invalid declaration values`);
+  }
+  if (namespace === "rumi") {
+    const suffix = rumiFileField(name);
+    if (suffix === null) fail("INVALID_CONTRACT", `invalid Rumi field ${JSON.stringify(name)} at ${level}`);
+    const expected = suffix === "header" ? "binary" : "double";
+    if (spec.type !== expected) {
+      fail("INVALID_CONTRACT", `field ${level}.${name} must have type ${expected}, got ${spec.type}`);
+    }
+    if ("files" in spec) validateRumiFiles(spec.files, suffix, name, level, leaves);
+  } else if ("files" in spec) {
+    fail("INVALID_CONTRACT", `field ${level}.${name} cannot be restricted to files`);
+  }
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} suffix
+ * @param {string} field
+ * @param {string} level
+ * @param {TacoLeaf[]} leaves
+ */
+function validateRumiFiles(value, suffix, field, level, leaves) {
+  if (suffix === "header") {
+    fail("INVALID_CONTRACT", `field ${level}.${field} cannot be restricted to files`);
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    fail("INVALID_CONTRACT", `files for ${level}.${field} must be a non-empty list of structure declarations`);
+  }
+  if (value.some((file) => typeof file !== "string")) {
+    fail("INVALID_CONTRACT", `files for ${level}.${field} must contain structure declarations`);
+  }
+  if (new Set(value).size !== value.length) {
+    fail("INVALID_CONTRACT", `files for ${level}.${field} must not contain duplicates`);
+  }
+  const byDeclaration = new Map(leaves.map((leaf) => [leaf.declaration, leaf]));
+  for (const file of value) {
+    const leaf = byDeclaration.get(file);
+    if (!leaf) fail("INVALID_CONTRACT", `field ${level}.${field} names unknown file ${JSON.stringify(file)}`);
+    const slash = file.lastIndexOf("/");
+    const fileLevel = slash < 0 ? "children" : `children/${file.slice(0, slash)}`;
+    if (fileLevel !== level) {
+      fail("INVALID_CONTRACT", `field ${level}.${field} names a file outside that level: ${JSON.stringify(file)}`);
+    }
   }
 }
