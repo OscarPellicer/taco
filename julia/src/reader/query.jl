@@ -25,8 +25,10 @@ function _dataset_sql(dataset::Dataset, query::AbstractString)::DataFrame
     end
     context = join(["$(_sql_identifier(name)) AS ($sql)" for (name, sql) in relations], ",\n")
     sql = "WITH $context\nSELECT * FROM (\n$statement\n) AS taco_query"
-    return _with_reader() do con
-        _dataframe(con, sql)
+    return GC.@preserve dataset begin
+        _with_reader() do con
+            _dataframe(con, sql)
+        end
     end
 end
 
@@ -49,7 +51,9 @@ function _read_table(
         files=files,
         location=true,
     )
-    return _with_reader() do con
-        _dataframe(con, sql)
+    return GC.@preserve datasets begin
+        _with_reader() do con
+            _dataframe(con, sql)
+        end
     end
 end
