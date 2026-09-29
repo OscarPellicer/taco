@@ -6,6 +6,8 @@ JavaScript reader are documented here. The format follows
 
 ## Unreleased
 
+## 0.14.2 - 2026-09-29
+
 ### Added
 
 - ZIP writers can combine `partition_by` and `partition_size` to split each metadata group by size.
