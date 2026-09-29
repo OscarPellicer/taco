@@ -9,6 +9,7 @@
 
 #include <taco/taco.h>
 
+#include <array>
 #include <cstdio>
 #include <algorithm>
 #include <chrono>
@@ -16,9 +17,15 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -210,6 +217,17 @@ void test_open_archives() {
     const auto again = taco::open_dataset(data("taco_flat.zip"), cache);
     CHECK(again.level_paths == flat.level_paths);
 
+    const fs::path reused_archive = scratch("reused-archive") / "dataset.zip";
+    fs::copy_file(data("taco_flat.zip"), reused_archive);
+    const auto reused = taco::open_dataset(reused_archive.string(), cache);
+    const auto reused_time = fs::last_write_time(reused_archive);
+    {
+        std::fstream stream(reused_archive, std::ios::in | std::ios::out | std::ios::binary);
+        stream.write("bad!", 4);
+    }
+    fs::last_write_time(reused_archive, reused_time);
+    CHECK(taco::open_dataset(reused_archive.string(), cache).level_paths == reused.level_paths);
+
     // A changed archive at the same path is extracted again.
     const fs::path moving = scratch("moving") / "dataset.zip";
     fs::copy_file(data("taco_flat.zip"), moving);
@@ -226,15 +244,46 @@ void test_open_archives() {
     CHECK(nested.contract.fields_of("children/before") &&
           *nested.contract.fields_of("children/before") == Strings{"raster:resolution"});
 
-    fs::path released;
-    {
-        const fs::path owned_archive = scratch("owned-archive") / "dataset.zip";
-        fs::copy_file(data("taco_flat.zip"), owned_archive);
-        const auto owned = taco::open_dataset(owned_archive.string(), cache);
-        released = fs::path(owned.level_paths[0]).parent_path().parent_path();
-        CHECK(fs::is_directory(released));
+    const fs::path process_directory = fs::path(flat.level_paths[0]).parent_path().parent_path();
+    CHECK(fs::is_directory(process_directory));
+
+#ifndef _WIN32
+    std::optional<taco::Dataset> inherited = taco::open_dataset(data("taco_flat.zip"), cache);
+    const pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        inherited.reset();
+        std::exit(0);
     }
-    CHECK(!fs::exists(released));
+    int status = 0;
+    CHECK(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(fs::is_directory(process_directory));
+    for (const auto& path : flat.level_paths)
+        CHECK(fs::is_regular_file(path));
+
+    int descriptors[2] = {-1, -1};
+    CHECK(pipe(descriptors) == 0);
+    const pid_t owner = fork();
+    CHECK(owner >= 0);
+    if (owner == 0) {
+        close(descriptors[0]);
+        const auto owned = taco::open_dataset(data("taco_nested.zip"), cache);
+        const std::string directory = fs::path(owned.level_paths[0]).parent_path().parent_path().string();
+        static_cast<void>(write(descriptors[1], directory.data(), directory.size()));
+        close(descriptors[1]);
+        std::exit(0);
+    }
+    close(descriptors[1]);
+    std::array<char, 4096> directory{};
+    const auto length = read(descriptors[0], directory.data(), directory.size());
+    close(descriptors[0]);
+    CHECK(waitpid(owner, &status, 0) == owner);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(length > 0);
+    if (length > 0)
+        CHECK(!fs::exists(fs::path(std::string(directory.data(), static_cast<std::size_t>(length)))));
+#endif
 
     CHECK_THROWS(taco::open_dataset(data("taco_badstructure"), cache), "taco:structure must be a non-empty array");
 
@@ -532,7 +581,7 @@ void test_progress() {
     CHECK(events.back().done == events.back().total && events.back().total > 0);
     events.clear();
     taco::open_dataset(copy.string(), cache);
-    CHECK(!events.empty());
+    CHECK(events.empty());
     events.clear();
     taco::fetch_files({});
     CHECK(events.empty());

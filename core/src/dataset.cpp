@@ -22,6 +22,12 @@
 #include <sstream>
 #include <unordered_map>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace taco {
@@ -204,7 +210,15 @@ std::string metadata_phase(const std::string& source) {
 
 std::string entry_label(const std::string& collection, Container container, const std::string& source);
 
-std::shared_ptr<const fs::path> temporary_directory() {
+std::uint64_t process_id() noexcept {
+#ifdef _WIN32
+    return static_cast<std::uint64_t>(_getpid());
+#else
+    return static_cast<std::uint64_t>(getpid());
+#endif
+}
+
+fs::path temporary_directory() {
     std::error_code error;
     const fs::path base = fs::temp_directory_path(error);
     if (error)
@@ -212,13 +226,8 @@ std::shared_ptr<const fs::path> temporary_directory() {
     std::random_device random;
     for (int attempt = 0; attempt < 16; ++attempt) {
         const fs::path candidate = base / ("taco-" + hex64((std::uint64_t{random()} << 32) | random()));
-        if (fs::create_directory(candidate, error)) {
-            return {new fs::path(candidate), [](const fs::path* path) {
-                        std::error_code ignored;
-                        fs::remove_all(*path, ignored);
-                        delete path;
-                    }};
-        }
+        if (fs::create_directory(candidate, error))
+            return candidate;
     }
     throw Error(TACO_ERR_IO, "could not create a temporary directory in " + utf8(base));
 }
@@ -232,15 +241,15 @@ void write_extracted(const fs::path& target, std::string_view bytes) {
         throw Error(TACO_ERR_IO, "could not extract ZIP metadata to " + utf8(target));
 }
 
-Dataset extracted_dataset(const std::string& source, std::shared_ptr<const fs::path> directory) {
+Dataset extracted_dataset(const std::string& source, const fs::path& directory) {
     Dataset dataset;
     dataset.source = source;
     dataset.container = Container::zip;
     dataset.location_base = location_base(source);
-    dataset.collection = read_local(*directory / collection_name);
+    dataset.collection = read_local(directory / collection_name);
     std::vector<Level> levels;
     std::error_code error;
-    for (const auto& entry : fs::directory_iterator(*directory / "METADATA", error)) {
+    for (const auto& entry : fs::directory_iterator(directory / "METADATA", error)) {
         const std::string name = utf8(entry.path().filename());
         if (entry.is_regular_file(error) && name.ends_with(parquet_suffix))
             levels.push_back(Level{file_to_level(name), utf8(entry.path())});
@@ -252,7 +261,6 @@ Dataset extracted_dataset(const std::string& source, std::shared_ptr<const fs::p
         dataset.level_names.push_back(level.name);
         dataset.level_paths.push_back(level.origin);
     }
-    dataset.temporary = std::move(directory);
     return dataset;
 }
 
@@ -262,28 +270,65 @@ void store_extracted(const fs::path& directory, const std::vector<std::string>& 
         write_extracted(directory / local_path(names[i]), contents[i]);
 }
 
-Dataset store_local_zip(const std::string& source, const std::vector<std::string>& names,
-                        const std::vector<std::string>& contents) {
-    static std::mutex mutex;
-    static std::unordered_map<std::string, std::weak_ptr<const fs::path>> extractions;
-    const std::string key = cache_identity(source) + "\n" + expected_key(source);
-    const std::lock_guard lock(mutex);
-    if (auto directory = extractions[key].lock())
-        return extracted_dataset(source, std::move(directory));
-    auto directory = temporary_directory();
-    store_extracted(*directory, names, contents);
-    extractions[key] = directory;
-    return extracted_dataset(source, std::move(directory));
+struct LocalExtractions {
+    std::mutex mutex;
+    std::uint64_t pid = process_id();
+    fs::path root;
+    std::unordered_map<std::string, fs::path> entries;
+
+    ~LocalExtractions() {
+        if (!root.empty() && pid == process_id()) {
+            std::error_code ignored;
+            fs::remove_all(root, ignored);
+        }
+    }
+
+    void reset_after_fork() {
+        const auto current = process_id();
+        if (pid == current)
+            return;
+        pid = current;
+        root.clear();
+        entries.clear();
+    }
+
+    fs::path create_entry() {
+        if (root.empty())
+            root = temporary_directory();
+        std::random_device random;
+        std::error_code error;
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            const fs::path candidate = root / hex64((std::uint64_t{random()} << 32) | random());
+            if (fs::create_directory(candidate, error))
+                return candidate;
+        }
+        throw Error(TACO_ERR_IO, "could not create a temporary directory in " + utf8(root));
+    }
+};
+
+LocalExtractions& local_extractions() {
+    static LocalExtractions extractions;
+    return extractions;
 }
 
 Dataset open_zip(const std::string& source, const std::string& cache_root) {
     const bool remote = has_uri_scheme(source);
     std::optional<CacheEntry> cache;
+    std::unique_lock<std::mutex> local_lock;
+    LocalExtractions* local = nullptr;
+    std::string local_key;
     if (remote) {
         cache.emplace(cache_root, cache_identity(source));
         if (const auto stamp = cache->find({std::string(collection_name)}, expected_key(source));
             stamp && stamp->container == "zip")
             return cached_dataset(source, Container::zip, location_base(source), *cache);
+    } else {
+        local = &local_extractions();
+        local_lock = std::unique_lock(local->mutex);
+        local->reset_after_fork();
+        local_key = cache_identity(source) + "\n" + expected_key(source);
+        if (const auto found = local->entries.find(local_key); found != local->entries.end())
+            return extracted_dataset(source, found->second);
     }
 
     const CozipIndex index = read_cozip_index(source);
@@ -311,8 +356,18 @@ Dataset open_zip(const std::string& source, const std::string& cache_root) {
         ranges.push_back(Range{source, entry->offset, entry->size});
     }
     const auto contents = download(ranges, metadata_phase(source));
-    if (!remote)
-        return store_local_zip(source, names, contents);
+    if (!remote) {
+        const fs::path directory = local->create_entry();
+        try {
+            store_extracted(directory, names, contents);
+        } catch (...) {
+            std::error_code ignored;
+            fs::remove_all(directory, ignored);
+            throw;
+        }
+        local->entries.emplace(local_key, directory);
+        return extracted_dataset(source, directory);
+    }
 
     std::vector<std::pair<std::string, std::string>> files;
     for (std::size_t i = 0; i < names.size(); ++i)

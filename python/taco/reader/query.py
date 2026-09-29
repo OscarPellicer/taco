@@ -14,15 +14,6 @@ Index = SupportsIndex | Sequence[SupportsIndex] | None
 Files = str | Sequence[str] | None
 
 
-class _NativeSQL(str):
-    _datasets: list[native.NativeDataset]
-
-    def __new__(cls, value: str, datasets: list[native.NativeDataset]) -> _NativeSQL:
-        instance = super().__new__(cls, value)
-        instance._datasets = datasets
-        return instance
-
-
 def _index_integer(value: object) -> int:
     if isinstance(value, bool):
         raise TypeError
@@ -73,7 +64,7 @@ def build_native_sql(
     index = normalize_index(idx)
     selected_files = normalize_files(files)
     datasets = [native.NativeDataset(source) for source in normalize_sources(path)]
-    sql = native.sql(
+    return native.sql(
         datasets,
         idx=index,
         level=level,
@@ -81,4 +72,3 @@ def build_native_sql(
         files=selected_files,
         location=location,
     )
-    return _NativeSQL(sql, datasets)

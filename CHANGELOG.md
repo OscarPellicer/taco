@@ -6,6 +6,10 @@ JavaScript reader are documented here. The format follows
 
 ## Unreleased
 
+### Fixed
+
+- Local ZIP metadata remains available after `fork` and while using generated SQL.
+
 ## 0.14.0 - 2026-09-28
 
 ### Changed

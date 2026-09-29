@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import inspect as python_inspect
 import shutil
 import threading
@@ -40,6 +41,14 @@ def test_reader_inspects_an_archive(archive: Path) -> None:
     assert "read_parquet(" in taco.inspect(archive, "native_sql")
     with pytest.raises(ValueError, match="query must be one of"):
         taco.inspect(archive, "unknown")
+
+
+def test_native_sql_survives_string_operations(archive: Path) -> None:
+    sql = inspect_module.native_sql(archive).replace("SELECT", "SELECT", 1)
+    gc.collect()
+
+    assert type(sql) is str
+    assert engine.open_reader().execute(sql).to_arrow_table().num_rows == 4
 
 
 def test_dataset_api(archive: Path) -> None:

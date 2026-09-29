@@ -183,7 +183,7 @@ and only ZIP metadata carries the byte offsets that make random access possible.
   (default `~/.cache/taco`), capped by `TACO_CACHE_SIZE` (5 GiB, least recently opened
   evicted first) and revalidated against the origin size; `TACO_CACHE_REFRESH` forces a
   rebuild. Local FOLDER and TACOCAT are read in place; a local ZIP is extracted to a
-  temporary directory removed when the dataset closes. GeoEnrich keeps the MajorTOM
+  process-owned temporary directory. GeoEnrich keeps the MajorTOM
   index there too. On a server with a small home, set `TACO_CACHE_DIR`. An open
   `Dataset` is a snapshot.
 - **The core must be loadable.** Python looks for `taco/_lib/libtaco.dylib|so` or

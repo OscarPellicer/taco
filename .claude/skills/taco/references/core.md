@@ -122,7 +122,7 @@ stamp recording source, container, validation key, size and timestamps. The labe
 names the dataset for humans; the hash names the source for lookups.
 
 Validation keys: a remote source uses the origin-reported object size. A local ZIP
-never enters the cache: its open dataset owns a temporary metadata directory. A failed
+never enters the cache: its process owns a temporary metadata directory. A failed
 probe fails the open rather than serving metadata that cannot be validated.
 `TACO_CACHE_REFRESH` rebuilds, `TACO_CACHE_SIZE`
 caps the root at 5 GiB by default and evicts least-recently-opened entries first, and

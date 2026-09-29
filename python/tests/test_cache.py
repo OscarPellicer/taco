@@ -6,6 +6,7 @@ import re
 import threading
 import urllib.error
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -222,7 +223,7 @@ def test_local_archives_stay_out_of_the_cache(tmp_path: Path, collection: taco.C
     assert not root.exists() or not any(root.iterdir())
 
 
-def test_local_archive_extraction_is_removed_on_close(tmp_path: Path, collection: taco.Collection, make_sample) -> None:
+def test_local_archive_extraction_survives_close(tmp_path: Path, collection: taco.Collection, make_sample) -> None:
     with taco.open_writer(collection, tmp_path / "local.zip") as writer:
         writer.add(make_sample(0))
         writer.run()
@@ -234,7 +235,50 @@ def test_local_archive_extraction_is_removed_on_close(tmp_path: Path, collection
     assert extraction.is_dir()
     del dataset
     gc.collect()
-    assert not extraction.exists()
+    assert extraction.is_dir()
+
+
+def test_concurrent_downloads_leave_one_valid_entry(
+    tmp_path: Path, cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    barrier = threading.Barrier(2)
+    download = cache._download
+
+    def synchronized(url: str, target: Path) -> None:
+        download(url, target)
+        barrier.wait()
+
+    monkeypatch.setattr(cache, "_download", synchronized)
+    with origin(served(tmp_path)) as server, ThreadPoolExecutor(max_workers=2) as executor:
+        url = f"{server.url}/global.parquet"
+        paths = list(executor.map(lambda _: cache.cached_download(url, "majortom-index"), range(2)))
+
+    assert paths[0] == paths[1]
+    assert paths[0].read_bytes() == b"index"
+    assert len([item for item in cache_dir.iterdir() if item.is_dir()]) == 1
+
+
+def test_failed_entry_swap_restores_the_previous_copy(
+    tmp_path: Path, cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = served(tmp_path)
+    with origin(root) as server:
+        url = f"{server.url}/global.parquet"
+        path = cache.cached_download(url, "majortom-index")
+        monkeypatch.setenv("TACO_CACHE_REFRESH", "1")
+        rename = Path.rename
+
+        def fail_publish(source: Path, target: Path) -> Path:
+            if source.name.startswith(".tmp-"):
+                raise OSError("publish failed")
+            return rename(source, target)
+
+        monkeypatch.setattr(Path, "rename", fail_publish)
+        with pytest.raises(OSError, match="publish failed"):
+            cache.cached_download(url, "majortom-index")
+
+    assert path.read_bytes() == b"index"
+    assert sorted(item.name for item in cache_dir.iterdir()) == ["CACHEDIR.TAG", path.parent.name]
 
 
 def test_geoenrich_queries_a_cached_copy_of_a_remote_index(tmp_path: Path, cache_dir: Path) -> None:

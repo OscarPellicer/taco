@@ -1023,7 +1023,7 @@ The TACO core is the reader. Every binding loads this core and MUST expose the s
 
 The core detects ZIP, FOLDER, or TACOCAT from the path. It reads `COLLECTION.json` and the metadata Parquet, then generates the SQL for the requested view.
 
-For a ZIP, the core reads the byte-zero index and fetches `COLLECTION.json` and every indexed Parquet range in one batch. A local ZIP is extracted to a temporary directory owned by the open dataset and never enters the cache.
+For a ZIP, the core reads the byte-zero index and fetches `COLLECTION.json` and every indexed Parquet range in one batch. A local ZIP is extracted to a temporary directory owned by the process and never enters the cache.
 
 For a remote FOLDER or TACOCAT, the core fetches the Parquet files named by `taco:metadata`. It does not rely on directory listing. The files are stored in a local cache entry named `<id>-<container>-<origin>-<hash>` and laid out like a TACO FOLDER without `DATA/`.
 

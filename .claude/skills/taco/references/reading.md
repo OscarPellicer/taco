@@ -198,7 +198,7 @@ like a TACO FOLDER without `DATA/`, plus a `taco-cache.json` stamp.
 | `TACO_CACHE_REFRESH` | Any non-empty value rebuilds the entries it touches |
 
 A remote entry is revalidated against the origin-reported object size. A local ZIP is
-extracted to a temporary directory removed when the dataset closes. If the probe
+extracted to a process-owned temporary directory. If the probe
 fails, opening fails rather than serving metadata that cannot be validated. Local
 FOLDER and TACOCAT containers are read in place with no cache entry.
 
