@@ -6,6 +6,10 @@ JavaScript reader are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- ZIP writers can combine `partition_by` and `partition_size` to split each metadata group by size.
+
 ## 0.14.1 - 2026-09-28
 
 ### Fixed

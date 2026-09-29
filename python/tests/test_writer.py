@@ -424,6 +424,27 @@ def test_partition_by_size(tmp_path: Path, collection: taco.Collection, make_sam
     assert open_view(result.path).sample_count == 3
 
 
+def test_partition_by_metadata_and_size(tmp_path: Path, collection: taco.Collection, make_sample) -> None:
+    output = tmp_path / "parts.zip"
+    with taco.open_writer(collection, output, partition_by="ml:split", partition_size=1) as writer:
+        writer.extend(make_sample(index) for index in range(4))
+        result = writer.run()
+
+    assert [path.name for path in result.parts] == [
+        "parts_train_part0001.zip",
+        "parts_train_part0002.zip",
+        "parts_val_part0001.zip",
+        "parts_val_part0002.zip",
+    ]
+    assert [open_view(path).level("sample").column("id").to_pylist() for path in result.parts] == [
+        ["s0"],
+        ["s2"],
+        ["s1"],
+        ["s3"],
+    ]
+    assert taco.validate(result.path).ok
+
+
 def test_partition_workers_match_a_serial_build(tmp_path: Path, collection: taco.Collection, make_sample) -> None:
     results = {}
     for workers in (1, 2):
@@ -513,8 +534,6 @@ def test_zip_plan_reuses_sizes_measured_by_add(
 
 
 def test_partition_options_are_checked(tmp_path: Path, collection: taco.Collection) -> None:
-    with pytest.raises(ValueError, match="either"):
-        taco.open_writer(collection, tmp_path / "a.zip", partition_size=1, partition_by="ml:split")
     with pytest.raises(ValueError, match="sample metadata"):
         taco.open_writer(collection, tmp_path / "a.zip", partition_by="missing:value")
     with pytest.raises(ValueError, match="only valid for ZIP"):

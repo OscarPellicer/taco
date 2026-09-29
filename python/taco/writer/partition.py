@@ -31,7 +31,10 @@ def _stage_partitions(writer: ArchiveWriter) -> list[tuple[str, StagedSamples[tu
 
     try:
         if writer.partition_by is not None:
+            groups: dict[str, list[tuple[str, StagedSamples[tuple[_PreparedSample, int]]]]] = {}
             streams: dict[str, StagedSamples[tuple[_PreparedSample, int]]] = {}
+            sizes: dict[str, int] = {}
+            next_stage = 0
             for sample, size in _samples_with_partition_metadata(writer):
                 value = sample.metadata[writer.partition_by]
                 label = sanitize_filename(str(value))
@@ -40,13 +43,26 @@ def _stage_partitions(writer: ArchiveWriter) -> list[tuple[str, StagedSamples[tu
                         f"partition values {labels[label]!r} and {value!r} collide on file name {label!r}"
                     )
                 labels[label] = value
-                if label not in streams:
-                    stream: StagedSamples[tuple[_PreparedSample, int]] = StagedSamples(
-                        directory / f"{len(streams)}.stage"
-                    )
+
+                stream = streams.get(label)
+                if stream is None or (
+                    writer.partition_size is not None and stream.count and sizes[label] + size > writer.partition_size
+                ):
+                    if stream is not None:
+                        stream.close()
+                    parts = groups.setdefault(label, [])
+                    part_label = label
+                    if writer.partition_size is not None:
+                        part_label = f"{label}_part{len(parts) + 1:04d}"
+                    stream = StagedSamples[tuple[_PreparedSample, int]](directory / f"{next_stage}.stage")
+                    next_stage += 1
+                    parts.append((part_label, stream))
                     streams[label] = stream
-                    partitions.append((label, stream))
-                streams[label].append((sample, size))
+                    sizes[label] = 0
+
+                stream.append((sample, size))
+                sizes[label] += size
+            partitions = [partition for group in groups.values() for partition in group]
         else:
             assert writer.partition_size is not None
             current: StagedSamples[tuple[_PreparedSample, int]] | None = None
@@ -61,6 +77,9 @@ def _stage_partitions(writer: ArchiveWriter) -> list[tuple[str, StagedSamples[tu
     except BaseException:
         for _, stream in partitions:
             stream.close()
+        if writer.partition_by is not None:
+            for stream in streams.values():
+                stream.close()
         raise
 
     for _, stream in partitions:

@@ -72,8 +72,6 @@ class ArchiveWriter(Writer):
         workers: int = 1,
     ) -> None:
         normalized_output = _normalize_output(output)
-        if partition_size is not None and partition_by is not None:
-            raise ValueError("use either partition_size or partition_by, not both")
         parsed_partition_size = None if partition_size is None else parse_size(partition_size)
         if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
             raise ValueError("workers must be a positive integer")
