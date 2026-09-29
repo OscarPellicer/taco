@@ -2,51 +2,51 @@
 arch = "aarch64"
 os = "linux"
 libc = "glibc"
-git-tree-sha1 = "101390c0b155a8a2917195719690eba907be6f4d"
+git-tree-sha1 = "e6977e26d499909639a5fa6d1ee0c566de81be93"
 lazy = true
 
     [[taco.download]]
-    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.13.2/libtaco-0.13.2-linux-aarch64.tar.gz"
-    sha256 = "5a5e69f2819c55cd70a9baaa552a2de80b239818167435f20e5081edc335cc6a"
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.14.0/libtaco-0.14.0-linux-aarch64.tar.gz"
+    sha256 = "32ee9c06d2387a121a491c0f485b22a2d9c1d9ce631054243bcae5bf10143467"
 
 [[taco]]
 arch = "x86_64"
 os = "linux"
 libc = "glibc"
-git-tree-sha1 = "e7a4409cb516bcbbd6d0233bf9f833b2d0162c6e"
+git-tree-sha1 = "bb512aa4d8918ff0b09c9f203948581307e8b2f4"
 lazy = true
 
     [[taco.download]]
-    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.13.2/libtaco-0.13.2-linux-x86_64.tar.gz"
-    sha256 = "a183d76be03a27b53dab3187c1d9e82141785d43e7b82d96921b053288b0c1ab"
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.14.0/libtaco-0.14.0-linux-x86_64.tar.gz"
+    sha256 = "04461505a64a715dbf44d4cb7725ed60463f56bbc5936479e62fab2db5ca627f"
 
 [[taco]]
 arch = "aarch64"
 os = "macos"
-git-tree-sha1 = "0264ae41b57bf4df2361c1aa1576d5a3ae049bd0"
+git-tree-sha1 = "86e9bf5dc0261b6a24e9d22ebd9989ae09652a5b"
 lazy = true
 
     [[taco.download]]
-    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.13.2/libtaco-0.13.2-macos-aarch64.tar.gz"
-    sha256 = "9aa5702281565ce320cfe4b3aecbd04fc16225c085dcfda01cd8bf3fc7cbea69"
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.14.0/libtaco-0.14.0-macos-aarch64.tar.gz"
+    sha256 = "a826f03113597864e17c37663c2e9fbf478dc64a94096a4df0a3c2594e224b1d"
 
 [[taco]]
 arch = "x86_64"
 os = "macos"
-git-tree-sha1 = "d35f6d2638374fe1e372880966be1ca2a9d93030"
+git-tree-sha1 = "38bad5e6e1c9e8c47bedf03cbfee4a0f4d196428"
 lazy = true
 
     [[taco.download]]
-    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.13.2/libtaco-0.13.2-macos-x86_64.tar.gz"
-    sha256 = "4f172fa344e3b892e74d32c3fd1c0730bddd72b54b94bd86877d10152304313d"
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.14.0/libtaco-0.14.0-macos-x86_64.tar.gz"
+    sha256 = "36da675b40b71c843fb9cac6cffb1330ed647e0898e785dde5610363cfd3a17f"
 
 [[taco]]
 arch = "x86_64"
 os = "windows"
-git-tree-sha1 = "2fc8977396251bf0355d4b50828de051150077da"
+git-tree-sha1 = "b7e48e1ed1080a8c4907d83ca2faa078a3a14365"
 lazy = true
 
     [[taco.download]]
-    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.13.2/libtaco-0.13.2-windows-x86_64.tar.gz"
-    sha256 = "7017baf5f1c86edd0e70f7405582cca68bd3d9a10efb90561c7298c783b236b1"
+    url = "https://github.com/asterisk-labs/taco/releases/download/libtaco-v0.14.0/libtaco-0.14.0-windows-x86_64.tar.gz"
+    sha256 = "ed6d07f8707491657d0a5e65bcffae9d6e85d2179bcd212cb3a66fc09ef09491"
 
