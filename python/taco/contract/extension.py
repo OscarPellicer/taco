@@ -59,6 +59,9 @@ class Extension(ABC):
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset()
     __taco_complete_level__: ClassVar[bool] = False
     __taco_namespace__: ClassVar[str | None] = None
+    # True when each output row depends only on its input row, which skips the
+    # writer's check that runs the first row again on its own.
+    __taco_row_local__: ClassVar[bool] = False
 
     @property
     def input_model(self) -> type[BaseModel] | None:

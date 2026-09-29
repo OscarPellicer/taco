@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -582,6 +582,40 @@ class BatchSize(taco.DerivedMetadata):
     def compute(self, columns: Mapping[str, Sequence[object]]) -> Mapping[str, Sequence[object]]:
         size = len(columns["base:value"])
         return {"size": [size] * size}
+
+
+@dataclass(frozen=True)
+class RowLocalPlusOne(PlusOne):
+    __taco_row_local__: ClassVar[bool] = True
+    calls: ClassVar[int] = 0
+
+    def compute(self, columns: Mapping[str, Sequence[object]]) -> Mapping[str, Sequence[object]]:
+        type(self).calls += 1
+        return super().compute(columns)
+
+
+def test_row_local_extensions_skip_the_batch_check(tmp_path) -> None:
+    class Base(BaseModel):
+        value: int
+
+    RowLocalPlusOne.calls = 0
+    contract = taco.Contract(
+        structure=["data.bin"],
+        metadata=[taco.Level("sample", base=Base, next=RowLocalPlusOne())],
+    )
+    collection = taco.Collection(
+        contract=contract,
+        id="derived",
+        description="Derived test",
+        licenses=["MIT"],
+        providers=["me"],
+        tasks=["other"],
+    )
+    with taco.open_writer(collection, tmp_path / "batched", batch_size=4) as writer:
+        for value in range(8):
+            writer.add(taco.Sample(id=f"u25-{value}", assets=b"x", metadata=taco.Metadata(base=Base(value=value))))
+        writer.run()
+    assert RowLocalPlusOne.calls == 2
 
 
 def test_derived_group_may_not_read_across_its_batch(tmp_path) -> None:

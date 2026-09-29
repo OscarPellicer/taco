@@ -689,7 +689,7 @@ class Contract:
                             f"extension field {group.namespace}:{arrow_field.name!r} returned the wrong number of rows"
                         )
                     produced[name] = values
-                if verify and len(rows) > 1:
+                if verify and len(rows) > 1 and not group.extension.__taco_row_local__:
                     _check_row_independent(level, group, inputs, local_assets, produced)
                 for name, arrow_field in output_fields.items():
                     for row, value in zip(rows, produced[name], strict=True):

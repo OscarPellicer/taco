@@ -57,6 +57,7 @@ class Spatial(Extension):
     """Compute spatial centroids."""
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample", "folder"})
+    __taco_row_local__: ClassVar[bool] = True
     model: type[SpatialMetadata] = SpatialMetadata
 
     def __post_init__(self) -> None:
@@ -84,6 +85,7 @@ class STAC(Extension):
     """Compute STAC centroids."""
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample", "folder"})
+    __taco_row_local__: ClassVar[bool] = True
     model: type[STACMetadata] = STACMetadata
 
     def __post_init__(self) -> None:

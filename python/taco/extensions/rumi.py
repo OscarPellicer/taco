@@ -245,6 +245,7 @@ class Rumi(Extension):
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample", "asset"})
     __taco_namespace__: ClassVar[str | None] = RUMI_NAMESPACE
+    __taco_row_local__: ClassVar[bool] = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.header, bool):
