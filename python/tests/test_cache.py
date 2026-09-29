@@ -102,7 +102,7 @@ def served(tmp_path: Path, content: bytes = b"index") -> Path:
 def test_cache_root_follows_the_core(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("TACO_CACHE_DIR", "XDG_CACHE_HOME", "HOME", "LOCALAPPDATA"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(cache.os, "name", "posix")
+    monkeypatch.setattr(cache, "_WINDOWS", False)
     assert cache.cache_root() == Path(".taco-cache")
     monkeypatch.setenv("HOME", "/home/me")
     assert cache.cache_root() == Path("/home/me/.cache/taco")
@@ -111,7 +111,7 @@ def test_cache_root_follows_the_core(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TACO_CACHE_DIR", "/data/taco")
     assert cache.cache_root() == Path("/data/taco")
     monkeypatch.delenv("TACO_CACHE_DIR")
-    monkeypatch.setattr(cache.os, "name", "nt")
+    monkeypatch.setattr(cache, "_WINDOWS", True)
     monkeypatch.setenv("LOCALAPPDATA", "C:/Users/me/AppData/Local")
     assert cache.cache_root() == Path("C:/Users/me/AppData/Local", "taco", "cache")
 

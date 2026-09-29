@@ -27,6 +27,7 @@ _CACHEDIR_TAG = (
 )
 _RETRY_DELAYS = (1, 2, 4)
 _NETWORK_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException)
+_WINDOWS = os.name == "nt"
 
 
 def cache_root() -> Path:
@@ -34,7 +35,7 @@ def cache_root() -> Path:
     configured = os.environ.get("TACO_CACHE_DIR")
     if configured:
         return Path(configured)
-    if os.name == "nt":
+    if _WINDOWS:
         local = os.environ.get("LOCALAPPDATA")
         if local:
             return Path(local, "taco", "cache")
