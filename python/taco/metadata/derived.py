@@ -9,10 +9,12 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import as_file, files
 from typing import Any, ClassVar
+from urllib.parse import urlparse
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from .._cache import cached_download
 from ..container.parquet import Encoding
 from ..contract.naming import validate_field_name
 from ._base import DerivedMetadata
@@ -76,6 +78,7 @@ class MajorTOM(DerivedMetadata):
     """Assign the spherical MajorTOM grid cell containing each centroid."""
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample"})
+    __taco_row_local__: ClassVar[bool] = True
 
     dist_km: float = 100
     extra: Mapping[str, float] | tuple[tuple[str, float], ...] = ()
@@ -270,6 +273,7 @@ class GeoEnrich(DerivedMetadata):
     """Attach selected environmental variables from an explicit backend."""
 
     __taco_scopes__: ClassVar[frozenset[str]] = frozenset({"sample"})
+    __taco_row_local__: ClassVar[bool] = True
     __taco_complete_level__: ClassVar[bool] = True
 
     variables: tuple[str, ...]
@@ -471,6 +475,10 @@ class GeoEnrich(DerivedMetadata):
         selections = ", ".join(f'indexed."geoenrich:{name}" AS "{name}"' for name in self.variables)
         connection = duckdb.connect()
         try:
+            # Joining against the remote file reads most of it, so a local copy is kept.
+            source = self.index_url
+            if urlparse(source).scheme in {"http", "https"}:
+                source = str(cached_download(source, "majortom-index"))
             connection.register("requested", requested)
             rows = connection.execute(
                 f"""
@@ -479,7 +487,7 @@ class GeoEnrich(DerivedMetadata):
                 LEFT JOIN read_parquet(?) AS indexed ON indexed.id = requested.code
                 ORDER BY requested.taco_index
                 """,
-                [self.index_url],
+                [source],
             ).fetchall()
         except Exception as exc:
             raise RuntimeError(f"GeoEnrich could not read MajorTOM index {self.index_url!r}") from exc

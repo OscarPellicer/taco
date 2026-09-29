@@ -22,8 +22,7 @@ namespace taco {
 struct CacheStamp {
     std::string source;
     std::string container;
-    // How the entry stays valid: origin-reported remote sizes, or the size
-    // and modification time of a local archive.
+    // How the entry stays valid at its remote origin.
     std::string key;
     std::uint64_t size = 0;
     std::string created;

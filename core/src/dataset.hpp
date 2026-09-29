@@ -4,6 +4,8 @@
 // copies of the metadata levels, the collection and its contract.
 
 #include <cstddef>
+#include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -43,6 +45,8 @@ struct Dataset {
     std::vector<std::string> level_names;
     std::vector<std::string> level_paths;
     Contract contract;
+    // Keeps temporary metadata alive for the lifetime of a local ZIP dataset.
+    std::shared_ptr<const std::filesystem::path> temporary;
 
     [[nodiscard]] std::size_t level_index(std::string_view name) const;
 };

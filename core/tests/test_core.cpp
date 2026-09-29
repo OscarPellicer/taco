@@ -201,16 +201,16 @@ void test_open_archives() {
     CHECK((flat.contract.structure == Strings{"image.bin", "label.bin"}));
     CHECK(!flat.contract.has_derived);
     CHECK(contains(flat.collection, "\"taco-flat\""));
+    // Local archives are extracted to a temporary directory, never to the cache.
     for (const auto& path : flat.level_paths)
-        CHECK(path.starts_with(cache) && fs::is_regular_file(path));
+        CHECK(!path.starts_with(cache) && fs::is_regular_file(path));
+    CHECK(!fs::exists(cache) || fs::is_empty(cache));
 
-    // A second open finds a complete cache entry and leaves its files alone.
-    const auto written = fs::last_write_time(flat.level_paths[0]);
+    // Open handles for the same archive share one extraction.
     const auto again = taco::open_dataset(data("taco_flat.zip"), cache);
     CHECK(again.level_paths == flat.level_paths);
-    CHECK(fs::last_write_time(again.level_paths[0]) == written);
 
-    // A changed archive at the same path rebuilds its entry in place.
+    // A changed archive at the same path is extracted again.
     const fs::path moving = scratch("moving") / "dataset.zip";
     fs::copy_file(data("taco_flat.zip"), moving);
     const auto first = taco::open_dataset(moving.string(), cache);
@@ -218,8 +218,6 @@ void test_open_archives() {
     fs::last_write_time(moving, fs::file_time_type::clock::now() + std::chrono::seconds(5));
     const auto second = taco::open_dataset(moving.string(), cache);
     CHECK(first.level_paths[0] != second.level_paths[0]);
-    CHECK(contains(second.level_paths[0], "taco-nested-zip-local-"));
-    CHECK(!fs::exists(fs::path(first.level_paths[0]).parent_path()));
     CHECK((second.level_names == Strings{"sample", "children", "children/after", "children/before"}));
 
     const auto nested = taco::open_dataset(data("taco_nested.zip"), cache);
@@ -227,6 +225,16 @@ void test_open_archives() {
     CHECK(nested.contract.structure.size() == 4);
     CHECK(nested.contract.fields_of("children/before") &&
           *nested.contract.fields_of("children/before") == Strings{"raster:resolution"});
+
+    fs::path released;
+    {
+        const fs::path owned_archive = scratch("owned-archive") / "dataset.zip";
+        fs::copy_file(data("taco_flat.zip"), owned_archive);
+        const auto owned = taco::open_dataset(owned_archive.string(), cache);
+        released = fs::path(owned.level_paths[0]).parent_path().parent_path();
+        CHECK(fs::is_directory(released));
+    }
+    CHECK(!fs::exists(released));
 
     CHECK_THROWS(taco::open_dataset(data("taco_badstructure"), cache), "taco:structure must be a non-empty array");
 
@@ -513,16 +521,19 @@ void test_progress() {
     for (std::size_t i = 1; i < events.size(); ++i)
         CHECK(events[i].done > events[i - 1].done);
 
-    // A cache miss reports the metadata download under the dataset name.
-    events.clear();
+    // Reading metadata is reported under the dataset name.
+    const fs::path copy = scratch("progress-copy") / "taco_flat.zip";
+    fs::copy_file(archive, copy);
     const std::string cache = scratch("progress-cache").generic_string();
-    taco::open_dataset(archive, cache);
+    events.clear();
+    taco::open_dataset(copy.string(), cache);
     CHECK(!events.empty());
     CHECK(events.front().phase == "downloading taco_flat.zip metadata");
     CHECK(events.back().done == events.back().total && events.back().total > 0);
     events.clear();
-    taco::open_dataset(archive, cache);
-    CHECK(events.empty());
+    taco::open_dataset(copy.string(), cache);
+    CHECK(!events.empty());
+    events.clear();
     taco::fetch_files({});
     CHECK(events.empty());
     taco_set_progress(nullptr, nullptr);

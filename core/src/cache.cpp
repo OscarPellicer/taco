@@ -21,7 +21,7 @@ namespace taco {
 namespace {
 
 constexpr std::string_view stamp_name = "taco-cache.json";
-constexpr std::uint64_t default_cache_size = 10ULL * 1024 * 1024 * 1024;
+constexpr std::uint64_t default_cache_size = 5ULL * 1024 * 1024 * 1024;
 constexpr std::string_view cachedir_tag =
     "Signature: 8a477f597d28d172789f06886806bc55\n"
     "# This directory holds metadata that taco can download again.\n"
