@@ -1,4 +1,4 @@
-AC_INIT([taco], [0.13.2])
+AC_INIT([taco], [0.14.0])
 AC_CONFIG_SRCDIR([DESCRIPTION])
 
 AC_PROG_CXX

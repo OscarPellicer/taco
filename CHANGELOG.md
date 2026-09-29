@@ -6,6 +6,8 @@ JavaScript reader are documented here. The format follows
 
 ## Unreleased
 
+## 0.14.0 - 2026-09-28
+
 ### Changed
 
 - `GeoEnrich` now caches and revalidates the MajorTOM index.
