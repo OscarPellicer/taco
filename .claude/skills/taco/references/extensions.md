@@ -122,6 +122,9 @@ Both extensions default to `centroid="stac:centroid"`; point them at
 `spatial:centroid` when the level uses the Spatial profile. The value must match
 `[a-z][a-z0-9_]*:centroid`.
 
+The index is downloaded once into the cache and revalidated against the origin on each
+build; `TACO_CACHE_REFRESH` downloads it again.
+
 `GeoEnrich` buffers its complete level. The index backend and source URL are recorded
 in collection metadata.
 

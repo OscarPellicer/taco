@@ -924,7 +924,7 @@ For example, Spatial receives a grid and produces `spatial:centroid`. `MajorTOM(
 
 The writer computes extension outputs from batches of validated metadata during `run()`. Each context also contains the local asset associated with every row, allowing format extensions to inspect payloads without asking producers to duplicate file metadata.
 
-`taco.extensions.Rumi(stats=True)` requires a local `.rumi` asset. It produces the canonical binary `rumi:header` and one `double` column per statistic, such as `rumi:mean` or `rumi:mean_b10`; `header=False` omits the header. A `stats` mapping selects different columns for different structure declarations at the same level. `taco.extensions.GeoEnrich` attaches selected environmental variables through one of two backends. The default `majortom-index` backend joins a 10 km MajorTOM code against the public MajorTOM index on Source Cooperative without requiring an Earth Engine account; the explicitly selected `earthengine` backend samples a configurable centroid. The index backend and source URL are stored as collection metadata.
+`taco.extensions.Rumi(stats=True)` requires a local `.rumi` asset. It produces the canonical binary `rumi:header` and one `double` column per statistic, such as `rumi:mean` or `rumi:mean_b10`; `header=False` omits the header. A `stats` mapping selects different columns for different structure declarations at the same level. `taco.extensions.GeoEnrich` attaches selected environmental variables through one of two backends. The default `majortom-index` backend joins a 10 km MajorTOM code against the public MajorTOM index on Source Cooperative without requiring an Earth Engine account; the explicitly selected `earthengine` backend samples a configurable centroid. The index backend and source URL are stored as collection metadata. The writer keeps a local copy of a remote index in the cache and revalidates it on each build.
 
 Extension dependencies and operational settings remain in the active Python contract while writing. Semantic parameters are stored as collection metadata as defined in Section 5.4. The persisted contract contains only the resulting structure and metadata schema.
 
@@ -1023,13 +1023,13 @@ The TACO core is the reader. Every binding loads this core and MUST expose the s
 
 The core detects ZIP, FOLDER, or TACOCAT from the path. It reads `COLLECTION.json` and the metadata Parquet, then generates the SQL for the requested view.
 
-For a ZIP, the core reads the byte-zero index and fetches `COLLECTION.json` and every indexed Parquet range in one batch.
+For a ZIP, the core reads the byte-zero index and fetches `COLLECTION.json` and every indexed Parquet range in one batch. A local ZIP is extracted to a temporary directory owned by the open dataset and never enters the cache.
 
 For a remote FOLDER or TACOCAT, the core fetches the Parquet files named by `taco:metadata`. It does not rely on directory listing. The files are stored in a local cache entry named `<id>-<container>-<origin>-<hash>` and laid out like a TACO FOLDER without `DATA/`.
 
-Before reusing cached metadata, a reader MUST revalidate the remote source. It MAY use an ETag, modification time, content length, or an equivalent origin-provided value. It MUST refresh the entry when the source changed or cannot be validated. `TACO_CACHE_REFRESH` forces a refresh. A local archive is checked using its size and modification time. An open `Dataset` remains a snapshot of the metadata it loaded.
+Before reusing cached metadata, a reader MUST revalidate the remote source. It MAY use an ETag, modification time, content length, or an equivalent origin-provided value. It MUST refresh the entry when the source changed or cannot be validated. `TACO_CACHE_REFRESH` forces a refresh. An open `Dataset` remains a snapshot of the metadata it loaded.
 
-The cache keeps at most `TACO_CACHE_SIZE` bytes. The default is 10 GiB. When the limit is exceeded, the least recently opened entries are removed first. `TACO_CACHE_DIR` overrides the user cache directory. Local FOLDER and TACOCAT containers are read in place.
+The cache keeps at most `TACO_CACHE_SIZE` bytes. The default is 5 GiB. When the limit is exceeded, the least recently opened entries are removed first. `TACO_CACHE_DIR` overrides the user cache directory. Local FOLDER and TACOCAT containers are read in place.
 
 The reader reports remote download progress in interactive terminals and stays silent otherwise.
 

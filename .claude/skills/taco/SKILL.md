@@ -180,9 +180,12 @@ and only ZIP metadata carries the byte offsets that make random access possible.
 - **Empty data is refused.** Every dataset needs a sample, every sample a declared
   file, and every stored file at least one byte.
 - **Remote metadata is cached, payloads are not.** Entries live under `TACO_CACHE_DIR`
-  (default `~/.cache/taco`), capped by `TACO_CACHE_SIZE` (10 GiB, least recently opened
+  (default `~/.cache/taco`), capped by `TACO_CACHE_SIZE` (5 GiB, least recently opened
   evicted first) and revalidated against the origin size; `TACO_CACHE_REFRESH` forces a
-  rebuild. Local FOLDER and TACOCAT are read in place. An open `Dataset` is a snapshot.
+  rebuild. Local FOLDER and TACOCAT are read in place; a local ZIP is extracted to a
+  temporary directory removed when the dataset closes. GeoEnrich keeps the MajorTOM
+  index there too. On a server with a small home, set `TACO_CACHE_DIR`. An open
+  `Dataset` is a snapshot.
 - **The core must be loadable.** Python looks for `taco/_lib/libtaco.dylib|so` or
   `TACO_LIB`, and rejects a library whose C API is not 2. `make core` builds it and
   stages the copy Python uses.

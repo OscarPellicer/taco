@@ -68,6 +68,19 @@ Set `backend="earthengine"` explicitly to retain centroid-based Earth Engine
 sampling. That backend requires `taco-eo[geoenrich]` and an authenticated Earth
 Engine installation.
 
+## Cache
+
+taco keeps the metadata of remote datasets and the MajorTOM index used by
+`GeoEnrich` in `~/.cache/taco`, up to 5 GiB. Data files are never cached. On a
+server with a small home directory, move it:
+
+```bash
+export TACO_CACHE_DIR=/data/taco-cache
+```
+
+`TACO_CACHE_SIZE` sets the limit in bytes, and `TACO_CACHE_REFRESH=1` downloads
+everything again.
+
 ## Examples
 
 Every example is self-contained, uses synthetic data, and writes its output in

@@ -121,10 +121,11 @@ a TACO FOLDER without `DATA/`: `COLLECTION.json`, `METADATA/`, and a `taco-cache
 stamp recording source, container, validation key, size and timestamps. The label
 names the dataset for humans; the hash names the source for lookups.
 
-Validation keys: a remote source uses the origin-reported object size, a local archive
-its size and modification time. A failed probe fails the open rather than serving
-metadata that cannot be validated. `TACO_CACHE_REFRESH` rebuilds, `TACO_CACHE_SIZE`
-caps the root at 10 GiB by default and evicts least-recently-opened entries first, and
+Validation keys: a remote source uses the origin-reported object size. A local ZIP
+never enters the cache: its open dataset owns a temporary metadata directory. A failed
+probe fails the open rather than serving metadata that cannot be validated.
+`TACO_CACHE_REFRESH` rebuilds, `TACO_CACHE_SIZE`
+caps the root at 5 GiB by default and evicts least-recently-opened entries first, and
 `TACO_CACHE_DIR` moves the root. Local FOLDER and TACOCAT are read in place.
 
 `TACO_CACHE_SIZE` takes plain bytes: `TACO_CACHE_SIZE must be a number of bytes, got

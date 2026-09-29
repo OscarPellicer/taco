@@ -194,13 +194,13 @@ like a TACO FOLDER without `DATA/`, plus a `taco-cache.json` stamp.
 | Variable | Effect |
 | --- | --- |
 | `TACO_CACHE_DIR` | Cache root. Default `$XDG_CACHE_HOME/taco`, else `~/.cache/taco`, else `%LOCALAPPDATA%\taco\cache`, else `.taco-cache` |
-| `TACO_CACHE_SIZE` | Cap in bytes, default 10 GiB. Least recently opened entries are evicted first |
+| `TACO_CACHE_SIZE` | Cap in bytes, default 5 GiB. Least recently opened entries are evicted first |
 | `TACO_CACHE_REFRESH` | Any non-empty value rebuilds the entries it touches |
 
-A remote entry is revalidated against the origin-reported object size; a local archive
-against its size and modification time. If the probe fails, opening fails rather than
-serving metadata that cannot be validated. Local FOLDER and TACOCAT containers are
-read in place with no cache entry.
+A remote entry is revalidated against the origin-reported object size. A local ZIP is
+extracted to a temporary directory removed when the dataset closes. If the probe
+fails, opening fails rather than serving metadata that cannot be validated. Local
+FOLDER and TACOCAT containers are read in place with no cache entry.
 
 Payload bytes are never cached. A `::location` path is fetched by whatever reads it,
 and `taco.export` downloads payloads through `taco_fetch` in bounded batches.

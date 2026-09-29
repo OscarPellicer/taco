@@ -88,7 +88,7 @@ TACO_CACHE_REFRESH=1 python script.py
 ```
 
 Move or shrink the cache with `TACO_CACHE_DIR` and `TACO_CACHE_SIZE` (plain bytes,
-default 10 GiB). Tests set `TACO_CACHE_DIR` per test through the `isolated_cache`
+default 5 GiB). Tests set `TACO_CACHE_DIR` per test through the `isolated_cache`
 fixture; do the same when a test touches a remote source.
 
 ### Query surprises
@@ -135,7 +135,7 @@ open rather than exiting the `with` block.
 | --- | --- | --- |
 | `TACO_LIB` | Python, Julia | Path to `libtaco` |
 | `TACO_CACHE_DIR` | core | Metadata cache root |
-| `TACO_CACHE_SIZE` | core | Cache cap in bytes, default 10 GiB |
+| `TACO_CACHE_SIZE` | core | Cache cap in bytes, default 5 GiB |
 | `TACO_CACHE_REFRESH` | core | Any non-empty value rebuilds touched entries |
 | `TACO_CORE_DIR` | Makefile, Julia tests | Source directory of the development core |
 

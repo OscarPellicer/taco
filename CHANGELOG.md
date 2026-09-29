@@ -6,6 +6,13 @@ JavaScript reader are documented here. The format follows
 
 ## Unreleased
 
+### Changed
+
+- `GeoEnrich` now caches and revalidates the MajorTOM index.
+- Built-in extensions skip the redundant row-independence check.
+- Local ZIP metadata now uses temporary storage instead of the cache.
+- The default cache limit is 5 GiB.
+
 ## 0.13.2 - 2026-09-28
 
 ### Changed
