@@ -601,6 +601,7 @@ Contract read_contract(const Dataset& dataset) {
     if (version->string != supported_version)
         fail("unsupported TACO version '" + version->string + "' in " + source + "; expected " +
              std::string(supported_version));
+    contract.legacy_ids = root.find("dataset_version") != nullptr;
 
     const json::Value* structure = root.find("taco:structure");
     if (!structure)

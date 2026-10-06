@@ -256,6 +256,9 @@ class Extent:
         return Extent((west, south, east, north), temporal)
 
 
+# Top-level keys of older collections that reading accepts and drops.
+_LEGACY_KEYS = frozenset({"dataset_version"})
+
 # Keyword arguments of Collection other than these are collection metadata groups.
 _PARAMETERS = (
     "contract",
@@ -511,7 +514,9 @@ class Collection:
         )
         if unknown_reserved:
             raise CollectionError(f"COLLECTION.json uses unknown reserved keys {unknown_reserved}")
-        extra = {key: value for key, value in data.items() if key not in _CORE_KEYS}
+        # `dataset_version` is how collections written before taco 0.14 were
+        # versioned. Reading one ignores it; the reader derives their sample ids.
+        extra = {key: value for key, value in data.items() if key not in _CORE_KEYS and key not in _LEGACY_KEYS}
         unqualified = sorted(key for key in extra if ":" not in key)
         if unqualified:
             raise CollectionError(f"COLLECTION.json has unknown unqualified fields {unqualified}")
