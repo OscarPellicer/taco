@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import itertools
-
 import io
+import itertools
 import struct
 import wave
 from pathlib import Path

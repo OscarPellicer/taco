@@ -39,7 +39,8 @@ def test_a_legacy_folder_reads_with_ids_from_its_rows(folder_dataset: Path) -> N
 
 def test_a_current_folder_keeps_its_own_ids(folder_dataset: Path) -> None:
     before = taco.open_dataset(folder_dataset).read().column("id").to_pylist()
-    assert before and all(not value.isdigit() for value in before)
+    assert before
+    assert all(not value.isdigit() for value in before)
 
 
 def test_a_legacy_folder_does_not_validate(folder_dataset: Path) -> None:

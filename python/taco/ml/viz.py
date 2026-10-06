@@ -7,9 +7,6 @@ then targets, so a figure reads in the order a model consumes it.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
-
 import numpy as np
 
 from ..metadata.ml import Calibration, Modality, SlotKind
@@ -416,7 +413,7 @@ def plot_sample(sample: dict[str, SlotValue], *, columns: int = COLUMNS,
     axes = np.atleast_1d(axes).ravel()
 
     overlaid = False
-    for axis, value in zip(axes, panels):
+    for axis, value in zip(axes, panels, strict=False):
         text = plot_slot(value, axis)
         axis.set_box_aspect(_aspect(value))
         if geometry and value.kind is SlotKind.RASTER and value.role == "input" \

@@ -365,8 +365,7 @@ def _markdown(text: str) -> str:
         line = escape(line)
         line = re.sub(r"`([^`]+)`", r"<code>\1</code>", line)
         line = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", line)
-        line = re.sub(r"(?<![*\w])\*([^*]+)\*(?!\w)", r"<em>\1</em>", line)
-        return line
+        return re.sub(r"(?<![*\w])\*([^*]+)\*(?!\w)", r"<em>\1</em>", line)
 
     html: list[str] = []
     paragraph: list[str] = []
