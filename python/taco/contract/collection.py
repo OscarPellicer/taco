@@ -12,6 +12,7 @@ from typing import Any
 from ..errors import CollectionError, ContractError
 from .contract import Contract
 from .schema import validate_qualified_field
+from .structure import LEGACY_READ
 
 TACO_VERSION = "3.0.0"
 KNOWN_TASKS = frozenset(
@@ -275,6 +276,17 @@ _PARAMETERS = (
 )
 
 
+def _read_contract(data: Mapping[str, Any]) -> Contract:
+    """The contract of a stored collection, read under the rules it was written with."""
+    if not any(key in data for key in _LEGACY_KEYS):
+        return Contract.from_dict(data)
+    token = LEGACY_READ.set(True)
+    try:
+        return Contract.from_dict(data)
+    finally:
+        LEGACY_READ.reset(token)
+
+
 def _group_values(namespace: str, value: object) -> dict[str, Any]:
     """Check one collection metadata group and return its values as JSON."""
     # Mapping-only collections should not import Pydantic.
@@ -525,7 +537,7 @@ class Collection:
             namespace, _, name = key.partition(":")
             groups.setdefault(namespace, {})[name] = value
         parameters = {
-            "contract": Contract.from_dict(data),
+            "contract": _read_contract(data),
             "id": data["id"],
             "description": data["description"],
             "licenses": data["licenses"],

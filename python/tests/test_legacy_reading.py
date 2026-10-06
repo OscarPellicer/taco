@@ -49,3 +49,19 @@ def test_a_legacy_folder_does_not_validate(folder_dataset: Path) -> None:
     pytest.importorskip("cozip")
     report = taco.validate(folder_dataset)
     assert not report.ok
+
+
+def test_a_legacy_sequence_may_hold_no_file(folder_dataset: Path) -> None:
+    _as_legacy(folder_dataset)
+    collection = folder_dataset / "COLLECTION.json"
+    document = json.loads(collection.read_text())
+    variable = next(item for item in document["taco:structure"] if "*[" in item)
+    relaxed = variable.replace("*[1,", "*[0,")
+    document["taco:structure"] = [relaxed if item == variable else item for item in document["taco:structure"]]
+    collection.write_text(json.dumps(document))
+
+    assert taco.open_dataset(folder_dataset).read().num_rows == 4
+    document.pop("dataset_version")
+    collection.write_text(json.dumps(document))
+    with pytest.raises(taco.TacoError, match="at least one file"):
+        taco.open_dataset(folder_dataset)
