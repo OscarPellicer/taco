@@ -7,7 +7,7 @@ import math
 import re
 import struct
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from os import PathLike
@@ -142,6 +142,11 @@ class SlotValue:
         or computed per image -- a quantile stretch, a gamma curve, an 8-bit
         quicklook -- nor when the stored value is already an index such as NDVI.
         Those slots are `render`, and no multiplication recovers the quantity.
+
+        Pixels equal to the slot's ``nodata``, or to their band's, are not observations, so they come
+        back as NaN rather than as the sentinel scaled into a plausible value.
+        When the dataset was opened with ``masked=True`` the result is a masked
+        array as well, masking those pixels and whatever was already masked.
         """
         if self.slot.calibration in (Calibration.RENDER, Calibration.DIGITAL_NUMBER,
                                      Calibration.REQUANTISED, Calibration.UNDECLARED):
@@ -150,13 +155,51 @@ class SlotValue:
                 f"values do not convert to {self.slot.units or 'a physical unit'}")
         scale = 1.0 if self.slot.scale_factor is None else self.slot.scale_factor
         offset = 0.0 if self.slot.scale_offset is None else self.slot.scale_offset
-        return np.asarray(self.array, dtype="float64") * scale + offset
+        stored = np.asarray(np.ma.getdata(self.array))
+        values = np.array(stored, dtype="float64") * scale + offset
+        invalid = np.ma.getmaskarray(self.array).copy() if np.ma.isMaskedArray(self.array) \
+            else np.zeros(values.shape, bool)
+        # The sentinel must be found in the stored values, before scaling moves it.
+        invalid |= _nodata_pixels(stored, self.slot)
+        values[invalid] = np.nan
+        if np.ma.isMaskedArray(self.array):
+            return np.ma.array(values, mask=invalid | np.isnan(values))
+        return values[()] if values.ndim == 0 else values
 
     def __repr__(self) -> str:
         shape = getattr(self.array, "shape", None)
         return (f"<SlotValue {self.name} {self.kind.value}"
                 + (f" {tuple(shape)}" if shape else "")
                 + (f" [{self.role}]" if self.role else "") + ">")
+
+
+def _nodata_pixels(stored: np.ndarray, slot: Slot) -> np.ndarray:
+    """True where a stored value is the slot's nodata, or its own band's.
+
+    The slot's ``nodata`` applies to every band; a band's ``nodata`` to that band
+    only, on the band axis (third from last: ``(C, H, W)`` or ``(T, C, H, W)``).
+    """
+    def equal(values, fill):
+        # A NaN sentinel marks every non-finite value, as masked_invalid does.
+        return ~np.isfinite(values) if math.isnan(fill) else values == fill
+
+    stored = np.asarray(stored)
+    invalid = np.zeros(stored.shape, bool)
+    if stored.dtype.kind not in "biuf":
+        return invalid
+    if slot.nodata is not None:
+        invalid |= equal(stored, slot.nodata)
+    fills = [band.nodata for band in slot.bands]
+    if all(fill is None for fill in fills):
+        return invalid
+    if stored.ndim >= 3 and stored.shape[-3] == len(fills):
+        for position, fill in enumerate(fills):
+            if fill is not None:
+                invalid[..., position, :, :] |= equal(stored[..., position, :, :], fill)
+    elif len(fills) == 1:
+        # One band, stored without a band axis: a scalar or an (H, W) plane.
+        invalid |= equal(stored, fills[0])
+    return invalid
 
 
 def _absent(value: Any) -> bool:
@@ -189,7 +232,7 @@ class Dataset:
     interpret each slot.
 
     With ``masked=True`` rasters come back as masked arrays: pixels equal to the
-    slot's ``nodata`` and, for labels, to its ``ignore_index`` or one of its
+    slot's ``nodata`` or their band's ``nodata`` and, for labels, to its ``ignore_index`` or one of its
     ``ignore_classes`` are masked, so a
     loss or a statistic never counts them by accident.
 
@@ -551,12 +594,12 @@ class Dataset:
         return [name for pattern in paths for name in self._resolve(part, local, pattern)]
 
     def _mask_nodata(self, array, slot: Slot):
-        """Mask the slot's declared nodata value, on top of whatever the file tags."""
-        if not self.masked or slot.nodata is None or not hasattr(array, "shape"):
+        """Mask the slot's declared nodata value, and each band's, on top of
+        whatever the file tags."""
+        if not self.masked or not hasattr(array, "shape") or (
+                slot.nodata is None and all(band.nodata is None for band in slot.bands)):
             return array
-        if math.isnan(slot.nodata):
-            return np.ma.masked_invalid(array)
-        return np.ma.masked_equal(array, slot.nodata)
+        return np.ma.masked_where(_nodata_pixels(np.ma.getdata(array), slot), array)
 
     def _mask_ignored(self, array, slot: Slot):
         """Mask the label values a loss must not score: ``ignore_index`` and
@@ -612,10 +655,21 @@ class Dataset:
             array = array.reshape(-1, width)
         return array
 
-    def _file(self, slot: Slot, index: int) -> Any:
-        """A slot stored as one or more files of the sample."""
+    def _file(self, slot: Slot, index: int, frames: Sequence[int] | None = None) -> Any:
+        """A slot stored as one or more files of the sample.
+
+        `frames` keeps only those positions of a series stored one file per frame.
+        """
         part, local = self._locate(index)
         names = self._payload_paths(part, local, slot)
+        if frames is not None:
+            if slot.kind not in (SlotKind.MASK_SERIES, SlotKind.RASTER_SERIES) or slot.frames_field \
+                    or not (isinstance(slot.path, str) and VARIABLE_LEAF.fullmatch(slot.path)):
+                raise ValueError(f"slot {slot.name!r}: frames can be chosen only in a series "
+                                 f"stored one file per frame")
+            if any(not 0 <= int(k) < len(names) for k in frames):
+                raise IndexError(f"slot {slot.name!r}: frames {list(frames)} outside 0..{len(names) - 1}")
+            names = [names[int(k)] for k in frames]
         bands = len(slot.bands) or None
 
         if slot.kind is SlotKind.VIDEO:
@@ -728,7 +782,8 @@ class Dataset:
                              f"{slot.task_field!r} names {len(tasks)} tasks")
         return tasks
 
-    def _times(self, slot: Slot, index: int, value: Any) -> list[Any] | None:
+    def _times(self, slot: Slot, index: int, value: Any,
+               frames: Sequence[int] | None = None) -> list[Any] | None:
         """When each frame was acquired, from the slot's `time_field`."""
         if not slot.time_field:
             return None
@@ -739,6 +794,8 @@ class Dataset:
             # is the number in each file name, not the order the rows were stored.
             times = self._in_frame_order(index, level, slot.path, times)
         times = list(times) if isinstance(times, (list, tuple)) else [times]
+        if frames is not None:
+            times = [times[int(k)] for k in frames]
         expected = len(value) if slot.kind is SlotKind.RASTER_SERIES and value is not None else 1
         if len(times) != expected:
             raise ValueError(f"slot {slot.name!r}: {expected} frames, but "
@@ -759,15 +816,21 @@ class Dataset:
     def __getitem__(self, index: int) -> dict[str, SlotValue]:
         return self.read(index)
 
-    def read(self, index: int, slots: Sequence[str] | None = None) -> dict[str, SlotValue]:
+    def read(self, index: int, slots: Sequence[str] | None = None,
+             frames: Mapping[str, Sequence[int]] | None = None) -> dict[str, SlotValue]:
         """One sample, decoding only the slots named, or all of them.
 
         Decoding is most of the cost of a sample, so a caller that needs the
-        label alone should not pay for a 13-band image.
+        label alone should not pay for a 13-band image. `frames` maps a series
+        stored one file per frame to the frame positions to decode, so one crop
+        of a sample holding thousands is one file read.
         """
+        frames = dict(frames or {})
         if index < 0:
             index += len(self)
         declared = list(self.contract.inputs) + list(self.contract.targets)
+        if unknown := set(frames) - {slot.name for slot in declared}:
+            raise KeyError(f"no slot(s) {sorted(unknown)} in {self.path}")
         if slots is not None:
             unknown = set(slots) - {slot.name for slot in declared}
             if unknown:
@@ -776,7 +839,8 @@ class Dataset:
         sample: dict[str, SlotValue] = {}
         for slot in declared:
             try:
-                value = self._field(slot, index) if slot.field else self._file(slot, index)
+                value = (self._field(slot, index) if slot.field
+                         else self._file(slot, index, frames.get(slot.name)))
             except KeyError:
                 if slot.optional:
                     continue
@@ -791,7 +855,7 @@ class Dataset:
                 counts=self._counts(slot, index, value),
                 members=self._members(slot, index, value),
                 tasks=self._tasks(slot, index, value),
-                times=self._times(slot, index, value),
+                times=self._times(slot, index, value, frames.get(slot.name)),
                 frames=(int(self._lookup(index, slot.frames_field, slot=slot))
                         if slot.kind is SlotKind.VIDEO and slot.frames_field else None),
                 sample_rate=rate)

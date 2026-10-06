@@ -97,6 +97,49 @@ def test_masked_hides_nodata_and_ignored_labels(tmp_path: Path) -> None:
     assert not np.ma.isMaskedArray(Dataset(path)[0]["image"].array)
 
 
+def test_physical_values_leave_nodata_out(tmp_path: Path) -> None:
+    # The sentinel scaled is a plausible-looking value (-3.2768), so it must not survive.
+    image = _tif(tmp_path / "src" / "image.tif", np.array([[[-32768, 100], [200, 300]]], "int16"))
+    contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif",
+                            "calibration": "scaled", "scale_factor": 1e-4, "nodata": -32768}],
+                "targets": []}
+    sample = taco.Sample(assets=[taco.Asset(image, path="image.tif")])
+    path = _archive(tmp_path / "x.zip", ["image.tif"], contract, [sample], taco.Level("sample"))
+    plain = Dataset(path)[0]["image"].physical
+    assert not np.ma.isMaskedArray(plain)
+    assert np.isnan(plain[0, 0, 0])
+    assert np.allclose(plain[0].ravel()[1:], [0.01, 0.02, 0.03])
+    masked = Dataset(path, masked=True)[0]["image"].physical
+    assert np.ma.getmaskarray(masked).tolist() == [[[True, False], [False, False]]]
+    assert np.allclose(masked.compressed(), [0.01, 0.02, 0.03])
+
+
+def test_band_nodata_is_masked_on_its_own_band(tmp_path: Path) -> None:
+    # As geonrw declares its elevation target: -9999 on the band, none on the slot.
+    elevation = _tif(tmp_path / "src" / "dem.tif", np.array([[[-9999, 50], [60, 70]]], "float32"))
+    image = _tif(tmp_path / "src" / "image.tif",
+                 np.array([[[0, 1], [2, 3]], [[0, 5], [5, 0]]], "uint16"))
+    contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif", "nodata": 3,
+                            "bands": [{"index": 0}, {"index": 1, "nodata": 5}]}],
+                "targets": [{"name": "elevation", "kind": "raster", "path": "dem.tif",
+                             "calibration": "physical", "units": "m",
+                             "bands": [{"index": 0, "nodata": -9999}]}]}
+    sample = taco.Sample(assets=[taco.Asset(image, path="image.tif"),
+                                 taco.Asset(elevation, path="dem.tif")])
+    path = _archive(tmp_path / "x.zip", ["image.tif", "dem.tif"], contract, [sample],
+                    taco.Level("sample"))
+    masked = Dataset(path, masked=True)[0]
+    assert masked["elevation"].valid.tolist() == [[[False, True], [True, True]]]
+    assert masked["elevation"].physical.compressed().tolist() == [50, 60, 70]
+    # The slot's nodata applies to every band; a band's only to that band.
+    assert masked["image"].valid.tolist() == [[[True, True], [True, False]],
+                                              [[True, False], [False, True]]]
+    plain = Dataset(path)[0]
+    assert not np.ma.isMaskedArray(plain["elevation"].array)
+    assert np.isnan(plain["elevation"].physical[0, 0, 0])
+    assert np.allclose(plain["elevation"].physical[0].ravel()[1:], [50, 60, 70])
+
+
 def test_masked_hides_ignored_classes_beside_the_ignore_index(tmp_path: Path) -> None:
     label = _tif(tmp_path / "src" / "label.tif", np.array([[[0, 1], [2, 3]]], "uint8"))
     contract = {"inputs": [],
@@ -256,3 +299,21 @@ def test_a_large_raster_is_read_smaller_only_when_nothing_depends_on_its_size(tm
                     taco.Level("sample", ml=Boxes))
     # The boxes are in the full-size picture's pixels, so it stays full size.
     assert Dataset(path, max_pixels=16)[0]["image"].array.shape == (1, 8, 8)
+
+
+def test_frames_decodes_only_the_chosen_files_of_a_series(tmp_path: Path) -> None:
+    frames = [taco.Asset(_tif(tmp_path / "src" / f"t{i}.tif", np.full((1, 2, 2), i, "uint8")),
+                         path=f"s2/t{i}.tif", metadata=taco.Metadata(ml=Date(date=f"2020-{i + 1:02d}-01")))
+              for i in range(12)]
+    contract = {"inputs": [{"name": "s2", "kind": "raster_series", "path": "s2/t*[1,12].tif",
+                            "structure": "series", "time_field": "children/s2:date"}]}
+    path = _archive(tmp_path / "x.zip", ["s2/t*[1,12].tif"], contract, [taco.Sample(assets=frames)],
+                    taco.Level("sample"), taco.Level("children/s2", ml=Date))
+    dataset = Dataset(path)
+    value = dataset.read(0, frames={"s2": [10, 3]})["s2"]
+    assert [int(frame[0, 0, 0]) for frame in value.array] == [10, 3]
+    assert value.times == ["2020-11-01", "2020-04-01"]
+    with pytest.raises(IndexError, match="outside"):
+        dataset.read(0, frames={"s2": [12]})
+    with pytest.raises(KeyError, match="no slot"):
+        dataset.read(0, frames={"nothing": [0]})
