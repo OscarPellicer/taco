@@ -18,6 +18,10 @@ def _identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
+def _literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _output_name(declaration: str, *, variable: bool) -> str:
     # Generated columns keep the structure path, or the prefix of a variable sequence.
     return declaration.partition("*")[0] if variable else declaration

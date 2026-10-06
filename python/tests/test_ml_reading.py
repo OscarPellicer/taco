@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 import io
 import struct
 import wave
@@ -18,6 +20,14 @@ from taco.ml.dataset import _wave
 
 rasterio = pytest.importorskip("rasterio")
 
+_SAMPLE_IDS = itertools.count()
+
+
+def _sample(**fields) -> taco.Sample:
+    """A sample with a fresh id; the fixtures care about content, not identity."""
+    return taco.Sample(id=f"s{next(_SAMPLE_IDS)}", **fields)
+
+
 
 def _tif(path: Path, array: np.ndarray, *, nodata: float | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -32,10 +42,10 @@ def _tif(path: Path, array: np.ndarray, *, nodata: float | None = None) -> Path:
 def _archive(path: Path, structure: list[str], contract: dict, samples: list[taco.Sample],
              *levels: taco.Level) -> Path:
     collection = taco.Collection(
-        contract=taco.Contract(structure=structure, metadata=taco.MetadataSchema(*levels)),
-        id="reading", dataset_version="1.0.0", description="Fixture for taco.ml reading",
+        contract=taco.Contract(structure=structure, metadata=list(levels)),
+        id="reading", description="Fixture for taco.ml reading",
         licenses=["CC-BY-4.0"], providers=[{"name": "Asterisk Labs", "roles": ["producer"]}],
-        metadata=taco.CollectionMetadata.from_flat({"ml:contract": contract}),
+        ml={"contract": contract},
     )
     with taco.open_writer(collection, path) as writer:
         writer.extend(samples)
@@ -68,7 +78,7 @@ def test_boxes_come_back_one_per_row_and_their_counts_must_add_up(tmp_path: Path
                              "counts_field": "per_query"}]}
 
     def build(name: str, counts: list[int]) -> Dataset:
-        sample = taco.Sample(metadata=taco.Metadata(ml=Boxes(boxes=[0, 0, 1, 1, 2, 2, 3, 3],
+        sample = _sample(metadata=taco.Metadata(ml=Boxes(boxes=[0, 0, 1, 1, 2, 2, 3, 3],
                                                              per_query=counts)),
                              assets=[taco.Asset(image, path="image.tif")])
         return Dataset(_archive(tmp_path / name, ["image.tif"], contract, [sample],
@@ -87,7 +97,7 @@ def test_masked_hides_nodata_and_ignored_labels(tmp_path: Path) -> None:
     contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif", "nodata": 0}],
                 "targets": [{"name": "label", "kind": "mask", "path": "label.tif",
                              "classes": ["a", "b"], "ignore_index": 255}]}
-    sample = taco.Sample(assets=[taco.Asset(image, path="image.tif"),
+    sample = _sample(assets=[taco.Asset(image, path="image.tif"),
                                  taco.Asset(label, path="label.tif")])
     path = _archive(tmp_path / "x.zip", ["image.tif", "label.tif"], contract, [sample],
                     taco.Level("sample"))
@@ -103,7 +113,7 @@ def test_physical_values_leave_nodata_out(tmp_path: Path) -> None:
     contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif",
                             "calibration": "scaled", "scale_factor": 1e-4, "nodata": -32768}],
                 "targets": []}
-    sample = taco.Sample(assets=[taco.Asset(image, path="image.tif")])
+    sample = _sample(assets=[taco.Asset(image, path="image.tif")])
     path = _archive(tmp_path / "x.zip", ["image.tif"], contract, [sample], taco.Level("sample"))
     plain = Dataset(path)[0]["image"].physical
     assert not np.ma.isMaskedArray(plain)
@@ -124,7 +134,7 @@ def test_band_nodata_is_masked_on_its_own_band(tmp_path: Path) -> None:
                 "targets": [{"name": "elevation", "kind": "raster", "path": "dem.tif",
                              "calibration": "physical", "units": "m",
                              "bands": [{"index": 0, "nodata": -9999}]}]}
-    sample = taco.Sample(assets=[taco.Asset(image, path="image.tif"),
+    sample = _sample(assets=[taco.Asset(image, path="image.tif"),
                                  taco.Asset(elevation, path="dem.tif")])
     path = _archive(tmp_path / "x.zip", ["image.tif", "dem.tif"], contract, [sample],
                     taco.Level("sample"))
@@ -146,7 +156,7 @@ def test_masked_hides_ignored_classes_beside_the_ignore_index(tmp_path: Path) ->
                 "targets": [{"name": "label", "kind": "mask", "path": "label.tif",
                              "classes": ["unlabelled", "a", "unused", "b"],
                              "ignore_index": 0, "ignore_classes": [2]}]}
-    sample = taco.Sample(assets=[taco.Asset(label, path="label.tif")])
+    sample = _sample(assets=[taco.Asset(label, path="label.tif")])
     path = _archive(tmp_path / "x.zip", ["label.tif"], contract, [sample], taco.Level("sample"))
     assert Dataset(path, masked=True)[0]["label"].valid.tolist() == [[False, True], [False, True]]
 
@@ -157,7 +167,7 @@ def test_a_series_stacked_in_one_file_is_cut_by_its_frame_count(tmp_path: Path) 
     contract = {"inputs": [{"name": "series", "kind": "raster_series", "path": "series.tif",
                             "frames_field": "frames",
                             "bands": [{"index": 0}, {"index": 1}]}]}
-    sample = taco.Sample(metadata=taco.Metadata(ml=Frames(frames=3)),
+    sample = _sample(metadata=taco.Metadata(ml=Frames(frames=3)),
                          assets=[taco.Asset(series, path="series.tif")])
     path = _archive(tmp_path / "x.zip", ["series.tif"], contract, [sample],
                     taco.Level("sample", ml=Frames))
@@ -174,7 +184,7 @@ def test_per_frame_dates_follow_the_frame_numbers(tmp_path: Path) -> None:
               for i in range(12)]
     contract = {"inputs": [{"name": "s2", "kind": "raster_series", "path": "s2/t*[1,12].tif",
                             "structure": "series", "time_field": "children/s2:date"}]}
-    sample = taco.Sample(assets=frames)
+    sample = _sample(assets=frames)
     path = _archive(tmp_path / "x.zip", ["s2/t*[1,12].tif"], contract, [sample],
                     taco.Level("sample"), taco.Level("children/s2", ml=Date))
     value = Dataset(path)[0]["s2"]
@@ -191,7 +201,7 @@ def test_a_folder_container_reads_like_its_zip(tmp_path: Path) -> None:
             image = _tif(root / f"image{index}.tif", np.full((2, 3, 3), index, "uint8"))
             frames = [taco.Asset(_tif(root / f"t{index}_{i}.tif", np.full((1, 2, 2), 10 * index + i, "uint8")),
                                  path=f"s2/t{i}.tif") for i in range(index + 1)]
-            out.append(taco.Sample(assets=[taco.Asset(image, path="image.tif"), *frames]))
+            out.append(_sample(assets=[taco.Asset(image, path="image.tif"), *frames]))
         return out
     contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif"},
                            {"name": "s2", "kind": "raster_series", "path": "s2/t*[1,3].tif",
@@ -228,7 +238,7 @@ def test_a_tacocat_reads_like_its_partitions(tmp_path: Path) -> None:
             frames = [taco.Asset(_tif(tmp_path / "src" / f"t{value}_{i}.tif",
                                       np.full((1, 2, 2), 100 + value, "uint8")), path=f"s2/t{i}.tif")
                       for i in range(index + 1)]
-            samples.append(taco.Sample(assets=[taco.Asset(image, path="image.tif"), *frames]))
+            samples.append(_sample(assets=[taco.Asset(image, path="image.tif"), *frames]))
         root.mkdir(exist_ok=True)
         parts.append(_archive(root / f"x.{part:04d}.zip", structure, contract, samples, *levels))
     catalog = taco.consolidate(parts)
@@ -246,7 +256,7 @@ def test_a_reference_names_a_level_only_when_it_is_one(tmp_path: Path) -> None:
     image = _tif(tmp_path / "src" / "image.tif", np.zeros((1, 2, 2), "uint8"))
     contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif"}],
                 "targets": [{"name": "frames", "kind": "scalar", "field": "sample:frames"}]}
-    sample = taco.Sample(metadata=taco.Metadata(ml=Frames(frames=7)),
+    sample = _sample(metadata=taco.Metadata(ml=Frames(frames=7)),
                          assets=[taco.Asset(image, path="image.tif")])
     dataset = Dataset(_archive(tmp_path / "x.zip", ["image.tif"], contract, [sample],
                                taco.Level("sample", ml=Frames)))
@@ -260,7 +270,7 @@ def test_read_decodes_only_the_slots_asked_for(tmp_path: Path) -> None:
     image = _tif(tmp_path / "src" / "image.tif", np.zeros((1, 2, 2), "uint8"))
     contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif"}],
                 "targets": [{"name": "frames", "kind": "scalar", "field": "frames"}]}
-    sample = taco.Sample(metadata=taco.Metadata(ml=Frames(frames=7)),
+    sample = _sample(metadata=taco.Metadata(ml=Frames(frames=7)),
                          assets=[taco.Asset(image, path="image.tif")])
     dataset = Dataset(_archive(tmp_path / "x.zip", ["image.tif"], contract, [sample],
                                taco.Level("sample", ml=Frames)))
@@ -287,13 +297,13 @@ def test_wave_files_decode_to_channels_and_a_sample_rate() -> None:
 def test_a_large_raster_is_read_smaller_only_when_nothing_depends_on_its_size(tmp_path: Path) -> None:
     image = _tif(tmp_path / "src" / "image.tif", np.arange(64, dtype="uint8").reshape(1, 8, 8))
     alone = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif"}]}
-    sample = taco.Sample(assets=[taco.Asset(image, path="image.tif")])
+    sample = _sample(assets=[taco.Asset(image, path="image.tif")])
     path = _archive(tmp_path / "x.zip", ["image.tif"], alone, [sample], taco.Level("sample"))
     assert Dataset(path)[0]["image"].array.shape == (1, 8, 8)
     assert Dataset(path, max_pixels=16)[0]["image"].array.shape == (1, 4, 4)
 
     boxed = dict(alone, targets=[{"name": "boxes", "kind": "bbox_2d", "field": "boxes"}])
-    with_boxes = taco.Sample(metadata=taco.Metadata(ml=Boxes(boxes=[0, 0, 8, 8], per_query=[1])),
+    with_boxes = _sample(metadata=taco.Metadata(ml=Boxes(boxes=[0, 0, 8, 8], per_query=[1])),
                              assets=[taco.Asset(image, path="image.tif")])
     path = _archive(tmp_path / "y.zip", ["image.tif"], boxed, [with_boxes],
                     taco.Level("sample", ml=Boxes))
@@ -307,7 +317,7 @@ def test_frames_decodes_only_the_chosen_files_of_a_series(tmp_path: Path) -> Non
               for i in range(12)]
     contract = {"inputs": [{"name": "s2", "kind": "raster_series", "path": "s2/t*[1,12].tif",
                             "structure": "series", "time_field": "children/s2:date"}]}
-    path = _archive(tmp_path / "x.zip", ["s2/t*[1,12].tif"], contract, [taco.Sample(assets=frames)],
+    path = _archive(tmp_path / "x.zip", ["s2/t*[1,12].tif"], contract, [_sample(assets=frames)],
                     taco.Level("sample"), taco.Level("children/s2", ml=Date))
     dataset = Dataset(path)
     value = dataset.read(0, frames={"s2": [10, 3]})["s2"]

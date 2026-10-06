@@ -383,15 +383,17 @@ class Ref(BaseModel):
 
 
 def test_a_field_with_different_types_at_two_levels_stays_readable(tmp_path: Path) -> None:
-    # `ml:ref` is a list on the sample and a string on each mask. The files
-    # relation has one column per name, so the image row must not inherit the
-    # sample's list while the mask rows carry their own strings.
+    # `ml:ref` is a list on the sample and a string on each mask. The reader
+    # stacks the rows of every level into one relation with one column per
+    # name, so the image row must not inherit the sample's list while the mask
+    # rows carry their own strings.
     contract = taco.Contract(
-        structure=["image.bin", "mask/m*[0,3].bin"],
-        metadata=taco.MetadataSchema(taco.Level("sample", ml=Refs), taco.Level("children/mask", ml=Ref)),
+        structure=["image.bin", "mask/m*[1,3].bin"],
+        metadata=[taco.Level("sample", ml=Refs), taco.Level("children/mask", ml=Ref)],
     )
     samples = [
         taco.Sample(
+            id=f"s{index}",
             metadata=taco.Metadata(ml=Refs(ref=["a", "b"])),
             assets=[
                 taco.Asset(payload("image", index), path="image.bin"),
@@ -402,10 +404,8 @@ def test_a_field_with_different_types_at_two_levels_stays_readable(tmp_path: Pat
         for index in range(2)
     ]
     dataset = taco.open_dataset(write("typed", contract, samples, tmp_path / "typed.zip"))
-    rows = by_sample(dataset.sql('SELECT sample_id, path, "ml:ref" FROM files'))
-    assert [(row["path"], row["ml:ref"]) for row in rows if row["sample_id"] == 0] == [
-        ("image.bin", None),
-        ("mask/m0.bin", "a"),
-        ("mask/m1.bin", "b"),
-    ]
-    assert dataset.sql('SELECT "ml:ref" FROM data').column("ml:ref").to_pylist() == [["a", "b"], ["a", "b"]]
+    # Every query runs over all levels at once, so it fails outright when the
+    # two declarations cannot share one column.
+    masks = dataset.sql('SELECT "ml:ref" FROM "children/mask" ORDER BY "internal:parent_id", "internal:relative_path"')
+    assert masks.column("ml:ref").to_pylist() == ["a", "b", "a", "b"]
+    assert dataset.sql('SELECT "ml:ref" FROM sample').column("ml:ref").to_pylist() == [["a", "b"], ["a", "b"]]

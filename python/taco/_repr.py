@@ -279,10 +279,7 @@ def _ml_contract(dataset: Dataset):
     Read through the model rather than off the raw dictionary, so a contract
     this version cannot parse is left out instead of half drawn.
     """
-    metadata = dataset.collection.metadata
-    if metadata is None:
-        return None
-    document = metadata.flatten().get("ml:contract")
+    document = (dataset.collection.metadata.get("ml") or {}).get("contract")
     if not isinstance(document, dict):
         return None
     try:

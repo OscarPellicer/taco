@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import itertools
+
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +18,14 @@ CONTRACT = {
     "tasks": ["scene-classification"],
 }
 
+_SAMPLE_IDS = itertools.count()
+
+
+def _sample(**fields) -> taco.Sample:
+    """A sample with a fresh id; the fixtures care about content, not identity."""
+    return taco.Sample(id=f"s{next(_SAMPLE_IDS)}", **fields)
+
+
 
 def _collection() -> taco.Collection:
     from pydantic import BaseModel
@@ -25,11 +35,11 @@ def _collection() -> taco.Collection:
 
     return taco.Collection(
         contract=taco.Contract(structure=["image.tif"],
-                               metadata=taco.MetadataSchema(taco.Level("sample", ml=Label))),
-        id="ml-parts", dataset_version="1.0.0", description="Fixture for split collections",
+                               metadata=[taco.Level("sample", ml=Label)]),
+        id="ml-parts", description="Fixture for split collections",
         licenses=["CC-BY-4.0"], providers=[{"name": "Asterisk Labs", "roles": ["producer"]}],
         tasks=["scene-classification"],
-        metadata=taco.CollectionMetadata.from_flat({"ml:contract": CONTRACT}),
+        ml={"contract": CONTRACT},
     ), Label
 
 
@@ -46,7 +56,7 @@ def _write(path: Path, indices: range, tmp: Path) -> Path:
                            dtype="uint8", crs="EPSG:4326",
                            transform=rasterio.transform.from_origin(0, 4, 1, 1)) as sink:
             sink.write(np.full((1, 4, 4), index, dtype="uint8"))
-        samples.append(taco.Sample(metadata=taco.Metadata(ml=Label(label=index % 2)),
+        samples.append(_sample(metadata=taco.Metadata(ml=Label(label=index % 2)),
                                    assets=[taco.Asset(tif, path="image.tif")]))
     with taco.open_writer(collection, path) as writer:
         writer.extend(samples)
