@@ -363,9 +363,13 @@ class Dataset:
 
     def _level_rows(self, index: int, level: str) -> list[int]:
         """The rows of `level` that belong to one sample, walking down from the sample."""
-        part, local = self._locate(index)
+        part, _ = self._locate(index)
         steps = level.split("/")
-        found = [local]
+        # Start from the sample row's own id, the numbering its children's
+        # `internal:parent_id` use. A TACOCAT consolidated by taco 0.14 numbers rows
+        # across all partitions, so the local id from the relative path would match
+        # only in the first partition.
+        found = [int(self.table.column("internal:current_id")[index].as_py())]
         for depth in range(1, len(steps) + 1):
             step = "/".join(steps[:depth])
             table = self.level(step)

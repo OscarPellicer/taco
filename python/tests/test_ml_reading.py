@@ -249,6 +249,11 @@ def test_a_tacocat_reads_like_its_partitions(tmp_path: Path) -> None:
                 assert np.array_equal(np.asarray(opened[index][name].array),
                                       np.asarray(listed[index][name].array))
     assert [int(Dataset(root)[i]["image"].array[0, 0, 0]) for i in range(6)] == [0, 1, 2, 10, 11, 12]
+    # A level below the sample resolves to the sample's own rows in every partition,
+    # including after the first, where the catalog's ids no longer equal local ones.
+    frames = [Dataset(root).lookup(i, "children/s2:internal:relative_path") for i in range(6)]
+    assert frames == [listed.lookup(i, "children/s2:internal:relative_path") for i in range(6)]
+    assert [len(f) for f in frames] == [1, 2, 3, 1, 2, 3]
 
 
 def test_a_reference_names_a_level_only_when_it_is_one(tmp_path: Path) -> None:
