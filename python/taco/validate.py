@@ -218,6 +218,33 @@ def _check_collection(dataset: DatasetView, collector: _Collector) -> None:
     unknown = [task for task in collection.tasks or () if task not in KNOWN_TASKS]
     if unknown:
         collector.warning("tasks", f"unrecognized task types {unknown}")
+    _check_ml_paths(dataset, collector)
+
+
+def _check_ml_paths(dataset: DatasetView, collector: _Collector) -> None:
+    """Every file an `ml:contract` slot names is in the declared structure.
+
+    A slot names its files as structure paths: a literal path, or a variable leaf
+    `prefix*[a,b].ext` written exactly as the structure writes it. A path the
+    structure does not hold is a slot no sample can fill, which `taco.ml` only
+    discovers when it decodes one.
+    """
+    contract = (dataset.collection.metadata.get("ml") or {}).get("contract")
+    if not isinstance(contract, dict):
+        return
+    structure = set(dataset.contract.structure)
+    for slot in [*contract.get("inputs", ()), *contract.get("targets", ())]:
+        if not isinstance(slot, dict):
+            continue
+        paths = slot.get("path")
+        paths = [paths] if isinstance(paths, str) else list(paths or ())
+        missing = [path for path in paths if path not in structure]
+        if missing:
+            collector.error(
+                "ml-contract",
+                f"slot {slot.get('name')!r} names paths that are not in taco:structure: {missing[:5]}"
+                + (f" and {len(missing) - 5} more" if len(missing) > 5 else ""),
+            )
 
 
 def _expected_schema_names(contract: Contract, level: str, container: str) -> list[str]:

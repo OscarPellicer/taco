@@ -159,6 +159,21 @@ def test_unknown_reserved_collection_key_is_reported(folder_dataset: Path) -> No
     assert report.errors[0].code == "container"
 
 
+def test_ml_contract_paths_must_be_in_the_structure(folder_dataset: Path) -> None:
+    file = folder_dataset / "COLLECTION.json"
+    data = json.loads(file.read_text())
+    structure = data["taco:structure"]
+    data["ml:contract"] = {"inputs": [{"name": "here", "kind": "raster", "path": structure[0]},
+                                      {"name": "gone", "kind": "raster", "path": ["absent/data.tif"]}],
+                           "targets": []}
+    file.write_text(json.dumps(data))
+    report = taco.validate(folder_dataset)
+    problems = [issue for issue in report.errors if issue.code == "ml-contract"]
+    assert len(problems) == 1
+    assert "'gone'" in problems[0].message
+    assert "absent/data.tif" in problems[0].message
+
+
 def test_validation_report_can_raise(folder_dataset: Path) -> None:
     shutil.rmtree(folder_dataset / "METADATA")
     report = taco.validate(folder_dataset)
