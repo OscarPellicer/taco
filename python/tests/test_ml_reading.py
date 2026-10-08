@@ -218,6 +218,84 @@ def test_a_folder_container_reads_like_its_zip(tmp_path: Path) -> None:
     assert len(folder[2]["s2"].array) == 3
 
 
+_RANGE_SERVER = """
+import re, sys
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+
+class Ranges(SimpleHTTPRequestHandler):
+    def send_head(self):
+        path = Path(self.translate_path(self.path))
+        match = re.fullmatch(r"bytes=(\\d*)-(\\d*)", self.headers.get("Range", ""))
+        if not path.is_file() or match is None:
+            return super().send_head()
+        data = path.read_bytes()
+        if match.group(1):
+            start = int(match.group(1))
+            end = min(int(match.group(2) or len(data) - 1), len(data) - 1)
+        else:
+            start, end = max(len(data) - int(match.group(2)), 0), len(data) - 1
+        self.send_response(206)
+        self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.end_headers()
+        import io
+        return io.BytesIO(data[start:end + 1])
+
+    def log_message(self, *args):
+        pass
+
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), lambda *a: Ranges(*a, directory=sys.argv[1]))
+print(server.server_address[1], flush=True)
+server.serve_forever()
+"""
+
+
+def _serve(root: Path):
+    """Serve `root` over HTTP with byte ranges, as an object store does.
+
+    In its own process: GDAL holds the interpreter lock while it fetches, so a
+    server thread in this process would never get to answer.
+    """
+    import subprocess
+    import sys
+
+    server = subprocess.Popen([sys.executable, "-c", _RANGE_SERVER, str(root)],
+                              stdout=subprocess.PIPE, text=True)
+    return server, f"http://127.0.0.1:{int(server.stdout.readline())}"
+
+
+def test_a_remote_container_reads_like_the_local_one(tmp_path: Path) -> None:
+    # A FOLDER or a ZIP behind a URL decodes to what the same container gives on disk.
+    root = tmp_path / "served"
+    samples = [_sample(assets=[
+        taco.Asset(_tif(tmp_path / f"i{index}.tif", np.full((2, 3, 3), index, "uint8")), path="image.tif"),
+        *[taco.Asset(_tif(tmp_path / f"t{index}_{i}.tif", np.full((1, 2, 2), 10 * index + i, "uint8")),
+                     path=f"s2/t{i}.tif") for i in range(index + 1)]]) for index in range(3)]
+    contract = {"inputs": [{"name": "image", "kind": "raster", "path": "image.tif"},
+                           {"name": "s2", "kind": "raster_series", "path": "s2/t*[1,3].tif",
+                            "structure": "series"}]}
+    structure = ["image.tif", "s2/t*[1,3].tif"]
+    levels = (taco.Level("sample"), taco.Level("children"), taco.Level("children/s2"))
+    _archive(root / "x", structure, contract, samples, *levels)
+    _archive(root / "x.zip", structure, contract, samples, *levels)
+    server, url = _serve(root)
+    try:
+        for name in ("x", "x.zip"):
+            local, remote = Dataset(root / name), Dataset(f"{url}/{name}")
+            assert len(remote) == len(local) == 3
+            for index in range(3):
+                for slot in ("image", "s2"):
+                    assert np.array_equal(np.asarray(remote[index][slot].array),
+                                          np.asarray(local[index][slot].array))
+    finally:
+        server.terminate()
+        server.wait()
+        server.stdout.close()
+
+
 def test_a_tacocat_reads_like_its_partitions(tmp_path: Path) -> None:
     # Two partitions consolidated into `.tacocat/`: opening the catalog, or the
     # dataset directory holding it, gives the same samples in partition order as

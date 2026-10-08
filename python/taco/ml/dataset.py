@@ -223,6 +223,11 @@ def _tacocat(source: str) -> Path | None:
     return None
 
 
+
+def _remote(path: str) -> bool:
+    """Is this source a URL (http, https, s3, ...) rather than a local path?"""
+    return "://" in str(path)
+
 class Dataset:
     """A TACO collection read as model-ready samples.
 
@@ -286,7 +291,10 @@ class Dataset:
         self.reader = _Reader(list(parts) if len(parts) > 1 else parts[0])
         self._files = dict(zip(names, parts, strict=True))
         documents = []
-        for part in parts:
+        for k, part in enumerate(parts):
+            if "://" in part:                     # a remote container: the reader has it
+                documents.append(json.loads(self.reader._opened[k].collection))
+                continue
             if Path(part).is_dir():               # a FOLDER container
                 documents.append(json.loads((Path(part) / "COLLECTION.json").read_text()))
                 continue
@@ -465,6 +473,22 @@ class Dataset:
             return out
         for part, path in self._files.items():
             found = out[part] = {}
+            if _remote(path):
+                # A remote container: its tables come through the reader, which
+                # fetched them when it opened the source.
+                for level in self.reader.contract.levels:
+                    if level == SAMPLE_LEVEL:
+                        continue
+                    table = self.reader.level(level)
+                    paths = table.column("internal:relative_path").to_pylist()
+                    if "internal:offset" in table.column_names:
+                        offsets = table.column("internal:offset").to_pylist()
+                        sizes = table.column("internal:size").to_pylist()
+                        found.update({p: (o, z) for p, o, z in zip(paths, offsets, sizes, strict=True)
+                                      if p and o is not None})
+                    else:
+                        found.update((p, (0, -1)) for p in paths if p)
+                continue
             if Path(path).is_dir():
                 # A FOLDER container stores no byte ranges: a payload is the file
                 # `DATA/<relative_path>` itself (spec 3.2), read whole. The paths come
@@ -533,25 +557,38 @@ class Dataset:
 
     def _blob(self, part: str, relative_path: str) -> bytes:
         offset, size = self._where(part, relative_path)
+        if _remote(self._files[part]):
+            import urllib.request
+            request = urllib.request.Request(self._holder(part, relative_path))
+            if size >= 0:
+                request.add_header("Range", f"bytes={offset}-{offset + size - 1}")
+            with urllib.request.urlopen(request) as response:
+                return response.read()
         with Path(self._holder(part, relative_path)).open("rb") as handle:
             handle.seek(offset)
             return handle.read(size)          # a folder's payload: offset 0, size -1
 
     def _is_folder(self, part: str) -> bool:
-        return Path(self._files[part]).is_dir()
+        path = self._files[part]
+        if _remote(path):
+            return not path.rstrip("/").endswith(".zip")
+        return Path(path).is_dir()
 
     def _holder(self, part: str, relative_path: str) -> str:
         """The file a payload's bytes live in: the archive, or `DATA/<path>` of a folder."""
         if self._is_folder(part):
+            if _remote(self._files[part]):
+                return f"{self._files[part].rstrip('/')}/DATA/{relative_path}"
             return str(Path(self._files[part]) / "DATA" / relative_path)
         return self._files[part]
 
     def _gdal_path(self, part: str, relative_path: str) -> str:
         """A path GDAL opens for one payload: a byte range of the archive, or the file."""
         offset, size = self._where(part, relative_path)
+        remote = "/vsicurl/" if _remote(self._files[part]) else ""
         if self._is_folder(part):
-            return self._holder(part, relative_path)
-        return f"/vsisubfile/{offset}_{size},{self._files[part]}"
+            return remote + self._holder(part, relative_path)
+        return f"/vsisubfile/{offset}_{size},{remote}{self._files[part]}"
 
     def _raster(self, part: str, relative_path: str, *, bands: int | None = None):
         """Decode one raster payload, reading it in place inside the archive.
